@@ -1,0 +1,16 @@
+{
+  "name": "yclients-crm",
+  "version": "0.1.0",
+  "description": "Надстройка над YClients: ежедневные задачи администраторам (звонки, напоминания, реактивация) + обзор для владельца с проваливанием в историю клиента",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "sync": "node -e \"require('./src/env');require('./src/sync').run().then(r=>{console.log(r);process.exit(0)})\""
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

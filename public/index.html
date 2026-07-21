@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YClients CRM — задачи и обзор</title>
+<style>
+  :root{
+    --bg:#f3f4f7; --panel:#ffffff; --panel2:#f4f6f9; --line:#e4e7ee;
+    --text:#2b2f38; --muted:#8b93a5; --accent:#12b3a6; --accent2:#0ea597;
+    --green:#22a06b; --red:#e35454; --amber:#d98a1f; --violet:#7857cc;
+    --radius:14px;
+    --shadow:0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.04);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text)}
+  header{position:sticky;top:0;z-index:10;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:12px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .logo{font-weight:700;font-size:17px;letter-spacing:.2px;color:#1c2028}
+  .badge{font-size:11px;padding:2px 8px;border-radius:20px;background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
+  .badge.live{color:var(--green);border-color:#bfe6cf;background:#eaf7f0}
+  .tabs{display:flex;gap:6px;margin-left:auto}
+  .tab{padding:8px 16px;border-radius:10px;background:transparent;color:var(--muted);border:1px solid transparent;cursor:pointer;font-size:14px}
+  .tab:hover{color:var(--text)}
+  .tab.active{background:#e7f6f4;color:var(--accent2);border-color:#c4ebe6;font-weight:600}
+  button{font-family:inherit}
+  .btn{padding:8px 14px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);cursor:pointer;font-size:13px;box-shadow:var(--shadow)}
+  .btn:hover{border-color:var(--accent);color:var(--accent2)}
+  .btn.primary{background:var(--accent2);border-color:var(--accent2);color:#fff}
+  main{max-width:1080px;margin:0 auto;padding:18px}
+  .grid{display:grid;gap:14px}
+  .kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
+  .kpi .n{font-size:30px;font-weight:700;color:#1c2028}
+  .kpi .l{color:var(--muted);font-size:13px;margin-top:2px}
+  .section-title{font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:22px 0 10px}
+  .task{display:flex;gap:14px;padding:14px 16px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);margin-bottom:10px;box-shadow:var(--shadow)}
+  .task .left{flex:1;min-width:0}
+  .tname{font-weight:600;font-size:15px;cursor:pointer;color:#1c2028}
+  .tname:hover{color:var(--accent2)}
+  .tmeta{color:var(--muted);font-size:13px;margin-top:3px}
+  .treason{margin-top:8px;font-size:14px;color:#525a68}
+  .type-badge{display:inline-block;font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px;margin-bottom:6px}
+  .t-confirm_visit{background:#e5f0fb;color:#2b7cd3}
+  .t-rebook{background:#fbf0da;color:#b9791b}
+  .t-no_show{background:#fbe4e4;color:#d14343}
+  .t-reactivation{background:#efeafb;color:#6f52c0}
+  .phone{font-variant-numeric:tabular-nums}
+  .actions{display:flex;flex-direction:column;gap:8px;min-width:200px}
+  .res-row{display:flex;gap:6px;flex-wrap:wrap}
+  .res{flex:1;min-width:60px;padding:7px 8px;font-size:12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--text);cursor:pointer}
+  .res:hover{border-color:var(--accent);background:#f0fbfa}
+  .res.booked:hover{border-color:var(--green);color:var(--green);background:#eef8f2}
+  .res.refused:hover{border-color:var(--red);color:var(--red);background:#fdf0f0}
+  textarea{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:8px;font-family:inherit;font-size:13px;resize:vertical;min-height:38px}
+  textarea:focus,input.search:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(18,179,166,.12)}
+  input.search{background:var(--panel);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:9px 12px;font-size:14px;width:100%;max-width:340px;box-shadow:var(--shadow)}
+  .muted{color:var(--muted)}
+  .empty{text-align:center;color:var(--muted);padding:40px}
+  /* drawer */
+  .overlay{position:fixed;inset:0;background:rgba(20,24,31,.35);display:none;z-index:50}
+  .overlay.open{display:block}
+  .drawer{position:fixed;top:0;right:0;height:100%;width:min(560px,100%);background:var(--bg);border-left:1px solid var(--line);transform:translateX(100%);transition:transform .22s ease;z-index:51;overflow-y:auto;box-shadow:-8px 0 24px rgba(16,24,40,.10)}
+  .drawer.open{transform:translateX(0)}
+  .drawer .head{padding:18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);z-index:1}
+  .drawer .body{padding:18px}
+  .timeline{position:relative;margin-left:8px;padding-left:20px;border-left:2px solid var(--line)}
+  .ev{position:relative;margin-bottom:16px}
+  .ev::before{content:'';position:absolute;left:-27px;top:3px;width:12px;height:12px;border-radius:50%;background:var(--muted);border:2px solid var(--bg)}
+  .ev.visit::before{background:var(--green)}
+  .ev.call::before{background:var(--accent)}
+  .ev.task::before{background:var(--amber)}
+  .ev .d{font-size:12px;color:var(--muted)}
+  .ev .t{font-weight:600;margin-top:2px}
+  .ev .s{font-size:13px;color:#525a68;margin-top:2px}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;background:var(--panel2);border:1px solid var(--line);color:var(--muted);margin-left:6px}
+  .cinfo{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+  .cinfo .k{font-size:12px;color:var(--muted)}
+  .cinfo .v{font-weight:600}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  tr.crow{cursor:pointer}
+  tr.crow:hover td{background:var(--panel2)}
+  .status-badge{font-size:12px;font-weight:600;padding:3px 11px;border-radius:20px;background:var(--panel2);border:1px solid var(--line)}
+  .st-active{color:var(--green);border-color:#bfe6cf;background:#eaf7f0}
+  .st-booked{color:#2b7cd3;border-color:#c3ddf5;background:#e5f0fb}
+  .st-due{color:#b9791b;border-color:#f0dbb0;background:#fbf0da}
+  .st-churn{color:#d14343;border-color:#f2c9c9;background:#fbe4e4}
+  .st-new{color:var(--muted)}
+  .statTiles{grid-template-columns:repeat(3,1fr)}
+  .stile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;box-shadow:var(--shadow)}
+  .stile .n{font-size:22px;font-weight:700;color:#1c2028}
+  .stile .l{font-size:12px;color:var(--muted);margin-top:2px}
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .brk{display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:5px 0;border-bottom:1px solid var(--line)}
+  .brk:last-child{border-bottom:none}
+  .brk .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%}
+  .brk .v{color:var(--muted);font-variant-numeric:tabular-nums}
+  .monthchart{display:flex;align-items:flex-end;gap:5px;height:96px;padding:12px 14px}
+  .mbar{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:flex-end}
+  .mbar .bar{width:100%;min-height:2px;background:var(--accent);border-radius:4px 4px 0 0;transition:height .2s}
+  .mbar .ml{font-size:9px;color:var(--muted)}
+  .mbar .mc{font-size:10px;color:var(--text);font-weight:600}
+  @media(max-width:520px){.two-col{grid-template-columns:1fr}.statTiles{grid-template-columns:repeat(2,1fr)}}
+  .seg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+  .segfld{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:5px}
+  .segfld input{background:var(--panel);border:1px solid var(--line);border-radius:9px;color:var(--text);padding:9px 11px;font-size:14px;font-family:inherit}
+  .segfld input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(18,179,166,.12)}
+  .seg-actions{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
+  .seg-summary{font-size:13px}
+  .seg-coverage{font-size:12px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+  .seg-coverage a{color:var(--accent2);cursor:pointer;text-decoration:underline}
+  .listblock{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:12px;box-shadow:var(--shadow);overflow:hidden}
+  .lb-head{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer}
+  .lb-head:hover{background:var(--panel2)}
+  .lb-name{font-weight:600;font-size:15px;color:#1c2028}
+  .lb-count{font-size:12px;color:var(--muted)}
+  .lb-progress{flex:1;max-width:220px;height:8px;background:var(--panel2);border-radius:6px;overflow:hidden}
+  .lb-progress > div{height:100%;background:var(--green);transition:width .3s}
+  .lb-actions{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .lb-chev{color:var(--muted);transition:transform .2s}
+  .listblock.open .lb-chev{transform:rotate(90deg)}
+  .lb-del{color:var(--muted);cursor:pointer;font-size:16px;padding:2px 6px;border-radius:6px}
+  .lb-del:hover{color:var(--red);background:#fbe4e4}
+  .lb-body{display:none;padding:0 16px 12px}
+  .listblock.open .lb-body{display:block}
+  .member{display:flex;gap:14px;padding:12px 0;border-top:1px solid var(--line)}
+  .member.done{opacity:.5}
+  .member .left{flex:1;min-width:0}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1c2028;color:#fff;border:1px solid #1c2028;padding:10px 18px;border-radius:10px;opacity:0;transition:opacity .2s;z-index:60;box-shadow:0 6px 20px rgba(16,24,40,.18)}
+  .toast.show{opacity:1}
+  /* login modal */
+  .modal-overlay{position:fixed;inset:0;background:rgba(20,24,31,.4);display:none;z-index:70;align-items:center;justify-content:center;padding:16px}
+  .modal-overlay.open{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;width:min(420px,100%);padding:22px;box-shadow:0 20px 50px rgba(16,24,40,.25)}
+  .modal-title{font-size:18px;font-weight:700;color:#1c2028}
+  .modal-sub{font-size:13px;color:var(--muted);margin:8px 0 16px;line-height:1.5}
+  .fld{display:block;font-size:13px;color:var(--text);margin-bottom:12px;font-weight:500}
+  .fld input{width:100%;margin-top:5px;background:var(--panel);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:10px 12px;font-size:14px;font-family:inherit}
+  .fld input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(18,179,166,.12)}
+  .login-error{color:var(--red);font-size:13px;min-height:18px;margin-bottom:4px}
+  .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:6px}
+  .modal-note{font-size:11px;color:var(--muted);margin-top:14px;text-align:center}
+  @media(max-width:640px){.task{flex-direction:column}.actions{min-width:0}}
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">✂️ YClients CRM</span>
+  <span id="mode" class="badge">…</span>
+  <div class="tabs">
+    <button class="tab active" data-view="tasks">Задачи</button>
+    <button class="tab" data-view="overview">Обзор</button>
+    <button class="tab" data-view="clients">Клиенты</button>
+    <button class="tab" data-view="segments">Конструктор</button>
+  </div>
+  <button class="btn primary" id="connectBtn" style="display:none">🔌 Подключить YClients</button>
+  <button class="btn" id="syncBtn">↻ Синхронизировать</button>
+</header>
+
+<!-- Модальное окно входа в YClients -->
+<div class="modal-overlay" id="loginModal">
+  <div class="modal">
+    <div class="modal-title">Подключение к YClients</div>
+    <p class="modal-sub">Введите логин (телефон или email) и пароль администратора YClients. Пароль используется один раз для получения токена и <b>не сохраняется</b>.</p>
+    <label class="fld">Логин<input type="text" id="ycLogin" autocomplete="username" placeholder="+7… или email"></label>
+    <label class="fld">Пароль<input type="password" id="ycPassword" autocomplete="current-password" placeholder="Пароль YClients"></label>
+    <div id="loginError" class="login-error"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeLogin()">Отмена</button>
+      <button class="btn primary" id="loginSubmit">Войти и синхронизировать</button>
+    </div>
+    <div class="modal-note">Филиал: <b>#387958</b>. Данные передаются напрямую в YClients по HTTPS.</div>
+  </div>
+</div>
+
+<main>
+  <!-- ЗАДАЧИ -->
+  <section id="view-tasks">
+    <div class="grid kpis" id="taskKpis"></div>
+    <div id="listSection" style="display:none">
+      <div class="section-title">Списки обзвона</div>
+      <div id="listBlocks"></div>
+    </div>
+    <div class="section-title">Задачи на сегодня</div>
+    <div id="taskList"></div>
+  </section>
+
+  <!-- ОБЗОР -->
+  <section id="view-overview" style="display:none">
+    <div class="grid kpis" id="ovKpis"></div>
+    <div class="section-title">Разбивка по типам задач</div>
+    <div class="card" id="ovTypes"></div>
+    <div class="section-title">Работа администраторов сегодня</div>
+    <div class="card"><table id="ovAdmins"><thead><tr><th>Администратор</th><th>Обработано</th><th>Записал</th><th>Конверсия</th></tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <!-- ВЫБОРКИ -->
+  <section id="view-segments" style="display:none">
+    <div class="card seg-filters">
+      <div class="seg-grid">
+        <label class="segfld">Услуга содержит
+          <input id="segService" list="servicesList" placeholder="напр. массаж">
+          <datalist id="servicesList"></datalist>
+        </label>
+        <label class="segfld">Мастер содержит
+          <input id="segStaff" placeholder="напр. Полина">
+        </label>
+        <label class="segfld">Период с
+          <input id="segFrom" type="date">
+        </label>
+        <label class="segfld">по
+          <input id="segTo" type="date">
+        </label>
+        <label class="segfld">Визитов ≥
+          <input id="segMinVisits" type="number" min="1" value="1">
+        </label>
+        <label class="segfld">Потрачено ≥, ₽
+          <input id="segMinSpent" type="number" min="0" value="0" step="1000">
+        </label>
+      </div>
+      <div class="seg-actions">
+        <button class="btn primary" id="segRun">Показать</button>
+        <button class="btn" id="segToList" disabled>➕ Вывести на дашборд</button>
+        <button class="btn" id="segExport" disabled>⭳ Экспорт CSV</button>
+        <button class="btn" id="segReset">Сбросить</button>
+        <span class="seg-summary muted" id="segSummary"></span>
+      </div>
+      <div class="seg-coverage muted" id="segCoverage"></div>
+    </div>
+    <div class="card" style="margin-top:14px;padding:0">
+      <table id="segTable"><thead><tr><th>Клиент</th><th>Телефон</th><th>Совпадений</th><th>Всего визитов</th><th>Сумма</th><th>Последний</th><th>Мастера</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- КЛИЕНТЫ -->
+  <section id="view-clients" style="display:none">
+    <input class="search" id="clientSearch" placeholder="Поиск по имени или телефону…">
+    <div class="card" style="margin-top:12px;padding:0">
+      <table id="clientTable"><thead><tr><th>Клиент</th><th>Телефон</th><th>Визитов</th><th>Периодичность</th><th>Последний</th><th>Прогноз</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+</main>
+
+<!-- Лента событий клиента -->
+<div class="overlay" id="overlay"></div>
+<aside class="drawer" id="drawer">
+  <div class="head">
+    <button class="btn" onclick="closeDrawer()">← Назад</button>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap">
+      <div id="drawerName" style="font-size:19px;font-weight:700"></div>
+      <span id="drawerStatus" class="status-badge"></span>
+    </div>
+    <div class="cinfo" id="drawerInfo"></div>
+  </div>
+  <div class="body">
+    <div class="section-title" style="margin-top:0">Статистика клиента</div>
+    <div class="grid statTiles" id="statTiles"></div>
+    <div class="section-title">Активность за 12 месяцев</div>
+    <div class="card monthchart" id="monthChart"></div>
+    <div class="two-col">
+      <div>
+        <div class="section-title">Услуги</div>
+        <div class="card" id="statServices"></div>
+      </div>
+      <div>
+        <div class="section-title">Мастера</div>
+        <div class="card" id="statMasters"></div>
+      </div>
+    </div>
+    <div class="section-title">Лента событий</div>
+    <div class="timeline" id="timeline"></div>
+  </div>
+</aside>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = (p,o) => fetch(p,o).then(r=>r.json());
+const rub = n => (n||0).toLocaleString('ru-RU') + ' ₽';
+const fmtDate = d => d ? new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'short',year:'2-digit'}) : '—';
+const fmtDT = d => d ? new Date(d).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
+const daysAgoTxt = d => { if(!d) return '—'; const n=Math.round((Date.now()-new Date(d))/864e5); return n<=0?'сегодня':`${n} дн. назад`; };
+
+function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1800);}
+
+// --- Вкладки ---
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active');
+  const v=t.dataset.view;
+  ['tasks','overview','clients','segments'].forEach(name=>$('#view-'+name).style.display = name===v?'':'none');
+  if(v==='tasks') loadTasks();
+  if(v==='overview') loadOverview();
+  if(v==='clients') loadClients();
+  if(v==='segments') loadSegments();
+});
+
+// --- Режим (demo/live) ---
+async function refreshMode(){
+  const h = await api('/api/health');
+  const el=$('#mode');
+  if(h.mode==='live'){el.textContent='● LIVE';el.classList.add('live');$('#connectBtn').style.display='none';}
+  else {el.textContent='● ДЕМО-режим';el.classList.remove('live');$('#connectBtn').style.display='';}
+}
+refreshMode();
+
+// --- Вход в YClients ---
+function openLogin(){$('#loginModal').classList.add('open');$('#loginError').textContent='';$('#ycLogin').focus();}
+function closeLogin(){$('#loginModal').classList.remove('open');}
+$('#connectBtn').onclick=openLogin;
+$('#loginModal').onclick=e=>{if(e.target.id==='loginModal')closeLogin();};
+$('#loginSubmit').onclick=async ()=>{
+  const login=$('#ycLogin').value.trim(), password=$('#ycPassword').value;
+  const err=$('#loginError'); err.textContent='';
+  if(!login||!password){err.textContent='Введите логин и пароль';return;}
+  const b=$('#loginSubmit');b.textContent='Вход…';b.disabled=true;
+  try{
+    const r=await fetch('/api/yclients/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({login,password})});
+    const j=await r.json();
+    if(!r.ok){err.textContent=j.error||'Не удалось войти';}
+    else{
+      $('#ycPassword').value='';
+      closeLogin();
+      toast(`Подключено к YClients: ${j.sync.clients} клиентов, ${j.sync.tasks} задач`);
+      await refreshMode(); loadTasks();
+    }
+  }catch(e){err.textContent='Ошибка сети';}
+  b.textContent='Войти и синхронизировать';b.disabled=false;
+};
+
+// --- ЗАДАЧИ ---
+const RES = [
+  {k:'booked',   t:'✅ Записал',    cls:'booked'},
+  {k:'callback', t:'⏳ Перезвонить', cls:''},
+  {k:'no_answer',t:'📵 Не ответил',  cls:''},
+  {k:'refused',  t:'✖ Отказ',       cls:'refused'},
+];
+
+async function loadTasks(){
+  loadLists();
+  await api('/api/tasks/reopen-due',{method:'POST'});
+  const tasks = await api('/api/tasks?status=open');
+  const counts = {};
+  tasks.forEach(t=>counts[t.type]=(counts[t.type]||0)+1);
+  const KL={confirm_visit:'🔔 Подтвердить',rebook:'🔄 Записать',no_show:'❌ Не пришёл',reactivation:'💤 Реактивация'};
+  $('#taskKpis').innerHTML = Object.entries(KL).map(([k,l])=>
+    `<div class="card kpi"><div class="n">${counts[k]||0}</div><div class="l">${l}</div></div>`).join('');
+
+  const list=$('#taskList');
+  if(!tasks.length){list.innerHTML='<div class="empty">🎉 На сегодня задач нет</div>';return;}
+  list.innerHTML = tasks.map(t=>`
+    <div class="task" data-id="${t.id}">
+      <div class="left">
+        <span class="type-badge t-${t.type}">${t.type_label}</span>
+        <div class="tname" onclick="openClient(${t.client_id})">${t.name||'Без имени'}</div>
+        <div class="tmeta"><span class="phone">${t.phone||'—'}</span> · визитов: ${t.visits_count||0}${t.favorite_staff?` · мастер: ${t.favorite_staff}`:''}</div>
+        <div class="treason">${t.reason||''}</div>
+      </div>
+      <div class="actions">
+        <div class="res-row">
+          ${RES.map(r=>`<button class="res ${r.cls}" onclick="act(${t.id},'${r.k}',this)">${r.t}</button>`).join('')}
+        </div>
+        <textarea placeholder="Заметка о звонке…" id="note-${t.id}"></textarea>
+      </div>
+    </div>`).join('');
+}
+
+async function act(taskId,result,btn){
+  const note = $('#note-'+taskId)?.value || '';
+  const admin = localStorage.getItem('admin_name') || 'Администратор';
+  await api(`/api/tasks/${taskId}/action`,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({result,note,admin})});
+  const card = btn.closest('.task');
+  card.style.transition='opacity .25s';card.style.opacity='0';
+  setTimeout(loadTasks,260);
+  toast(result==='booked'?'Записан ✅':result==='callback'?'Отложено на завтра':'Отмечено');
+}
+
+// --- СПИСКИ ОБЗВОНА НА ДАШБОРДЕ ---
+async function loadLists(){
+  const lists = await api('/api/lists');
+  const sec=$('#listSection'), box=$('#listBlocks');
+  if(!lists.length){sec.style.display='none';box.innerHTML='';return;}
+  sec.style.display='';
+  box.innerHTML = lists.map(l=>{
+    const pct = l.total? Math.round(l.done/l.total*100):0;
+    return `<div class="listblock" data-id="${l.id}">
+      <div class="lb-head" onclick="toggleList(${l.id})">
+        <span class="lb-chev">▶</span>
+        <div>
+          <div class="lb-name">${l.name}</div>
+          <div class="lb-count">обработано ${l.done} из ${l.total}</div>
+        </div>
+        <div class="lb-actions">
+          <div class="lb-progress"><div style="width:${pct}%"></div></div>
+          <span class="lb-del" title="Убрать с дашборда" onclick="event.stopPropagation();archiveList(${l.id},'${l.name.replace(/'/g,"\\'")}')">🗑</span>
+        </div>
+      </div>
+      <div class="lb-body" id="lb-body-${l.id}"></div>
+    </div>`;
+  }).join('');
+}
+async function toggleList(id){
+  const block=document.querySelector(`.listblock[data-id="${id}"]`);
+  const wasOpen=block.classList.contains('open');
+  block.classList.toggle('open');
+  if(wasOpen) return;
+  const body=$('#lb-body-'+id);
+  body.innerHTML='<div class="muted" style="padding:12px 0">Загрузка…</div>';
+  const members=await api(`/api/lists/${id}/members`);
+  body.innerHTML = members.map(m=>renderMember(id,m)).join('');
+}
+function renderMember(listId,m){
+  const done=m.status==='done';
+  const R={booked:'записал',callback:'перезвонить',no_answer:'не ответил',refused:'отказ'};
+  return `<div class="member ${done?'done':''}" id="mem-${m.member_id}">
+    <div class="left">
+      <div class="tname" onclick="openClient(${m.client_id})">${m.name||'Без имени'}</div>
+      <div class="tmeta"><span class="phone">${m.phone||'—'}</span> · совпадений: ${m.match_visits} · ${rub(m.match_spent)}${m.favorite_staff?' · '+m.favorite_staff:''}</div>
+      ${done?`<div class="treason">✓ ${R[m.result]||'обработан'}${m.note?' — «'+m.note+'»':''} · ${m.admin||''}</div>`:''}
+    </div>
+    ${done?'':`<div class="actions">
+      <div class="res-row">${RES.map(r=>`<button class="res ${r.cls}" onclick="memAct(${listId},${m.member_id},'${r.k}',this)">${r.t}</button>`).join('')}</div>
+      <textarea placeholder="Заметка о звонке…" id="memnote-${m.member_id}"></textarea>
+    </div>`}
+  </div>`;
+}
+async function memAct(listId,memberId,result,btn){
+  const note=$('#memnote-'+memberId)?.value||'';
+  const admin=localStorage.getItem('admin_name')||'Администратор';
+  await api(`/api/lists/${listId}/members/${memberId}/action`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({result,note,admin})});
+  toast(result==='booked'?'Записан ✅':result==='callback'?'Отложено':'Отмечено');
+  // обновим блок: перерисуем участников и прогресс
+  const members=await api(`/api/lists/${listId}/members`);
+  $('#lb-body-'+listId).innerHTML=members.map(m=>renderMember(listId,m)).join('');
+  const done=members.filter(m=>m.status==='done').length;
+  const block=document.querySelector(`.listblock[data-id="${listId}"]`);
+  block.querySelector('.lb-count').textContent=`обработано ${done} из ${members.length}`;
+  block.querySelector('.lb-progress>div').style.width=(members.length?Math.round(done/members.length*100):0)+'%';
+}
+async function archiveList(id,name){
+  if(!confirm(`Убрать список «${name}» с дашборда? История звонков сохранится в карточках клиентов.`)) return;
+  await api(`/api/lists/${id}`,{method:'DELETE'});
+  toast('Список убран');
+  loadLists();
+}
+
+// --- ОБЗОР ---
+async function loadOverview(){
+  const s = await api('/api/stats');
+  $('#ovKpis').innerHTML = [
+    ['Открытых задач', s.open_total],
+    ['Обработано сегодня', s.done_today],
+    ['Записано сегодня', s.booked_today],
+    ['Конверсия в запись', s.conversion_pct+'%'],
+    ['Всего клиентов', s.clients_total],
+  ].map(([l,n])=>`<div class="card kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+
+  const L=s.open_by_type.labels||{};
+  const types=Object.entries(s.open_by_type).filter(([k])=>k!=='labels');
+  const max=Math.max(1,...types.map(([,v])=>v));
+  $('#ovTypes').innerHTML = types.length? types.map(([k,v])=>`
+    <div style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:4px"><span>${L[k]||k}</span><span class="muted">${v}</span></div>
+      <div style="height:8px;background:var(--panel2);border-radius:6px;overflow:hidden"><div style="height:100%;width:${v/max*100}%;background:var(--accent)"></div></div>
+    </div>`).join('') : '<div class="muted">Открытых задач нет</div>';
+
+  const tb=$('#ovAdmins tbody');
+  tb.innerHTML = s.by_admin.length? s.by_admin.map(a=>{
+    const conv=a.total?Math.round(a.booked/a.total*100):0;
+    return `<tr><td>${a.admin}</td><td>${a.total}</td><td>${a.booked}</td><td>${conv}%</td></tr>`;
+  }).join('') : '<tr><td colspan="4" class="muted">Сегодня ещё не было звонков</td></tr>';
+}
+
+// --- КЛИЕНТЫ ---
+let searchTimer;
+$('#clientSearch').oninput = e=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>loadClients(e.target.value),250);};
+async function loadClients(q=''){
+  const rows = await api('/api/clients?q='+encodeURIComponent(q));
+  const tb=$('#clientTable tbody');
+  tb.innerHTML = rows.map(c=>`
+    <tr class="crow" onclick="openClient(${c.id})">
+      <td>${c.name||'—'}</td>
+      <td class="phone">${c.phone||'—'}</td>
+      <td>${c.visits_count||0}</td>
+      <td>${c.avg_interval_days?'~'+Math.round(c.avg_interval_days)+' дн.':'—'}</td>
+      <td>${fmtDate(c.last_visit)}</td>
+      <td>${fmtDate(c.predicted_next)}</td>
+    </tr>`).join('') || '<tr><td colspan="6" class="empty">Ничего не найдено</td></tr>';
+}
+
+// --- ЛЕНТА КЛИЕНТА ---
+async function openClient(id){
+  const {client:c, stats:s, timeline} = await api(`/api/clients/${id}/timeline`);
+  $('#drawerName').textContent = c.name || 'Без имени';
+
+  const sb=$('#drawerStatus');
+  sb.textContent = s.status_label;
+  sb.className = 'status-badge st-'+s.status;
+
+  // плитки статистики
+  $('#statTiles').innerHTML = [
+    ['Визитов', s.total_visits],
+    ['Средний чек', rub(s.avg_check)],
+    ['Потрачено', rub(s.total_spent)],
+    ['Периодичность', c.avg_interval_days?'~'+Math.round(c.avg_interval_days)+' дн.':'—'],
+    ['Не пришёл', s.no_show + (s.completion_rate!=null?` · ${s.completion_rate}% доходит`:'')],
+    ['Не был', s.since_last_days!=null?s.since_last_days+' дн.':'—'],
+  ].map(([l,n])=>`<div class="stile"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+
+  // график по месяцам
+  const maxM = Math.max(1,...s.months.map(m=>m.count));
+  $('#monthChart').innerHTML = s.months.map(m=>`
+    <div class="mbar" title="${m.label}: ${m.count}">
+      <div class="mc">${m.count||''}</div>
+      <div class="bar" style="height:${m.count/maxM*100}%;${m.count?'':'opacity:.25'}"></div>
+      <div class="ml">${m.label}</div>
+    </div>`).join('');
+
+  const brk = (arr,withSum)=> arr.length? arr.map(x=>`
+    <div class="brk"><span class="nm">${x.name}</span><span class="v">${x.count}×${withSum?' · '+rub(x.sum):''}</span></div>`).join('')
+    : '<div class="muted" style="font-size:13px">Нет данных</div>';
+  $('#statServices').innerHTML = brk(s.services,true);
+  $('#statMasters').innerHTML = brk(s.masters,false);
+
+  $('#drawerInfo').innerHTML = [
+    ['Телефон', c.phone||'—'],['Визитов', c.visits_count||0],
+    ['Периодичность', c.avg_interval_days?'~'+Math.round(c.avg_interval_days)+' дн.':'—'],
+    ['Потрачено', rub(c.spent)],
+    ['Последний визит', daysAgoTxt(c.last_visit)],['Прогноз следующего', fmtDate(c.predicted_next)],
+    ['Любимый мастер', c.favorite_staff||'—'],['Услуга', c.favorite_service||'—'],
+  ].map(([k,v])=>`<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+
+  const STAT={completed:'выполнен',upcoming:'предстоит',no_show:'не пришёл',cancelled:'отменён'};
+  $('#timeline').innerHTML = timeline.map(e=>{
+    if(e.kind==='visit') return `<div class="ev visit"><div class="d">${fmtDT(e.date)}</div><div class="t">${e.title}${e.status!=='completed'?`<span class="pill">${STAT[e.status]||e.status}</span>`:''}</div><div class="s">${e.staff||''}${e.cost?' · '+rub(e.cost):''}</div></div>`;
+    if(e.kind==='call'){const R={booked:'записал',callback:'перезвонить',no_answer:'не ответил',refused:'отказ'};
+      return `<div class="ev call"><div class="d">${fmtDT(e.date)} · ${e.admin||''}</div><div class="t">Звонок${e.result?` — ${R[e.result]||e.result}`:''}</div>${e.note?`<div class="s">«${e.note}»</div>`:''}</div>`;}
+    return `<div class="ev task"><div class="d">${fmtDT(e.date)}</div><div class="t">Задача: ${e.type_label} <span class="pill">${e.status}</span></div><div class="s">${e.reason||''}</div></div>`;
+  }).join('') || '<div class="muted">Событий пока нет</div>';
+
+  $('#overlay').classList.add('open');$('#drawer').classList.add('open');
+}
+function closeDrawer(){$('#overlay').classList.remove('open');$('#drawer').classList.remove('open');}
+$('#overlay').onclick=closeDrawer;
+
+// --- ВЫБОРКИ ---
+let segLoaded=false, segResults=[], segFilter={};
+async function loadSegments(){
+  await refreshCoverage();
+  if(segLoaded) return; segLoaded=true;
+  const svcs = await api('/api/services-list');
+  $('#servicesList').innerHTML = svcs.map(s=>`<option value="${s.name.replace(/"/g,'&quot;')}">${s.count}×</option>`).join('');
+}
+async function refreshCoverage(){
+  const r = await api('/api/data-range');
+  const el=$('#segCoverage');
+  if(!r.min_date){el.textContent='База пуста — сначала синхронизируйте.';return;}
+  el.innerHTML = `В базе ${r.clients} клиентов, ${r.visits} визитов за период ${fmtDate(r.min_date)} — ${fmtDate(r.max_date)}. `+
+    `Нужно глубже? <a onclick="deepSync(36)">Загрузить 3 года</a> · <a onclick="deepSync(60)">5 лет</a> · <a onclick="deepSync(120)">всю историю</a>`;
+}
+function currentFilter(){
+  const f={};
+  const service=$('#segService').value.trim(); if(service)f.service=service;
+  const staff=$('#segStaff').value.trim(); if(staff)f.staff=staff;
+  const from=$('#segFrom').value; if(from)f.from=from;
+  const to=$('#segTo').value; if(to)f.to=to;
+  const mv=$('#segMinVisits').value; if(mv&&mv!=='1')f.min_visits=mv;
+  const ms=$('#segMinSpent').value; if(ms&&ms!=='0')f.min_spent=ms;
+  return f;
+}
+function filterLabel(f){
+  const parts=[];
+  if(f.service)parts.push('«'+f.service+'»');
+  if(f.staff)parts.push('мастер '+f.staff);
+  if(f.from||f.to)parts.push(`${f.from||'…'}–${f.to||'…'}`);
+  if(f.min_visits)parts.push('визитов≥'+f.min_visits);
+  if(f.min_spent)parts.push('от '+f.min_spent+'₽');
+  return parts.join(', ')||'Все клиенты';
+}
+async function runSegment(){
+  segFilter=currentFilter();
+  const b=$('#segRun');b.textContent='Ищу…';b.disabled=true;
+  const r = await api('/api/segments?'+new URLSearchParams(segFilter).toString());
+  b.textContent='Показать';b.disabled=false;
+  segResults=r.clients;
+  $('#segSummary').textContent = `Найдено: ${r.count} клиентов · ${r.total_visits_matched} совпадающих визитов · ${rub(r.total_spent_matched)}`;
+  $('#segExport').disabled = r.count===0;
+  $('#segToList').disabled = r.count===0;
+  const tb=$('#segTable tbody');
+  tb.innerHTML = r.clients.map(c=>`
+    <tr class="crow" onclick="openClient(${c.id})">
+      <td>${c.name||'—'}</td>
+      <td class="phone">${c.phone||'—'}</td>
+      <td><b>${c.match_visits}</b></td>
+      <td>${c.total_visits||0}</td>
+      <td>${rub(c.match_spent)}</td>
+      <td>${fmtDate(c.last_match)}</td>
+      <td class="muted" style="font-size:12px">${(c.masters||'').split(',').slice(0,3).join(', ')}</td>
+    </tr>`).join('') || '<tr><td colspan="7" class="empty">Ничего не найдено под эти условия</td></tr>';
+}
+function exportCSV(){
+  if(!segResults.length) return;
+  const head=['Клиент','Телефон','Совпадений','Всего визитов','Сумма','Последний визит','Мастера'];
+  const rows=segResults.map(c=>[c.name,`'`+(c.phone||''),c.match_visits,c.total_visits,c.match_spent,fmtDate(c.last_match),(c.masters||'').replace(/,/g,'; ')]);
+  const esc=v=>`"${String(v==null?'':v).replace(/"/g,'""')}"`;
+  const csv='﻿'+[head,...rows].map(r=>r.map(esc).join(';')).join('\r\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=`vyborka_${new Date().toISOString().slice(0,10)}.csv`;a.click();URL.revokeObjectURL(a.href);
+  toast(`Выгружено ${segResults.length} клиентов`);
+}
+async function deepSync(months){
+  if(!confirm(`Загрузить историю за ${months} мес.? Это может занять несколько минут.`)) return;
+  toast('Загружаю историю… это займёт время');
+  const b=$('#segRun');b.disabled=true;
+  try{ const r=await api('/api/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({months})});
+    toast(`Готово: ${r.clients} клиентов, ${r.visits} визитов`); segLoaded=false; await loadSegments(); }
+  catch(e){ toast('Ошибка загрузки'); }
+  b.disabled=false;
+}
+async function createListFromFilter(){
+  if(!segResults.length) return;
+  const suggested='Обзвон: '+filterLabel(segFilter);
+  const name=prompt('Название списка для дашборда:', suggested);
+  if(!name) return;
+  try{
+    const r=await api('/api/lists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,filter:segFilter})});
+    if(r.error){toast(r.error);return;}
+    toast(`Список «${name}» создан: ${r.members} клиентов`);
+    document.querySelector('[data-view="tasks"]').click();
+  }catch(e){toast('Не удалось создать список');}
+}
+$('#segRun').onclick=runSegment;
+$('#segExport').onclick=exportCSV;
+$('#segToList').onclick=createListFromFilter;
+$('#segReset').onclick=()=>{['segService','segStaff','segFrom','segTo'].forEach(id=>$('#'+id).value='');$('#segMinVisits').value='1';$('#segMinSpent').value='0';$('#segSummary').textContent='';$('#segTable tbody').innerHTML='';$('#segExport').disabled=true;$('#segToList').disabled=true;segResults=[];};
+
+// --- Синхронизация ---
+$('#syncBtn').onclick = async ()=>{
+  const b=$('#syncBtn');b.textContent='Синхронизация…';b.disabled=true;
+  try{const r=await api('/api/sync',{method:'POST'});toast(`Готово: ${r.clients} клиентов, ${r.tasks} новых задач`);}
+  catch(e){toast('Ошибка синхронизации');}
+  b.textContent='↻ Синхронизировать';b.disabled=false;
+  loadTasks();
+};
+
+// Старт
+loadTasks();
+</script>
+</body>
+</html>
