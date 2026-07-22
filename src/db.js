@@ -114,11 +114,10 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_visits_branch ON visits(branch)');
 
 // Бэкфилл прежних строк (одиночный филиал) первым филиалом из конфига
 (() => {
-  const first = (process.env.YCLIENTS_COMPANY_ID || '').split(',')[0]?.trim() || '';
-  if (!first) return;
-  const idx = first.indexOf(':');
-  const fid = Number(idx === -1 ? first : first.slice(0, idx));
-  const fname = idx === -1 ? String(fid) : first.slice(idx + 1).trim();
+  const first = require('./yclients').companies()[0];
+  if (!first || !first.id) return;
+  const fid = Number(first.id);
+  const fname = first.name || String(fid);
   if (!fid) return;
   db.prepare('UPDATE clients SET company_id=?, branch=? WHERE company_id IS NULL').run(fid, fname);
   db.prepare('UPDATE visits SET company_id=?, branch=? WHERE company_id IS NULL').run(fid, fname);

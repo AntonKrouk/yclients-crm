@@ -16,15 +16,19 @@ const userToken = () => process.env.YCLIENTS_USER_TOKEN || '';
 const loginCred = () => process.env.YCLIENTS_LOGIN || '';
 const passwordCred = () => process.env.YCLIENTS_PASSWORD || '';
 
+// Запасные короткие названия филиалов по company_id (чтобы в .env можно было указать
+// только цифры, без кириллицы). Приоритет: имя из конфига > этот справочник > title из API > id.
+const KNOWN_NAMES = { '387958': 'Басков', '898298': 'Мытнинская' };
+
 // Мультифилиальность: YCLIENTS_COMPANY_ID может содержать несколько филиалов через запятую,
-// каждый в виде `id` или `id:Название` (напр. "387958:Басков,898298:Мытнинская").
+// каждый в виде `id` или `id:Название` (напр. "387958:Басков,898298:Мытнинская" или просто "387958,898298").
 function companies() {
   return (process.env.YCLIENTS_COMPANY_ID || '')
     .split(',').map(s => s.trim()).filter(Boolean)
     .map(entry => {
       const idx = entry.indexOf(':');
       const id = (idx === -1 ? entry : entry.slice(0, idx)).trim();
-      const name = idx === -1 ? '' : entry.slice(idx + 1).trim();
+      const name = (idx === -1 ? '' : entry.slice(idx + 1).trim()) || KNOWN_NAMES[id] || '';
       return { id, name };
     });
 }
