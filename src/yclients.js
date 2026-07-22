@@ -13,11 +13,25 @@ const ENV_FILE = path.join(__dirname, '..', '.env');
 
 const partnerToken = () => process.env.YCLIENTS_PARTNER_TOKEN || '';
 const userToken = () => process.env.YCLIENTS_USER_TOKEN || '';
-const companyId = () => process.env.YCLIENTS_COMPANY_ID || '';
 const loginCred = () => process.env.YCLIENTS_LOGIN || '';
 const passwordCred = () => process.env.YCLIENTS_PASSWORD || '';
-// Боевой режим возможен, если есть партнёрский токен, филиал и ЛИБО готовый user_token,
-// ЛИБО логин+пароль в .env (тогда токен получим сами при старте).
+
+// Мультифилиальность: YCLIENTS_COMPANY_ID может содержать несколько филиалов через запятую,
+// каждый в виде `id` или `id:Название` (напр. "387958:Басков,898298:Мытнинская").
+function companies() {
+  return (process.env.YCLIENTS_COMPANY_ID || '')
+    .split(',').map(s => s.trim()).filter(Boolean)
+    .map(entry => {
+      const idx = entry.indexOf(':');
+      const id = (idx === -1 ? entry : entry.slice(0, idx)).trim();
+      const name = idx === -1 ? '' : entry.slice(idx + 1).trim();
+      return { id, name };
+    });
+}
+const companyId = () => companies()[0]?.id || '';
+
+// Боевой режим возможен, если есть партнёрский токен, хотя бы один филиал и ЛИБО готовый
+// user_token, ЛИБО логин+пароль в .env (тогда токен получим сами при старте).
 const isDemo = () => !(partnerToken() && companyId() && (userToken() || (loginCred() && passwordCred())));
 
 function headers() {
@@ -94,8 +108,15 @@ async function ensureAuth() {
 
 // --- Реальные вызовы данных ---------------------------------------------------
 
-async function fetchStaff() {
-  return api(`/company/${companyId()}/staff/`);
+// Список филиалов, доступных пользователю (id + название) — для подстановки имён.
+async function fetchMyCompanies() {
+  const data = await api('/companies?my=1');
+  const arr = Array.isArray(data) ? data : [data];
+  return arr.map(c => ({ id: String(c.id), title: c.title || c.name || String(c.id) }));
+}
+
+async function fetchStaff(cid = companyId()) {
+  return api(`/company/${cid}/staff/`);
 }
 
 async function fetchServices() {
@@ -121,16 +142,16 @@ async function fetchClients() {
   return all;
 }
 
-// Записи (визиты) за период с пагинацией по meta.total_count.
+// Записи (визиты) конкретного филиала за период с пагинацией по meta.total_count.
 // В каждой записи YClients уже вложен объект client — отдельные запросы по клиентам не нужны.
-async function fetchRecords(startDate, endDate, onProgress) {
+async function fetchRecords(cid, startDate, endDate, onProgress) {
   const all = [];
   const pageSize = 200;
   let page = 1;
   let total = Infinity;
   // eslint-disable-next-line no-constant-condition
   while (all.length < total) {
-    const res = await fetch(BASE + `/records/${companyId()}?start_date=${startDate}&end_date=${endDate}&count=${pageSize}&page=${page}`, { headers: headers() });
+    const res = await fetch(BASE + `/records/${cid}?start_date=${startDate}&end_date=${endDate}&count=${pageSize}&page=${page}`, { headers: headers() });
     const json = await res.json().catch(() => null);
     if (!res.ok || json?.success === false) {
       throw new Error(`YClients /records → ${res.status}: ${json?.meta?.message || ''}`);
@@ -224,8 +245,10 @@ function demoData() {
 module.exports = {
   isDemo,
   companyId,
+  companies,
   authenticate,
   ensureAuth,
+  fetchMyCompanies,
   fetchStaff,
   fetchServices,
   fetchClients,

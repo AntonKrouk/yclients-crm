@@ -100,4 +100,28 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_actions_client ON task_actions(client_id);
 `);
 
+// --- Миграция: мультифилиальность (company_id + branch у clients и visits) ---
+function ensureColumn(table, col, type) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+  if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+}
+ensureColumn('clients', 'company_id', 'INTEGER');
+ensureColumn('clients', 'branch', 'TEXT');
+ensureColumn('visits', 'company_id', 'INTEGER');
+ensureColumn('visits', 'branch', 'TEXT');
+db.exec('CREATE INDEX IF NOT EXISTS idx_clients_branch ON clients(branch)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_visits_branch ON visits(branch)');
+
+// Бэкфилл прежних строк (одиночный филиал) первым филиалом из конфига
+(() => {
+  const first = (process.env.YCLIENTS_COMPANY_ID || '').split(',')[0]?.trim() || '';
+  if (!first) return;
+  const idx = first.indexOf(':');
+  const fid = Number(idx === -1 ? first : first.slice(0, idx));
+  const fname = idx === -1 ? String(fid) : first.slice(idx + 1).trim();
+  if (!fid) return;
+  db.prepare('UPDATE clients SET company_id=?, branch=? WHERE company_id IS NULL').run(fid, fname);
+  db.prepare('UPDATE visits SET company_id=?, branch=? WHERE company_id IS NULL').run(fid, fname);
+})();
+
 module.exports = { db, DATA_DIR };

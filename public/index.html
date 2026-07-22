@@ -18,6 +18,9 @@
   .logo{font-weight:700;font-size:17px;letter-spacing:.2px;color:#1c2028}
   .badge{font-size:11px;padding:2px 8px;border-radius:20px;background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
   .badge.live{color:var(--green);border-color:#bfe6cf;background:#eaf7f0}
+  .branch-sel{padding:7px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:13px;font-family:inherit;cursor:pointer;box-shadow:var(--shadow)}
+  .branch-sel:focus{outline:none;border-color:var(--accent)}
+  .branch-tag{display:inline-block;font-size:10px;font-weight:600;padding:1px 7px;border-radius:20px;background:var(--panel2);color:var(--muted);border:1px solid var(--line);margin-left:6px;vertical-align:middle}
   .tabs{display:flex;gap:6px;margin-left:auto}
   .tab{padding:8px 16px;border-radius:10px;background:transparent;color:var(--muted);border:1px solid transparent;cursor:pointer;font-size:14px}
   .tab:hover{color:var(--text)}
@@ -148,6 +151,7 @@
 <header>
   <span class="logo">✂️ YClients CRM</span>
   <span id="mode" class="badge">…</span>
+  <select id="branchSel" class="branch-sel" title="Филиал" style="display:none"></select>
   <div class="tabs">
     <button class="tab active" data-view="tasks">Задачи</button>
     <button class="tab" data-view="overview">Обзор</button>
@@ -278,6 +282,27 @@
 <script>
 const $ = s => document.querySelector(s);
 const api = (p,o) => fetch(p,o).then(r=>r.json());
+
+// --- Филиалы ---
+let currentBranch = '';
+function bp(url){ return currentBranch ? url + (url.includes('?')?'&':'?') + 'branch=' + encodeURIComponent(currentBranch) : url; }
+const branchTag = b => b ? `<span class="branch-tag">${b}</span>` : '';
+async function loadBranches(){
+  const list = await api('/api/branches');
+  const sel = $('#branchSel');
+  if(!Array.isArray(list) || list.length <= 1){ sel.style.display='none'; return; }
+  sel.style.display='';
+  sel.innerHTML = '<option value="">🏢 Все филиалы</option>' + list.map(b=>`<option value="${b.branch}">${b.branch} · ${b.clients}</option>`).join('');
+  sel.value = currentBranch;
+  sel.onchange = ()=>{ currentBranch = sel.value; reloadCurrentView(); };
+}
+function reloadCurrentView(){
+  const v = document.querySelector('.tab.active')?.dataset.view;
+  if(v==='overview') loadOverview();
+  else if(v==='clients') loadClients($('#clientSearch').value);
+  else if(v==='segments'){ segLoaded=false; loadSegments(); }
+  else loadTasks();
+}
 const rub = n => (n||0).toLocaleString('ru-RU') + ' ₽';
 const fmtDate = d => d ? new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'short',year:'2-digit'}) : '—';
 const fmtDT = d => d ? new Date(d).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
@@ -341,7 +366,7 @@ const RES = [
 async function loadTasks(){
   loadLists();
   await api('/api/tasks/reopen-due',{method:'POST'});
-  const tasks = await api('/api/tasks?status=open');
+  const tasks = await api(bp('/api/tasks?status=open'));
   const counts = {};
   tasks.forEach(t=>counts[t.type]=(counts[t.type]||0)+1);
   const KL={confirm_visit:'🔔 Подтвердить',rebook:'🔄 Записать',no_show:'❌ Не пришёл',reactivation:'💤 Реактивация'};
@@ -354,7 +379,7 @@ async function loadTasks(){
     <div class="task" data-id="${t.id}">
       <div class="left">
         <span class="type-badge t-${t.type}">${t.type_label}</span>
-        <div class="tname" onclick="openClient(${t.client_id})">${t.name||'Без имени'}</div>
+        <div class="tname" onclick="openClient(${t.client_id})">${t.name||'Без имени'}${branchTag(t.branch)}</div>
         <div class="tmeta"><span class="phone">${t.phone||'—'}</span> · визитов: ${t.visits_count||0}${t.favorite_staff?` · мастер: ${t.favorite_staff}`:''}</div>
         <div class="treason">${t.reason||''}</div>
       </div>
@@ -449,7 +474,7 @@ async function archiveList(id,name){
 
 // --- ОБЗОР ---
 async function loadOverview(){
-  const s = await api('/api/stats');
+  const s = await api(bp('/api/stats'));
   $('#ovKpis').innerHTML = [
     ['Открытых задач', s.open_total],
     ['Обработано сегодня', s.done_today],
@@ -478,11 +503,11 @@ async function loadOverview(){
 let searchTimer;
 $('#clientSearch').oninput = e=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>loadClients(e.target.value),250);};
 async function loadClients(q=''){
-  const rows = await api('/api/clients?q='+encodeURIComponent(q));
+  const rows = await api(bp('/api/clients?q='+encodeURIComponent(q)));
   const tb=$('#clientTable tbody');
   tb.innerHTML = rows.map(c=>`
     <tr class="crow" onclick="openClient(${c.id})">
-      <td>${c.name||'—'}</td>
+      <td>${c.name||'—'}${branchTag(c.branch)}</td>
       <td class="phone">${c.phone||'—'}</td>
       <td>${c.visits_count||0}</td>
       <td>${c.avg_interval_days?'~'+Math.round(c.avg_interval_days)+' дн.':'—'}</td>
@@ -526,7 +551,7 @@ async function openClient(id){
   $('#statMasters').innerHTML = brk(s.masters,false);
 
   $('#drawerInfo').innerHTML = [
-    ['Телефон', c.phone||'—'],['Визитов', c.visits_count||0],
+    ['Филиал', c.branch||'—'],['Телефон', c.phone||'—'],['Визитов', c.visits_count||0],
     ['Периодичность', c.avg_interval_days?'~'+Math.round(c.avg_interval_days)+' дн.':'—'],
     ['Потрачено', rub(c.spent)],
     ['Последний визит', daysAgoTxt(c.last_visit)],['Прогноз следующего', fmtDate(c.predicted_next)],
@@ -551,11 +576,11 @@ let segLoaded=false, segResults=[], segFilter={};
 async function loadSegments(){
   await refreshCoverage();
   if(segLoaded) return; segLoaded=true;
-  const svcs = await api('/api/services-list');
+  const svcs = await api(bp('/api/services-list'));
   $('#servicesList').innerHTML = svcs.map(s=>`<option value="${s.name.replace(/"/g,'&quot;')}">${s.count}×</option>`).join('');
 }
 async function refreshCoverage(){
-  const r = await api('/api/data-range');
+  const r = await api(bp('/api/data-range'));
   const el=$('#segCoverage');
   if(!r.min_date){el.textContent='База пуста — сначала синхронизируйте.';return;}
   el.innerHTML = `В базе ${r.clients} клиентов, ${r.visits} визитов за период ${fmtDate(r.min_date)} — ${fmtDate(r.max_date)}. `+
@@ -569,6 +594,7 @@ function currentFilter(){
   const to=$('#segTo').value; if(to)f.to=to;
   const mv=$('#segMinVisits').value; if(mv&&mv!=='1')f.min_visits=mv;
   const ms=$('#segMinSpent').value; if(ms&&ms!=='0')f.min_spent=ms;
+  if(currentBranch) f.branch=currentBranch;
   return f;
 }
 function filterLabel(f){
@@ -592,7 +618,7 @@ async function runSegment(){
   const tb=$('#segTable tbody');
   tb.innerHTML = r.clients.map(c=>`
     <tr class="crow" onclick="openClient(${c.id})">
-      <td>${c.name||'—'}</td>
+      <td>${c.name||'—'}${branchTag(c.branch)}</td>
       <td class="phone">${c.phone||'—'}</td>
       <td><b>${c.match_visits}</b></td>
       <td>${c.total_visits||0}</td>
@@ -648,6 +674,7 @@ $('#syncBtn').onclick = async ()=>{
 };
 
 // Старт
+loadBranches();
 loadTasks();
 </script>
 </body>

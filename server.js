@@ -80,16 +80,30 @@ app.post('/api/sync', async (req, res) => {
   }
 });
 
+// Список филиалов (для переключателя на дашборде)
+app.get('/api/branches', (req, res) => {
+  const rows = db.prepare(`
+    SELECT branch, company_id, COUNT(*) AS clients
+    FROM clients WHERE branch IS NOT NULL AND branch <> ''
+    GROUP BY branch ORDER BY branch`).all();
+  res.json(rows);
+});
+
 // Охват данных: сколько клиентов/визитов и за какой период есть в базе (для вкладки «Выборки»)
 app.get('/api/data-range', (req, res) => {
-  const r = db.prepare(`SELECT MIN(date) AS min_date, MAX(date) AS max_date, COUNT(*) AS visits FROM visits`).get();
-  const clients = db.prepare('SELECT COUNT(*) n FROM clients').get().n;
+  const branch = (req.query.branch || '').trim();
+  const w = branch ? 'WHERE branch = ?' : '';
+  const args = branch ? [branch] : [];
+  const r = db.prepare(`SELECT MIN(date) AS min_date, MAX(date) AS max_date, COUNT(*) AS visits FROM visits ${w}`).get(...args);
+  const clients = db.prepare(`SELECT COUNT(*) n FROM clients ${branch ? 'WHERE branch = ?' : ''}`).get(...args).n;
   res.json({ ...r, clients });
 });
 
 // Список услуг с частотой — для подсказок в фильтре выборок
 app.get('/api/services-list', (req, res) => {
-  const rows = db.prepare(`SELECT service FROM visits WHERE status='completed' AND service <> ''`).all();
+  const branch = (req.query.branch || '').trim();
+  const rows = db.prepare(`SELECT service FROM visits WHERE status='completed' AND service <> '' ${branch ? 'AND branch = ?' : ''}`)
+    .all(...(branch ? [branch] : []));
   const m = new Map();
   for (const row of rows) {
     for (const part of String(row.service).split(', ')) {
@@ -109,16 +123,18 @@ function querySegment(f = {}) {
   const to = (f.to || '').trim();
   const minVisits = Math.max(1, Number(f.min_visits) || 1);
   const minSpent = Math.max(0, Number(f.min_spent) || 0);
+  const branch = (f.branch || '').trim();
 
   const conds = ["v.status = 'completed'"];
   const params = [];
+  if (branch) { conds.push('c.branch = ?'); params.push(branch); }
   if (service) { conds.push('lower(v.service) LIKE ?'); params.push('%' + service + '%'); }
   if (staff) { conds.push('lower(v.staff) LIKE ?'); params.push('%' + staff + '%'); }
   if (from) { conds.push('v.date >= ?'); params.push(from); }
   if (to) { conds.push('v.date <= ?'); params.push(to + 'T23:59:59'); }
 
   const sql = `
-    SELECT c.id, c.name, c.phone, c.visits_count AS total_visits,
+    SELECT c.id, c.name, c.phone, c.branch, c.visits_count AS total_visits,
            COUNT(v.id) AS match_visits,
            MAX(v.date) AS last_match,
            ROUND(SUM(v.cost)) AS match_spent,
@@ -218,8 +234,10 @@ app.post('/api/yclients/login', async (req, res) => {
 
 // --- Задачи ------------------------------------------------------------------
 
-function taskCounts() {
-  const rows = db.prepare(`SELECT type, COUNT(*) n FROM tasks WHERE status='open' GROUP BY type`).all();
+function taskCounts(branch) {
+  const w = branch ? 'AND c.branch = ?' : '';
+  const rows = db.prepare(`SELECT t.type, COUNT(*) n FROM tasks t JOIN clients c ON c.id = t.client_id
+    WHERE t.status='open' ${w} GROUP BY t.type`).all(...(branch ? [branch] : []));
   const out = {};
   for (const r of rows) out[r.type] = r.n;
   return out;
@@ -227,14 +245,15 @@ function taskCounts() {
 
 app.get('/api/tasks', (req, res) => {
   const status = req.query.status || 'open';
+  const branch = (req.query.branch || '').trim();
   const rows = db.prepare(`
     SELECT t.id, t.type, t.due_date, t.priority, t.status, t.reason, t.created_at, t.assigned_to,
            c.id AS client_id, c.name, c.phone, c.last_visit, c.avg_interval_days,
-           c.favorite_staff, c.favorite_service, c.visits_count
+           c.favorite_staff, c.favorite_service, c.visits_count, c.branch
     FROM tasks t JOIN clients c ON c.id = t.client_id
-    WHERE t.status = ?
+    WHERE t.status = ? ${branch ? 'AND c.branch = ?' : ''}
     ORDER BY t.priority ASC, t.created_at ASC
-  `).all(status);
+  `).all(...(branch ? [status, branch] : [status]));
   res.json(rows.map(r => ({ ...r, type_label: TYPE_LABEL[r.type] || r.type })));
 });
 
@@ -275,14 +294,15 @@ app.post('/api/tasks/reopen-due', (req, res) => {
 
 app.get('/api/clients', (req, res) => {
   const q = `%${(req.query.q || '').toLowerCase()}%`;
+  const branch = (req.query.branch || '').trim();
   const rows = db.prepare(`
-    SELECT id, name, phone, last_visit, visits_count, spent, avg_interval_days,
+    SELECT id, name, phone, branch, last_visit, visits_count, spent, avg_interval_days,
            predicted_next, favorite_staff, favorite_service
     FROM clients
-    WHERE lower(name) LIKE ? OR phone LIKE ?
+    WHERE (lower(name) LIKE ? OR phone LIKE ?) ${branch ? 'AND branch = ?' : ''}
     ORDER BY last_visit DESC
     LIMIT 500
-  `).all(q, q);
+  `).all(...(branch ? [q, q, branch] : [q, q]));
   res.json(rows);
 });
 
@@ -384,24 +404,31 @@ app.get('/api/clients/:id/timeline', (req, res) => {
 // --- Дашборд владельца -------------------------------------------------------
 
 app.get('/api/stats', (req, res) => {
-  const open = taskCounts();
+  const branch = (req.query.branch || '').trim();
+  const bw = branch ? 'AND c.branch = ?' : '';
+  const bArgs = branch ? [branch] : [];
+
+  const open = taskCounts(branch);
   const openTotal = Object.values(open).reduce((a, b) => a + b, 0);
 
   const todayActions = db.prepare(`
-    SELECT result, COUNT(*) n FROM task_actions WHERE date(created_at) = date('now') GROUP BY result
-  `).all();
+    SELECT a.result, COUNT(*) n FROM task_actions a JOIN clients c ON c.id = a.client_id
+    WHERE date(a.created_at) = date('now') ${bw} GROUP BY a.result
+  `).all(...bArgs);
   const resultMap = {};
   for (const r of todayActions) resultMap[r.result] = r.n;
 
   const byAdmin = db.prepare(`
-    SELECT COALESCE(admin,'—') admin,
+    SELECT COALESCE(a.admin,'—') admin,
            COUNT(*) total,
-           SUM(CASE WHEN result='booked' THEN 1 ELSE 0 END) booked
-    FROM task_actions WHERE date(created_at) = date('now')
-    GROUP BY admin ORDER BY total DESC
-  `).all();
+           SUM(CASE WHEN a.result='booked' THEN 1 ELSE 0 END) booked
+    FROM task_actions a JOIN clients c ON c.id = a.client_id
+    WHERE date(a.created_at) = date('now') ${bw}
+    GROUP BY a.admin ORDER BY total DESC
+  `).all(...bArgs);
 
-  const doneToday = db.prepare(`SELECT COUNT(*) n FROM tasks WHERE status='done' AND date(closed_at)=date('now')`).get().n;
+  const doneToday = db.prepare(`SELECT COUNT(*) n FROM tasks t JOIN clients c ON c.id = t.client_id
+    WHERE t.status='done' AND date(t.closed_at)=date('now') ${bw}`).get(...bArgs).n;
   const booked = resultMap.booked || 0;
   const contacted = (resultMap.booked || 0) + (resultMap.refused || 0) + (resultMap.callback || 0);
   const conversion = contacted ? Math.round((booked / contacted) * 100) : 0;
@@ -415,7 +442,7 @@ app.get('/api/stats', (req, res) => {
     conversion_pct: conversion,
     results_today: resultMap,
     by_admin: byAdmin,
-    clients_total: db.prepare('SELECT COUNT(*) n FROM clients').get().n,
+    clients_total: db.prepare(`SELECT COUNT(*) n FROM clients ${branch ? 'WHERE branch = ?' : ''}`).get(...bArgs).n,
   });
 });
 
