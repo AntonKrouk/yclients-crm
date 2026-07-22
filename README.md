@@ -55,13 +55,18 @@ npm start           # http://localhost:3020
 - `PUBLIC_URL` — адрес дашборда, попадёт ссылкой в уведомление.
 - Сводка уходит при каждом `/api/sync`. Для авторассылки по утрам повесьте cron на `POST /api/sync`.
 
-## Деплой на Timeweb Cloud (как «План портных»)
+## Деплой
 
-- GitHub-репозиторий → Timeweb Cloud App Platform, backend/Node, автодеплой из `main`.
-- Команда запуска: `node server.js`. Healthcheck: `/api/health`. Слушает `0.0.0.0`.
-- Переменные окружения в панели Timeweb: `PORT=3000`, `DATA_DIR=/data` (persistent volume под SQLite),
-  плюс токены YClients и Telegram.
-- Открывается без VPN (в отличие от Railway).
+**Timeweb VPS (Cloud Server)** — пошаговый runbook в [DEPLOY.md](DEPLOY.md).
+Кратко: Ubuntu + Node 22, `git clone`, `.env` с секретами, systemd-автозапуск, nginx + HTTPS, cron на синк.
+SQLite лежит на диске сервера — звонки, списки и задачи переживают перезапуски и обновления кода.
+
+> App Platform (PaaS) НЕ подходит: у него эфемерная файловая система, база стиралась бы при каждом передеплое.
+
+## Доступ и безопасность
+
+Вход в дашборд защищён паролем `DASHBOARD_PASSWORD` (страница `login.html`, подписанная кука).
+Пока переменная не задана — вход открыт (только для локальной разработки). На публичном сервере задать обязательно.
 
 ## API
 

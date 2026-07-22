@@ -1,0 +1,16 @@
+[Unit]
+Description=YClients CRM (задачи админам + обзор владельца)
+After=network.target
+
+[Service]
+Type=simple
+User=crm
+WorkingDirectory=/opt/yclients-crm
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+# Переменные окружения приложение само читает из /opt/yclients-crm/.env
+# Логи: journalctl -u yclients-crm -f
+
+[Install]
+WantedBy=multi-user.target

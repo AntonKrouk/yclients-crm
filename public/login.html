@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Вход — YClients CRM</title>
+<style>
+  :root{--bg:#f3f4f7;--panel:#fff;--line:#e4e7ee;--text:#2b2f38;--muted:#8b93a5;--accent:#12b3a6;--accent2:#0ea597;--red:#e35454}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);
+       font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:var(--text);padding:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;width:min(380px,100%);
+        padding:28px;box-shadow:0 10px 40px rgba(16,24,40,.10)}
+  .logo{font-size:20px;font-weight:700;color:#1c2028;margin-bottom:4px}
+  .sub{font-size:13px;color:var(--muted);margin-bottom:22px}
+  label{display:block;font-size:13px;font-weight:500;margin-bottom:6px}
+  input{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:10px;color:var(--text);
+        padding:11px 13px;font-size:15px;font-family:inherit}
+  input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(18,179,166,.12)}
+  button{width:100%;margin-top:16px;padding:12px;border:none;border-radius:10px;background:var(--accent2);
+         color:#fff;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit}
+  button:hover{background:var(--accent)}
+  button:disabled{opacity:.6;cursor:default}
+  .err{color:var(--red);font-size:13px;min-height:18px;margin-top:10px;text-align:center}
+</style>
+</head>
+<body>
+<form class="card" id="f">
+  <div class="logo">✂️ YClients CRM</div>
+  <div class="sub">Вход для сотрудников</div>
+  <label for="pw">Пароль</label>
+  <input type="password" id="pw" autocomplete="current-password" autofocus>
+  <button type="submit" id="btn">Войти</button>
+  <div class="err" id="err"></div>
+</form>
+<script>
+  const f=document.getElementById('f'), err=document.getElementById('err'), btn=document.getElementById('btn');
+  f.onsubmit=async e=>{
+    e.preventDefault(); err.textContent=''; btn.disabled=true; btn.textContent='Вход…';
+    try{
+      const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({password:document.getElementById('pw').value})});
+      if(r.ok){ location.href='/'; }
+      else{ const j=await r.json().catch(()=>({})); err.textContent=j.error||'Неверный пароль'; }
+    }catch(_){ err.textContent='Ошибка сети'; }
+    btn.disabled=false; btn.textContent='Войти';
+  };
+</script>
+</body>
+</html>

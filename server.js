@@ -2,6 +2,7 @@
 
 require('./src/env');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const express = require('express');
 const { db } = require('./src/db');
 const sync = require('./src/sync');
@@ -10,6 +11,46 @@ const yc = require('./src/yclients');
 
 const app = express();
 app.use(express.json());
+
+// --- Защита входа (пароль дашборда) -----------------------------------------
+// Включается, когда задан DASHBOARD_PASSWORD. Без него (локально/демо) вход открыт.
+const DASH_PW = process.env.DASHBOARD_PASSWORD || '';
+const SECRET = process.env.SESSION_SECRET || DASH_PW || 'dev-secret';
+const CRON_SECRET = process.env.CRON_SECRET || '';
+const AUTH_ON = Boolean(DASH_PW);
+const sessionCookie = () => crypto.createHmac('sha256', SECRET).update('authorized-v1').digest('hex');
+
+function parseCookies(req) {
+  const h = req.headers.cookie || '';
+  return Object.fromEntries(
+    h.split(';').map(s => s.trim()).filter(Boolean)
+      .map(s => { const i = s.indexOf('='); return [s.slice(0, i), decodeURIComponent(s.slice(i + 1))]; })
+  );
+}
+
+app.post('/api/login', (req, res) => {
+  if (!AUTH_ON) return res.json({ ok: true });
+  if ((req.body || {}).password === DASH_PW) {
+    res.setHeader('Set-Cookie', `sess=${sessionCookie()}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Lax`);
+    return res.json({ ok: true });
+  }
+  res.status(401).json({ error: 'Неверный пароль' });
+});
+app.post('/api/logout', (req, res) => {
+  res.setHeader('Set-Cookie', 'sess=; Path=/; Max-Age=0');
+  res.json({ ok: true });
+});
+
+app.use((req, res, next) => {
+  if (!AUTH_ON) return next();
+  if (req.path === '/api/login' || req.path === '/api/health') return next();
+  // авто-синк по крону: разрешаем /api/sync с валидным токеном без куки
+  if (req.path === '/api/sync' && CRON_SECRET && req.query.token === CRON_SECRET) return next();
+  if (parseCookies(req).sess === sessionCookie()) return next();
+  if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Требуется вход' });
+  return res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3020;
