@@ -45,7 +45,7 @@ function generate() {
   db.prepare(`UPDATE tasks SET status='open' WHERE status='snoozed' AND due_date <= date('now')`).run();
 
   const clients = db.prepare(`
-    SELECT id, name, branch, last_visit, avg_interval_days, predicted_next, visits_count
+    SELECT id, name, phone, branch, last_visit, avg_interval_days, predicted_next, visits_count
     FROM clients WHERE COALESCE(do_not_call,0) = 0
   `).all();
 
@@ -56,6 +56,42 @@ function generate() {
   `).all();
   const upMap = new Map(upcomingByClient.map(r => [r.client_id, r.next_date]));
 
+  // --- Дедуп по филиалам: один человек ходит в оба филиала как ДВЕ карточки (разный
+  // yclients_id, один телефон). Приоритетный филиал = где больше визитов; задачу ставим
+  // только там, дубль в другом филиале подавляем. «Записан» считаем по ЛЮБОМУ филиалу.
+  const normPhone = p => String(p || '').replace(/\D/g, '');
+  const isRealPhone = d => d.length >= 10 && new Set(d.split('')).size > 2; // отсечь 79999999999 и мусор
+  const groups = new Map();
+  for (const c of clients) {
+    const d = normPhone(c.phone);
+    const key = isRealPhone(d) ? 'p:' + d.slice(-10) : 'id:' + c.id; // без телефона — сам по себе
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(c);
+  }
+  const suppressed = new Set();      // id неприоритетных дублей — задачи не ставим
+  const personBooked = new Set();    // id приоритетного, если человек записан в каком-то филиале
+  for (const arr of groups.values()) {
+    if (arr.length < 2) continue;
+    // приоритет: больше визитов, при равенстве — более свежий визит, затем меньший id
+    arr.sort((a, b) => (b.visits_count - a.visits_count)
+      || (new Date(b.last_visit || 0) - new Date(a.last_visit || 0)) || (a.id - b.id));
+    const prio = arr[0];
+    for (let i = 1; i < arr.length; i++) suppressed.add(arr[i].id);
+    if (arr.some(c => upMap.has(c.id))) personBooked.add(prio.id);
+  }
+
+  // Снимаем ранее созданные задачи по неприоритетным дублям (чтобы не висели после включения дедупа)
+  if (suppressed.size) {
+    const ids = [...suppressed];
+    const CH = 400;
+    for (let i = 0; i < ids.length; i += CH) {
+      const part = ids.slice(i, i + CH);
+      db.prepare(`UPDATE tasks SET status='dismissed', closed_at=?
+                  WHERE status IN ('open','snoozed') AND client_id IN (${part.map(() => '?').join(',')})`)
+        .run(nowIso, ...part);
+    }
+  }
+
   const lastNoShow = db.prepare(`
     SELECT client_id, MAX(date) AS d FROM visits WHERE status = 'no_show' GROUP BY client_id
   `).all();
@@ -65,7 +101,8 @@ function generate() {
   const candidates = [];
 
   for (const c of clients) {
-    if (upMap.get(c.id)) continue; // уже записан — не зовём его записываться
+    if (suppressed.has(c.id)) continue;                 // дубль в неприоритетном филиале
+    if (upMap.get(c.id) || personBooked.has(c.id)) continue; // записан в этом или другом филиале
 
     const frequent = c.avg_interval_days != null && c.avg_interval_days <= FREQUENT_DAYS ? 1 : 0;
     const base = { clientId: c.id, branch: c.branch || '', frequent, visits: c.visits_count || 0 };
