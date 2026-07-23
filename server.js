@@ -80,6 +80,16 @@ app.post('/api/sync', async (req, res) => {
   }
 });
 
+// Подтянуть комментарии из карточек YClients (фоново, долго). ?full=1 — по всем клиентам
+app.post('/api/sync-comments', (req, res) => {
+  const st = sync.commentSyncStatus();
+  if (st.running) return res.json({ started: false, ...st });
+  const full = req.query.full === '1' || req.body?.full;
+  setImmediate(() => sync.syncComments({ full }).catch(e => console.error('[comments]', e.message)));
+  res.json({ started: true });
+});
+app.get('/api/sync-comments/status', (req, res) => res.json(sync.commentSyncStatus()));
+
 // Список филиалов (для переключателя на дашборде)
 app.get('/api/branches', (req, res) => {
   const rows = db.prepare(`
@@ -124,6 +134,8 @@ function querySegment(f = {}) {
   const minVisits = Math.max(1, Number(f.min_visits) || 1);
   const minSpent = Math.max(0, Number(f.min_spent) || 0);
   const branch = (f.branch || '').trim();
+  const comment = (f.comment || '').toLowerCase().trim();
+  const dnc = (f.dnc || '').trim(); // '' = исключить «не беспокоить» (по умолч.) | 'all' = включая | 'only' = только они
 
   const conds = ["v.status = 'completed'"];
   const params = [];
@@ -132,9 +144,13 @@ function querySegment(f = {}) {
   if (staff) { conds.push('lower(v.staff) LIKE ?'); params.push('%' + staff + '%'); }
   if (from) { conds.push('v.date >= ?'); params.push(from); }
   if (to) { conds.push('v.date <= ?'); params.push(to + 'T23:59:59'); }
+  if (comment) { conds.push('lower(COALESCE(c.comment,\'\')) LIKE ?'); params.push('%' + comment + '%'); }
+  if (dnc === 'only') conds.push('COALESCE(c.do_not_call,0) = 1');
+  else if (dnc !== 'all') conds.push('COALESCE(c.do_not_call,0) = 0');
 
   const sql = `
-    SELECT c.id, c.name, c.phone, c.branch, c.visits_count AS total_visits,
+    SELECT c.id, c.name, c.phone, c.branch, c.comment, COALESCE(c.do_not_call,0) AS do_not_call,
+           c.visits_count AS total_visits,
            COUNT(v.id) AS match_visits,
            MAX(v.date) AS last_match,
            ROUND(SUM(v.cost)) AS match_spent,
@@ -305,7 +321,7 @@ app.get('/api/clients', (req, res) => {
   const branch = (req.query.branch || '').trim();
   const rows = db.prepare(`
     SELECT id, name, phone, branch, last_visit, visits_count, spent, avg_interval_days,
-           predicted_next, favorite_staff, favorite_service
+           predicted_next, favorite_staff, favorite_service, comment, COALESCE(do_not_call,0) AS do_not_call
     FROM clients
     WHERE (lower(name) LIKE ? OR phone LIKE ?) ${branch ? 'AND branch = ?' : ''}
     ORDER BY last_visit DESC
@@ -325,7 +341,7 @@ function computeClientStats(id, client) {
   const totalSpent = completed.reduce((s, v) => s + (v.cost || 0), 0);
   const avgCheck = completed.length ? Math.round(totalSpent / completed.length) : 0;
 
-  // разбивка по услугам и мастерам
+  // разбивка по услугам и мастерам: полный список с долей от всех визитов (в %)
   const group = (key) => {
     const m = {};
     completed.forEach(v => {
@@ -333,7 +349,8 @@ function computeClientStats(id, client) {
       if (!m[k]) m[k] = { name: k, count: 0, sum: 0 };
       m[k].count++; m[k].sum += v.cost || 0;
     });
-    return Object.values(m).sort((a, b) => b.count - a.count);
+    return Object.values(m).sort((a, b) => b.count - a.count)
+      .map(x => ({ ...x, pct: completed.length ? Math.round(x.count / completed.length * 100) : 0 }));
   };
 
   // активность по месяцам за последние 12 мес.

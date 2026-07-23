@@ -146,6 +146,12 @@ async function fetchClients() {
   return all;
 }
 
+// Полная карточка клиента — ЕДИНСТВЕННОЕ место, где YClients отдаёт поле comment
+// (bulk /clients/search и вложенный client в /records комментарий не возвращают — проверено).
+async function fetchClientCard(cid, clientYcId) {
+  return api(`/client/${cid}/${clientYcId}`);
+}
+
 // Записи (визиты) конкретного филиала за период с пагинацией по meta.total_count.
 // В каждой записи YClients уже вложен объект client — отдельные запросы по клиентам не нужны.
 async function fetchRecords(cid, startDate, endDate, onProgress) {
@@ -256,6 +262,7 @@ module.exports = {
   fetchStaff,
   fetchServices,
   fetchClients,
+  fetchClientCard,
   fetchRecords,
   demoData,
 };

@@ -140,6 +140,56 @@ function clientsFromRecords(records) {
   return [...m.values()];
 }
 
+// --- Комментарии из карточек клиентов ----------------------------------------
+// YClients отдаёт comment только в одиночной карточке (/client/{cid}/{id}), поэтому
+// тянем их отдельным фоновым проходом с троттлингом (~170 запросов/мин).
+// Инкрементально: непроверенные + активные клиенты не чаще раза в 3 дня.
+
+const DNC_RE = /(не\s*звон|не\s*беспоко|нельзя\s*звон|не\s*тревож|не\s*писать|do\s*not\s*call)/i;
+const THROTTLE_MS = 350;
+let commentSync = { running: false, done: 0, total: 0 };
+
+async function syncComments({ full = false } = {}) {
+  if (yc.isDemo()) return { skipped: 'demo' };
+  if (commentSync.running) return { skipped: 'already_running' };
+  const rows = db.prepare(`
+    SELECT id, yclients_id, company_id, name FROM clients
+    WHERE yclients_id IS NOT NULL AND company_id IS NOT NULL
+    ${full ? '' : `AND (comment_checked_at IS NULL
+                       OR (comment_checked_at < datetime('now','-3 days')
+                           AND last_visit >= datetime('now','-120 days')))`}
+  `).all();
+  commentSync = { running: true, done: 0, total: rows.length };
+  const upd = db.prepare('UPDATE clients SET comment=?, do_not_call=?, comment_checked_at=? WHERE id=?');
+  let dnc = 0;
+  try {
+    for (const r of rows) {
+      try {
+        const card = await yc.fetchClientCard(r.company_id, r.yclients_id);
+        const comment = String(card?.comment || '').trim();
+        const flag = (DNC_RE.test(comment) || DNC_RE.test(r.name || '')) ? 1 : 0;
+        upd.run(comment || null, flag, iso(Date.now()), r.id);
+        if (flag) dnc++;
+      } catch { /* сетевая ошибка или клиент удалён — не трогаем, попробуем в следующий проход */ }
+      commentSync.done++;
+      if (commentSync.done % 200 === 0) console.log(`[comments] ${commentSync.done}/${commentSync.total}`);
+      await new Promise(rs => setTimeout(rs, THROTTLE_MS));
+    }
+    // «не беспокоить» — снимаем открытые задачи по таким клиентам
+    const dismissed = db.prepare(`
+      UPDATE tasks SET status='dismissed', closed_at=?
+      WHERE status IN ('open','snoozed')
+        AND client_id IN (SELECT id FROM clients WHERE COALESCE(do_not_call,0)=1)
+    `).run(iso(Date.now())).changes;
+    console.log(`[comments] проверено ${commentSync.done}/${commentSync.total}, «не беспокоить»: ${dnc}, снято задач: ${dismissed}`);
+    return { checked: commentSync.done, total: commentSync.total, do_not_call: dnc, tasks_dismissed: dismissed };
+  } finally {
+    commentSync = { ...commentSync, running: false };
+  }
+}
+
+function commentSyncStatus() { return { ...commentSync }; }
+
 async function run(opts = {}) {
   const now = iso(Date.now());
   let totalC = 0, totalV = 0;
@@ -171,8 +221,24 @@ async function run(opts = {}) {
     }
   }
 
+  // «Не беспокоить» ловим и в имени клиента: в этом салоне админы пишут заметки прямо в имя
+  // («писать в WA», «не звонить» и т.п.). Имя обновляется каждым синком — пересчитываем флаг.
+  const flagRows = db.prepare(`SELECT id, name, comment, COALESCE(do_not_call,0) AS f FROM clients`).all();
+  const updFlag = db.prepare('UPDATE clients SET do_not_call=? WHERE id=?');
+  for (const r of flagRows) {
+    const flag = (DNC_RE.test(r.name || '') || DNC_RE.test(r.comment || '')) ? 1 : 0;
+    if (flag !== r.f) updFlag.run(flag, r.id);
+  }
+
   const tasksN = rules.generate();
+
+  // Комментарии тянем фоном ПОСЛЕ ответа: первый проход долгий (~350 мс на клиента),
+  // а «не беспокоить»-задачи, созданные до его завершения, снимутся внутри syncComments()
+  if (!yc.isDemo() && !opts.skipComments) {
+    setImmediate(() => syncComments().catch(e => console.error('[comments]', e.message)));
+  }
+
   return { mode: yc.isDemo() ? 'demo' : 'live', clients: totalC, visits: totalV, tasks: tasksN, at: now };
 }
 
-module.exports = { run, computeFrequency };
+module.exports = { run, computeFrequency, syncComments, commentSyncStatus };

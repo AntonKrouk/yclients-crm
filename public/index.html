@@ -76,9 +76,14 @@
   .ev .t{font-weight:600;margin-top:2px}
   .ev .s{font-size:13px;color:#525a68;margin-top:2px}
   .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;background:var(--panel2);border:1px solid var(--line);color:var(--muted);margin-left:6px}
-  .cinfo{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
-  .cinfo .k{font-size:12px;color:var(--muted)}
-  .cinfo .v{font-weight:600}
+  .cinfo{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}
+  .cinfo>div{background:var(--panel2);border-radius:10px;padding:8px 12px;min-width:0}
+  .cinfo .k{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+  .cinfo .v{font-weight:600;font-size:13px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cinfo .v a{color:var(--accent2);text-decoration:none}
+  .note-box{margin-top:12px;background:#fbf0da;border:1px solid #f0dbb0;color:#7a5410;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.45}
+  .note-box.dnc{background:#fbe4e4;border-color:#f2c9c9;color:#a33636;font-weight:600}
+  .dnc-badge{font-size:12px;font-weight:700;padding:3px 11px;border-radius:20px;background:#fbe4e4;border:1px solid #f2c9c9;color:#d14343;white-space:nowrap}
   table{width:100%;border-collapse:collapse;font-size:14px}
   th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line)}
   th{color:var(--muted);font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
@@ -95,10 +100,14 @@
   .stile .n{font-size:22px;font-weight:700;color:#1c2028}
   .stile .l{font-size:12px;color:var(--muted);margin-top:2px}
   .two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-  .brk{display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:5px 0;border-bottom:1px solid var(--line)}
+  .brk{padding:7px 0;border-bottom:1px solid var(--line)}
   .brk:last-child{border-bottom:none}
-  .brk .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%}
-  .brk .v{color:var(--muted);font-variant-numeric:tabular-nums}
+  .brk .row1{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;margin-bottom:5px}
+  .brk .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#1c2028}
+  .brk .v{color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .brk .v b{color:var(--accent2)}
+  .brk .bar{height:6px;background:var(--panel2);border-radius:4px;overflow:hidden}
+  .brk .bar>div{height:100%;background:var(--accent);border-radius:4px}
   .monthchart{display:flex;align-items:flex-end;gap:5px;height:96px;padding:12px 14px}
   .mbar{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:flex-end}
   .mbar .bar{width:100%;min-height:2px;background:var(--accent);border-radius:4px 4px 0 0;transition:height .2s}
@@ -107,8 +116,8 @@
   @media(max-width:520px){.two-col{grid-template-columns:1fr}.statTiles{grid-template-columns:repeat(2,1fr)}}
   .seg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
   .segfld{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:5px}
-  .segfld input{background:var(--panel);border:1px solid var(--line);border-radius:9px;color:var(--text);padding:9px 11px;font-size:14px;font-family:inherit}
-  .segfld input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(18,179,166,.12)}
+  .segfld input,.segfld select{background:var(--panel);border:1px solid var(--line);border-radius:9px;color:var(--text);padding:9px 11px;font-size:14px;font-family:inherit}
+  .segfld input:focus,.segfld select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(18,179,166,.12)}
   .seg-actions{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
   .seg-summary{font-size:13px}
   .seg-coverage{font-size:12px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
@@ -225,6 +234,16 @@
         <label class="segfld">Потрачено ≥, ₽
           <input id="segMinSpent" type="number" min="0" value="0" step="1000">
         </label>
+        <label class="segfld">Комментарий содержит
+          <input id="segComment" placeholder="напр. не звонить">
+        </label>
+        <label class="segfld">«Не беспокоить»
+          <select id="segDnc">
+            <option value="">Исключить (по умолч.)</option>
+            <option value="all">Включая их</option>
+            <option value="only">Только они</option>
+          </select>
+        </label>
       </div>
       <div class="seg-actions">
         <button class="btn primary" id="segRun">Показать</button>
@@ -257,8 +276,10 @@
     <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap">
       <div id="drawerName" style="font-size:19px;font-weight:700"></div>
       <span id="drawerStatus" class="status-badge"></span>
+      <span id="drawerDnc" class="dnc-badge" style="display:none">🚫 Не беспокоить</span>
     </div>
     <div class="cinfo" id="drawerInfo"></div>
+    <div id="drawerComment" style="display:none" class="note-box"></div>
   </div>
   <div class="body">
     <div class="section-title" style="margin-top:0">Статистика клиента</div>
@@ -372,7 +393,7 @@ async function loadTasks(){
   const tasks = await api(bp('/api/tasks?status=open'));
   const counts = {};
   tasks.forEach(t=>counts[t.type]=(counts[t.type]||0)+1);
-  const KL={confirm_visit:'🔔 Подтвердить',rebook:'🔄 Записать',no_show:'❌ Не пришёл',reactivation:'💤 Реактивация'};
+  const KL={rebook:'🔄 Записать',no_show:'❌ Не пришёл',reactivation:'💤 Реактивация'};
   $('#taskKpis').innerHTML = Object.entries(KL).map(([k,l])=>
     `<div class="card kpi"><div class="n">${counts[k]||0}</div><div class="l">${l}</div></div>`).join('');
 
@@ -519,7 +540,7 @@ async function loadClients(q=''){
   const tb=$('#clientTable tbody');
   tb.innerHTML = rows.map(c=>`
     <tr class="crow" onclick="openClient(${c.id})">
-      <td>${c.name||'—'}${branchTag(c.branch)}</td>
+      <td title="${(c.comment||'').replace(/"/g,'&quot;')}">${c.do_not_call?'🚫 ':''}${c.name||'—'}${branchTag(c.branch)}</td>
       <td class="phone">${c.phone||'—'}</td>
       <td>${c.visits_count||0}</td>
       <td>${c.avg_interval_days?'~'+Math.round(c.avg_interval_days)+' дн.':'—'}</td>
@@ -536,6 +557,12 @@ async function openClient(id){
   const sb=$('#drawerStatus');
   sb.textContent = s.status_label;
   sb.className = 'status-badge st-'+s.status;
+
+  // пометка «не беспокоить» + комментарий из карточки YClients
+  $('#drawerDnc').style.display = c.do_not_call ? '' : 'none';
+  const cb=$('#drawerComment');
+  if(c.comment){cb.textContent='💬 '+c.comment;cb.className='note-box'+(c.do_not_call?' dnc':'');cb.style.display='';}
+  else cb.style.display='none';
 
   // плитки статистики
   $('#statTiles').innerHTML = [
@@ -556,18 +583,21 @@ async function openClient(id){
       <div class="ml">${m.label}</div>
     </div>`).join('');
 
+  // полный список мастеров/услуг, ранжированный по частоте, с долей визитов и полосой
   const brk = (arr,withSum)=> arr.length? arr.map(x=>`
-    <div class="brk"><span class="nm">${x.name}</span><span class="v">${x.count}×${withSum?' · '+rub(x.sum):''}</span></div>`).join('')
+    <div class="brk">
+      <div class="row1"><span class="nm">${x.name}</span><span class="v">${x.count}× · <b>${x.pct}%</b>${withSum?' · '+rub(x.sum):''}</span></div>
+      <div class="bar"><div style="width:${x.pct}%"></div></div>
+    </div>`).join('')
     : '<div class="muted" style="font-size:13px">Нет данных</div>';
   $('#statServices').innerHTML = brk(s.services,true);
   $('#statMasters').innerHTML = brk(s.masters,false);
 
   $('#drawerInfo').innerHTML = [
-    ['Филиал', c.branch||'—'],['Телефон', c.phone||'—'],['Визитов', c.visits_count||0],
-    ['Периодичность', c.avg_interval_days?'~'+Math.round(c.avg_interval_days)+' дн.':'—'],
-    ['Потрачено', rub(c.spent)],
-    ['Последний визит', daysAgoTxt(c.last_visit)],['Прогноз следующего', fmtDate(c.predicted_next)],
-    ['Любимый мастер', c.favorite_staff||'—'],['Услуга', c.favorite_service||'—'],
+    ['Телефон', c.phone?`<a href="tel:+${String(c.phone).replace(/\D/g,'')}">${c.phone}</a>`:'—'],
+    ['Филиал', c.branch||'—'],
+    ['Последний визит', daysAgoTxt(c.last_visit)],
+    ['Прогноз следующего', fmtDate(c.predicted_next)],
   ].map(([k,v])=>`<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
 
   const STAT={completed:'выполнен',upcoming:'предстоит',no_show:'не пришёл',cancelled:'отменён'};
@@ -596,7 +626,15 @@ async function refreshCoverage(){
   const el=$('#segCoverage');
   if(!r.min_date){el.textContent='База пуста — сначала синхронизируйте.';return;}
   el.innerHTML = `В базе ${r.clients} клиентов, ${r.visits} визитов за период ${fmtDate(r.min_date)} — ${fmtDate(r.max_date)}. `+
-    `Нужно глубже? <a onclick="deepSync(36)">Загрузить 3 года</a> · <a onclick="deepSync(60)">5 лет</a> · <a onclick="deepSync(120)">всю историю</a>`;
+    `Нужно глубже? <a onclick="deepSync(36)">Загрузить 3 года</a> · <a onclick="deepSync(60)">5 лет</a> · <a onclick="deepSync(120)">всю историю</a>. `+
+    `<a onclick="syncComments()">↻ Обновить комментарии из YClients</a>`;
+}
+async function syncComments(){
+  const st=await api('/api/sync-comments/status');
+  if(st.running){toast(`Уже идёт: проверено ${st.done} из ${st.total}`);return;}
+  if(!confirm('Подтянуть комментарии из карточек всех клиентов YClients? Идёт в фоне, займёт до получаса.')) return;
+  await api('/api/sync-comments?full=1',{method:'POST'});
+  toast('Запущено в фоне — комментарии подтянутся постепенно');
 }
 function currentFilter(){
   const f={};
@@ -606,6 +644,8 @@ function currentFilter(){
   const to=$('#segTo').value; if(to)f.to=to;
   const mv=$('#segMinVisits').value; if(mv&&mv!=='1')f.min_visits=mv;
   const ms=$('#segMinSpent').value; if(ms&&ms!=='0')f.min_spent=ms;
+  const cm=$('#segComment').value.trim(); if(cm)f.comment=cm;
+  const dnc=$('#segDnc').value; if(dnc)f.dnc=dnc;
   if(currentBranch) f.branch=currentBranch;
   return f;
 }
@@ -616,6 +656,8 @@ function filterLabel(f){
   if(f.from||f.to)parts.push(`${f.from||'…'}–${f.to||'…'}`);
   if(f.min_visits)parts.push('визитов≥'+f.min_visits);
   if(f.min_spent)parts.push('от '+f.min_spent+'₽');
+  if(f.comment)parts.push('коммент «'+f.comment+'»');
+  if(f.dnc==='only')parts.push('не беспокоить');
   return parts.join(', ')||'Все клиенты';
 }
 async function runSegment(){
@@ -630,7 +672,7 @@ async function runSegment(){
   const tb=$('#segTable tbody');
   tb.innerHTML = r.clients.map(c=>`
     <tr class="crow" onclick="openClient(${c.id})">
-      <td>${c.name||'—'}${branchTag(c.branch)}</td>
+      <td title="${(c.comment||'').replace(/"/g,'&quot;')}">${c.do_not_call?'🚫 ':''}${c.name||'—'}${branchTag(c.branch)}</td>
       <td class="phone">${c.phone||'—'}</td>
       <td><b>${c.match_visits}</b></td>
       <td>${c.total_visits||0}</td>
@@ -676,7 +718,7 @@ async function createListFromFilter(){
 $('#segRun').onclick=runSegment;
 $('#segExport').onclick=exportCSV;
 $('#segToList').onclick=createListFromFilter;
-$('#segReset').onclick=()=>{['segService','segStaff','segFrom','segTo'].forEach(id=>$('#'+id).value='');$('#segMinVisits').value='1';$('#segMinSpent').value='0';$('#segSummary').textContent='';$('#segTable tbody').innerHTML='';$('#segExport').disabled=true;$('#segToList').disabled=true;segResults=[];};
+$('#segReset').onclick=()=>{['segService','segStaff','segFrom','segTo','segComment','segDnc'].forEach(id=>$('#'+id).value='');$('#segMinVisits').value='1';$('#segMinSpent').value='0';$('#segSummary').textContent='';$('#segTable tbody').innerHTML='';$('#segExport').disabled=true;$('#segToList').disabled=true;segResults=[];};
 
 // --- Синхронизация ---
 $('#syncBtn').onclick = async ()=>{

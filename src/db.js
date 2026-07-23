@@ -111,6 +111,18 @@ ensureColumn('clients', 'branch', 'TEXT');
 ensureColumn('visits', 'company_id', 'INTEGER');
 ensureColumn('visits', 'branch', 'TEXT');
 ensureColumn('lists', 'assignee', 'TEXT');
+
+// Комментарий из карточки клиента YClients + флаг «не беспокоить» (вычисляется по тексту)
+ensureColumn('clients', 'comment', 'TEXT');
+ensureColumn('clients', 'do_not_call', 'INTEGER DEFAULT 0');
+ensureColumn('clients', 'comment_checked_at', 'TEXT');
+
+// Одноразовый сброс под режим «не больше 10 открытых задач на филиал»:
+// старый движок навалил сотни открытых задач — снимаем их, дальше держим по лимиту
+if (!db.prepare("SELECT value FROM meta WHERE key='daily_cap_reset'").get()) {
+  db.exec("UPDATE tasks SET status='dismissed', closed_at=datetime('now') WHERE status IN ('open','snoozed')");
+  db.prepare("INSERT INTO meta(key,value) VALUES('daily_cap_reset','1')").run();
+}
 db.exec('CREATE INDEX IF NOT EXISTS idx_clients_branch ON clients(branch)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_visits_branch ON visits(branch)');
 
