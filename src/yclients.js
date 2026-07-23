@@ -158,6 +158,21 @@ async function fetchClientCard(cid, clientYcId) {
   return api(`/client/${cid}/${clientYcId}`);
 }
 
+// Обновить карточку клиента. Эхо-echoим значимые поля, чтобы PUT ничего не затёр,
+// меняем только то, что передано в patch (сейчас — comment). Права проверены (PUT → 200).
+async function updateClient(cid, clientYcId, patch = {}) {
+  const card = await fetchClientCard(cid, clientYcId);
+  if (!card) throw new Error('карточка клиента не найдена');
+  const body = {
+    name: card.name || '', surname: card.surname || '', patronymic: card.patronymic || '',
+    phone: card.phone || '', email: card.email || '', card: card.card || '',
+    birth_date: card.birth_date || '', comment: card.comment || '',
+    sex_id: card.sex_id || 0, importance_id: card.importance_id || 0, discount: card.discount || 0,
+    ...patch,
+  };
+  return api(`/client/${cid}/${clientYcId}`, { method: 'PUT', body });
+}
+
 // Записи (визиты) конкретного филиала за период с пагинацией по meta.total_count.
 // В каждой записи YClients уже вложен объект client — отдельные запросы по клиентам не нужны.
 async function fetchRecords(cid, startDate, endDate, onProgress) {
@@ -270,6 +285,7 @@ module.exports = {
   fetchServiceCategories,
   fetchClients,
   fetchClientCard,
+  updateClient,
   fetchRecords,
   demoData,
 };

@@ -244,6 +244,11 @@ app.post('/api/lists/:id/members/:memberId/action', (req, res) => {
     .run(status, result || null, note || '', admin || 'admin', new Date().toISOString(), m.id);
   db.prepare('INSERT INTO task_actions(task_id,client_id,admin,result,note,created_at) VALUES(NULL,?,?,?,?,?)')
     .run(m.client_id, admin || 'admin', result || null, note || '', new Date().toISOString());
+
+  // Пишем результат звонка обратно в карточку клиента YClients (фоном)
+  setImmediate(() => sync.writeCallToYclients(m.client_id, { result, note, admin })
+    .catch(e => console.error('[yc-writeback list]', e.message)));
+
   res.json({ ok: true, status });
 });
 
@@ -324,6 +329,10 @@ app.post('/api/tasks/:id/action', (req, res) => {
   }
   db.prepare(`UPDATE tasks SET status=?, due_date=?, assigned_to=?, closed_at=? WHERE id=?`)
     .run(newStatus, due, admin || task.assigned_to, newStatus === 'done' ? new Date().toISOString() : null, taskId);
+
+  // Пишем результат звонка обратно в карточку клиента YClients (фоном, чтобы ответ был мгновенным)
+  setImmediate(() => sync.writeCallToYclients(task.client_id, { result, note, admin })
+    .catch(e => console.error('[yc-writeback task]', e.message)));
 
   res.json({ ok: true, status: newStatus });
 });

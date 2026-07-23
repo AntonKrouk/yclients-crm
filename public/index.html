@@ -577,10 +577,11 @@ async function openClient(id){
   sb.textContent = s.status_label;
   sb.className = 'status-badge st-'+s.status;
 
-  // пометка «не беспокоить» + комментарий из карточки YClients
+  // пометка «не беспокоить» + комментарий из карточки YClients (без нашего CRM-лога — он в ленте)
   $('#drawerDnc').style.display = c.do_not_call ? '' : 'none';
   const cb=$('#drawerComment');
-  if(c.comment){cb.textContent='💬 '+c.comment;cb.className='note-box'+(c.do_not_call?' dnc':'');cb.style.display='';}
+  const ownComment=(c.comment||'').split('——— Обзвон (CRM) ———')[0].trim();
+  if(ownComment){cb.textContent='💬 '+ownComment;cb.className='note-box'+(c.do_not_call?' dnc':'');cb.style.display='';}
   else cb.style.display='none';
 
   // плитки статистики

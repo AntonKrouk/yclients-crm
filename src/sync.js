@@ -177,6 +177,49 @@ const DNC_RE = /(не\s*звон|не\s*беспоко|нельзя\s*звон|�
 const THROTTLE_MS = 350;
 let commentSync = { running: false, done: 0, total: 0 };
 
+// Маркер нашего блока обзвона внутри комментария клиента YClients.
+// Всё, что ДО него — «родной» текст админов; ниже — история звонков из дашборда.
+const CRM_MARK = '——— Обзвон (CRM) ———';
+// «родная» часть комментария (для детекта «не беспокоить» — наш лог не должен ложно триггерить)
+function originalComment(text) {
+  const t = String(text || '');
+  const i = t.indexOf(CRM_MARK);
+  return (i === -1 ? t : t.slice(0, i)).trim();
+}
+// человекочитаемый результат звонка
+const RESULT_LABEL = {
+  booked: 'записал', callback: 'перезвонить', no_answer: 'не ответил',
+  refused: 'отказ', wrong_number: 'неверный номер', done: 'обработан',
+};
+// дозапись строки в CRM-блок (новые сверху), «родной» текст сохраняется
+function appendCallLine(current, line) {
+  const t = String(current || '');
+  const i = t.indexOf(CRM_MARK);
+  const original = (i === -1 ? t : t.slice(0, i)).trim();
+  const log = (i === -1 ? '' : t.slice(i + CRM_MARK.length)).trim();
+  const newLog = [line, log].filter(Boolean).join('\n');
+  return [original, `${CRM_MARK}\n${newLog}`].filter(Boolean).join('\n\n');
+}
+// Записать результат звонка в карточку клиента YClients (дозаписью, сохранив исходный текст).
+// clientLocalId — id в нашей БД. Тихо пропускаем демо/клиентов без yclients_id.
+async function writeCallToYclients(clientLocalId, { result, note, admin, date } = {}) {
+  if (yc.isDemo()) return { skipped: 'demo' };
+  const c = db.prepare('SELECT yclients_id, company_id FROM clients WHERE id=?').get(clientLocalId);
+  if (!c || !c.yclients_id || !c.company_id) return { skipped: 'no_yclients_id' };
+  const d = date ? new Date(date) : new Date();
+  const ds = d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' });
+  const who = (admin || 'админ').trim();
+  const res = RESULT_LABEL[result] || result || 'звонок';
+  const line = `${ds} ${who}: ${res}${note && note.trim() ? ` — «${note.trim()}»` : ''}`;
+  const card = await yc.fetchClientCard(c.company_id, c.yclients_id);
+  const next = appendCallLine(card?.comment || '', line);
+  await yc.updateClient(c.company_id, c.yclients_id, { comment: next });
+  // синхронизируем локальную копию комментария и флаг «не беспокоить» (по родной части)
+  db.prepare('UPDATE clients SET comment=?, do_not_call=? WHERE id=?')
+    .run(next, DNC_RE.test(originalComment(next)) ? 1 : 0, clientLocalId);
+  return { ok: true, line };
+}
+
 async function syncComments({ full = false } = {}) {
   if (yc.isDemo()) return { skipped: 'demo' };
   if (commentSync.running) return { skipped: 'already_running' };
@@ -195,7 +238,7 @@ async function syncComments({ full = false } = {}) {
       try {
         const card = await yc.fetchClientCard(r.company_id, r.yclients_id);
         const comment = String(card?.comment || '').trim();
-        const flag = (DNC_RE.test(comment) || DNC_RE.test(r.name || '')) ? 1 : 0;
+        const flag = (DNC_RE.test(originalComment(comment)) || DNC_RE.test(r.name || '')) ? 1 : 0;
         upd.run(comment || null, flag, iso(Date.now()), r.id);
         if (flag) dnc++;
       } catch { /* сетевая ошибка или клиент удалён — не трогаем, попробуем в следующий проход */ }
@@ -258,7 +301,7 @@ async function run(opts = {}) {
   const flagRows = db.prepare(`SELECT id, name, comment, COALESCE(do_not_call,0) AS f FROM clients`).all();
   const updFlag = db.prepare('UPDATE clients SET do_not_call=? WHERE id=?');
   for (const r of flagRows) {
-    const flag = (DNC_RE.test(r.name || '') || DNC_RE.test(r.comment || '')) ? 1 : 0;
+    const flag = (DNC_RE.test(r.name || '') || DNC_RE.test(originalComment(r.comment))) ? 1 : 0;
     if (flag !== r.f) updFlag.run(flag, r.id);
   }
 
@@ -273,4 +316,4 @@ async function run(opts = {}) {
   return { mode: yc.isDemo() ? 'demo' : 'live', clients: totalC, visits: totalV, tasks: tasksN, at: now };
 }
 
-module.exports = { run, computeFrequency, syncComments, commentSyncStatus };
+module.exports = { run, computeFrequency, syncComments, commentSyncStatus, writeCallToYclients, CRM_MARK };
