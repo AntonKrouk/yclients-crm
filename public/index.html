@@ -627,8 +627,7 @@ async function loadSegments(){
   if(segLoaded) return; segLoaded=true;
   const svcs = await api(bp('/api/services-list'));
   $('#servicesList').innerHTML = svcs.map(s=>{
-    const price = s.price_min!=null ? (s.price_min===s.price_max?rub(s.price_min):rub(s.price_min)+'–'+rub(s.price_max)) : '';
-    const hint = [s.count?`${s.count}×`:(s.in_price?'из прайса':''), price].filter(Boolean).join(' · ');
+    const hint = s.count?`${s.count}×`:(s.in_price?'из прайса':'');
     return `<option value="${s.name.replace(/"/g,'&quot;')}">${hint}</option>`;
   }).join('');
 }
