@@ -76,6 +76,7 @@ db.exec(`
     id          INTEGER PRIMARY KEY,
     name        TEXT,
     filter_json TEXT,
+    assignee    TEXT,                   -- ответственный админ за проработку списка
     status      TEXT DEFAULT 'active',  -- active | archived
     created_at  TEXT
   );
@@ -109,6 +110,7 @@ ensureColumn('clients', 'company_id', 'INTEGER');
 ensureColumn('clients', 'branch', 'TEXT');
 ensureColumn('visits', 'company_id', 'INTEGER');
 ensureColumn('visits', 'branch', 'TEXT');
+ensureColumn('lists', 'assignee', 'TEXT');
 db.exec('CREATE INDEX IF NOT EXISTS idx_clients_branch ON clients(branch)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_visits_branch ON visits(branch)');
 

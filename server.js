@@ -164,13 +164,13 @@ app.get('/api/segments', (req, res) => {
 
 // Создать список из фильтра: снимок подходящих клиентов фиксируется в list_members
 app.post('/api/lists', (req, res) => {
-  const { name, filter } = req.body || {};
+  const { name, filter, assignee } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'Укажите название списка' });
   const rows = querySegment(filter || {});
   if (rows.length === 0) return res.status(400).json({ error: 'Под эти условия никто не подходит' });
   const now = new Date().toISOString();
-  const info = db.prepare('INSERT INTO lists(name,filter_json,status,created_at) VALUES(?,?,?,?)')
-    .run(name.trim(), JSON.stringify(filter || {}), 'active', now);
+  const info = db.prepare('INSERT INTO lists(name,filter_json,assignee,status,created_at) VALUES(?,?,?,?,?)')
+    .run(name.trim(), JSON.stringify(filter || {}), (assignee || '').trim() || null, 'active', now);
   const listId = info.lastInsertRowid;
   const ins = db.prepare('INSERT INTO list_members(list_id,client_id,status,match_visits,match_spent,updated_at) VALUES(?,?,?,?,?,?)');
   for (const r of rows) ins.run(listId, r.id, 'pending', r.match_visits, r.match_spent, now);
@@ -179,7 +179,7 @@ app.post('/api/lists', (req, res) => {
 
 // Активные списки с прогрессом — для главного дашборда
 app.get('/api/lists', (req, res) => {
-  const lists = db.prepare("SELECT id,name,created_at FROM lists WHERE status='active' ORDER BY created_at DESC").all();
+  const lists = db.prepare("SELECT id,name,assignee,created_at FROM lists WHERE status='active' ORDER BY created_at DESC").all();
   res.json(lists.map(l => {
     const total = db.prepare('SELECT COUNT(*) n FROM list_members WHERE list_id=?').get(l.id).n;
     const done = db.prepare("SELECT COUNT(*) n FROM list_members WHERE list_id=? AND status='done'").get(l.id).n;
@@ -209,6 +209,14 @@ app.post('/api/lists/:id/members/:memberId/action', (req, res) => {
   db.prepare('INSERT INTO task_actions(task_id,client_id,admin,result,note,created_at) VALUES(NULL,?,?,?,?,?)')
     .run(m.client_id, admin || 'admin', result || null, note || '', new Date().toISOString());
   res.json({ ok: true, status });
+});
+
+// Сменить ответственного админа у списка
+app.patch('/api/lists/:id', (req, res) => {
+  const { assignee } = req.body || {};
+  db.prepare('UPDATE lists SET assignee=? WHERE id=?')
+    .run((assignee || '').trim() || null, Number(req.params.id));
+  res.json({ ok: true });
 });
 
 // Убрать список с дашборда (архив; история звонков остаётся в ленте клиентов)

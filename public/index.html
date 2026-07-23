@@ -118,6 +118,9 @@
   .lb-head:hover{background:var(--panel2)}
   .lb-name{font-weight:600;font-size:15px;color:#1c2028}
   .lb-count{font-size:12px;color:var(--muted)}
+  .lb-assignee{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;color:var(--accent2);background:#e7f6f4;border-radius:999px;padding:2px 10px;cursor:pointer;white-space:nowrap}
+  .lb-assignee:hover{background:#c4ebe6}
+  .lb-assignee.empty{color:var(--muted);background:var(--panel2)}
   .lb-progress{flex:1;max-width:220px;height:8px;background:var(--panel2);border-radius:6px;overflow:hidden}
   .lb-progress > div{height:100%;background:var(--green);transition:width .3s}
   .lb-actions{margin-left:auto;display:flex;align-items:center;gap:10px}
@@ -418,6 +421,8 @@ async function loadLists(){
           <div class="lb-name">${l.name}</div>
           <div class="lb-count">обработано ${l.done} из ${l.total}</div>
         </div>
+        <span class="lb-assignee ${l.assignee?'':'empty'}" title="Ответственный за список — нажмите, чтобы изменить"
+          onclick="event.stopPropagation();setAssignee(${l.id},'${(l.assignee||'').replace(/'/g,"\\'")}')">👤 ${l.assignee||'без ответственного'}</span>
         <div class="lb-actions">
           <div class="lb-progress"><div style="width:${pct}%"></div></div>
           <span class="lb-del" title="Убрать с дашборда" onclick="event.stopPropagation();archiveList(${l.id},'${l.name.replace(/'/g,"\\'")}')">🗑</span>
@@ -464,6 +469,13 @@ async function memAct(listId,memberId,result,btn){
   const block=document.querySelector(`.listblock[data-id="${listId}"]`);
   block.querySelector('.lb-count').textContent=`обработано ${done} из ${members.length}`;
   block.querySelector('.lb-progress>div').style.width=(members.length?Math.round(done/members.length*100):0)+'%';
+}
+async function setAssignee(id,current){
+  const name=prompt('Ответственный администратор (пусто — убрать):',current||localStorage.getItem('admin_name')||'');
+  if(name===null) return;
+  await api(`/api/lists/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({assignee:name})});
+  toast(name.trim()?`Ответственный: ${name.trim()}`:'Ответственный убран');
+  loadLists();
 }
 async function archiveList(id,name){
   if(!confirm(`Убрать список «${name}» с дашборда? История звонков сохранится в карточках клиентов.`)) return;
@@ -652,10 +664,12 @@ async function createListFromFilter(){
   const suggested='Обзвон: '+filterLabel(segFilter);
   const name=prompt('Название списка для дашборда:', suggested);
   if(!name) return;
+  const assignee=prompt('Ответственный администратор (пусто — без ответственного):', localStorage.getItem('admin_name')||'');
+  if(assignee===null) return;
   try{
-    const r=await api('/api/lists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,filter:segFilter})});
+    const r=await api('/api/lists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,filter:segFilter,assignee})});
     if(r.error){toast(r.error);return;}
-    toast(`Список «${name}» создан: ${r.members} клиентов`);
+    toast(`Список «${name}» создан: ${r.members} клиентов${assignee.trim()?' · отв. '+assignee.trim():''}`);
     document.querySelector('[data-view="tasks"]').click();
   }catch(e){toast('Не удалось создать список');}
 }
