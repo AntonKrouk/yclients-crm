@@ -125,6 +125,34 @@ function syncBranch(clients, records, company, now) {
   return { clients: clientsN, visits: visitsN };
 }
 
+// Прайс-лист услуг филиала → таблица services (полная замена по филиалу)
+const upsertService = db.prepare(`
+  INSERT INTO services (yc_id, company_id, branch, title, category, price_min, price_max, active, updated_at)
+  VALUES (?,?,?,?,?,?,?,?,?)
+  ON CONFLICT(company_id, yc_id) DO UPDATE SET
+    branch=excluded.branch, title=excluded.title, category=excluded.category,
+    price_min=excluded.price_min, price_max=excluded.price_max,
+    active=excluded.active, updated_at=excluded.updated_at
+`);
+
+async function syncServices(comp, now) {
+  const cid = Number(comp.id);
+  let cats = {};
+  try {
+    const cc = await yc.fetchServiceCategories(comp.id);
+    for (const c of (Array.isArray(cc) ? cc : [])) cats[c.id] = c.title || '';
+  } catch { /* категории необязательны */ }
+  const list = await yc.fetchServices(comp.id);
+  const rows = Array.isArray(list) ? list : [];
+  // те, кого больше нет в прайсе — помечаем неактивными, а не удаляем (могли попасть в старые списки)
+  db.prepare('UPDATE services SET active=0 WHERE company_id=?').run(cid);
+  for (const s of rows) {
+    upsertService.run(s.id, cid, comp.name, s.title || '', cats[s.category_id] || '',
+      s.price_min ?? null, s.price_max ?? null, s.active ? 1 : 0, now);
+  }
+  return rows.length;
+}
+
 function clientsFromRecords(records) {
   const m = new Map();
   for (const r of records) {
@@ -218,6 +246,10 @@ async function run(opts = {}) {
       const res = syncBranch(clients, records, { id: comp.id, name }, now);
       totalC += res.clients; totalV += res.visits;
       console.log(`[sync] ${name}: клиентов ${res.clients}, визитов ${res.visits} (окно ${months} мес.)`);
+      try {
+        const svcN = await syncServices({ id: comp.id, name }, now);
+        console.log(`[sync] ${name}: услуг в прайсе ${svcN}`);
+      } catch (e) { console.error(`[sync] ${name}: прайс-лист не загружен:`, e.message); }
     }
   }
 

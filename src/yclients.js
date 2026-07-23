@@ -123,8 +123,14 @@ async function fetchStaff(cid = companyId()) {
   return api(`/company/${cid}/staff/`);
 }
 
-async function fetchServices() {
-  return api(`/company/${companyId()}/services/`);
+// Прайс-лист услуг филиала: title, price_min/max, category_id, active
+async function fetchServices(cid = companyId()) {
+  return api(`/company/${cid}/services/`);
+}
+
+// Категории услуг филиала (id → title), чтобы показывать раздел прайса
+async function fetchServiceCategories(cid = companyId()) {
+  return api(`/company/${cid}/service_categories/`);
 }
 
 async function fetchClients() {
@@ -261,6 +267,7 @@ module.exports = {
   fetchMyCompanies,
   fetchStaff,
   fetchServices,
+  fetchServiceCategories,
   fetchClients,
   fetchClientCard,
   fetchRecords,

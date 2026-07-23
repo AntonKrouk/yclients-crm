@@ -109,19 +109,39 @@ app.get('/api/data-range', (req, res) => {
   res.json({ ...r, clients });
 });
 
-// Список услуг с частотой — для подсказок в фильтре выборок
+// Список услуг для подсказок в конструкторе: прайс-лист YClients + частота по визитам.
+// Прайс даёт полный перечень (в т.ч. услуги без единого визита), визиты — популярность.
 app.get('/api/services-list', (req, res) => {
   const branch = (req.query.branch || '').trim();
-  const rows = db.prepare(`SELECT service FROM visits WHERE status='completed' AND service <> '' ${branch ? 'AND branch = ?' : ''}`)
+
+  // частота по факту оказанных услуг (услуги в визите склеены через ', ')
+  const vrows = db.prepare(`SELECT service FROM visits WHERE status='completed' AND service <> '' ${branch ? 'AND branch = ?' : ''}`)
     .all(...(branch ? [branch] : []));
-  const m = new Map();
-  for (const row of rows) {
+  const counts = new Map();
+  for (const row of vrows) {
     for (const part of String(row.service).split(', ')) {
       const s = part.trim();
-      if (s) m.set(s, (m.get(s) || 0) + 1);
+      if (s) counts.set(s, (counts.get(s) || 0) + 1);
     }
   }
-  const list = [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 400).map(([name, count]) => ({ name, count }));
+
+  // прайс-лист (активные услуги)
+  const srows = db.prepare(`SELECT title, category, price_min, price_max FROM services
+    WHERE active = 1 AND title <> '' ${branch ? 'AND branch = ?' : ''}`)
+    .all(...(branch ? [branch] : []));
+
+  const byTitle = new Map();
+  for (const s of srows) {
+    if (!byTitle.has(s.title)) byTitle.set(s.title, { name: s.title, count: 0, category: s.category || '', price_min: s.price_min, price_max: s.price_max, in_price: true });
+  }
+  for (const [name, count] of counts) {
+    if (byTitle.has(name)) byTitle.get(name).count = count;
+    else byTitle.set(name, { name, count, category: '', price_min: null, price_max: null, in_price: false });
+  }
+
+  // сортировка: сперва то, что реально оказывали (по частоте), затем прайс без визитов (по алфавиту)
+  const list = [...byTitle.values()].sort((a, b) =>
+    (b.count - a.count) || a.name.localeCompare(b.name, 'ru')).slice(0, 1000);
   res.json(list);
 });
 
@@ -140,11 +160,11 @@ function querySegment(f = {}) {
   const conds = ["v.status = 'completed'"];
   const params = [];
   if (branch) { conds.push('c.branch = ?'); params.push(branch); }
-  if (service) { conds.push('lower(v.service) LIKE ?'); params.push('%' + service + '%'); }
-  if (staff) { conds.push('lower(v.staff) LIKE ?'); params.push('%' + staff + '%'); }
+  if (service) { conds.push('lower_u(v.service) LIKE ?'); params.push('%' + service + '%'); }
+  if (staff) { conds.push('lower_u(v.staff) LIKE ?'); params.push('%' + staff + '%'); }
   if (from) { conds.push('v.date >= ?'); params.push(from); }
   if (to) { conds.push('v.date <= ?'); params.push(to + 'T23:59:59'); }
-  if (comment) { conds.push('lower(COALESCE(c.comment,\'\')) LIKE ?'); params.push('%' + comment + '%'); }
+  if (comment) { conds.push('lower_u(COALESCE(c.comment,\'\')) LIKE ?'); params.push('%' + comment + '%'); }
   if (dnc === 'only') conds.push('COALESCE(c.do_not_call,0) = 1');
   else if (dnc !== 'all') conds.push('COALESCE(c.do_not_call,0) = 0');
 
@@ -323,7 +343,7 @@ app.get('/api/clients', (req, res) => {
     SELECT id, name, phone, branch, last_visit, visits_count, spent, avg_interval_days,
            predicted_next, favorite_staff, favorite_service, comment, COALESCE(do_not_call,0) AS do_not_call
     FROM clients
-    WHERE (lower(name) LIKE ? OR phone LIKE ?) ${branch ? 'AND branch = ?' : ''}
+    WHERE (lower_u(name) LIKE ? OR phone LIKE ?) ${branch ? 'AND branch = ?' : ''}
     ORDER BY last_visit DESC
     LIMIT 500
   `).all(...(branch ? [q, q, branch] : [q, q]));

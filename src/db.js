@@ -13,6 +13,11 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new DatabaseSync(path.join(DATA_DIR, 'crm.db'));
 
+// Юникод-aware нижний регистр: встроенные SQLite lower()/LIKE приводят к строчным
+// ТОЛЬКО латиницу, кириллица остаётся как есть → поиск по «Алексей» не находил «Смирнов Алексей».
+// JS toLowerCase() корректно фолдит кириллицу. Используем lower_u() во всех поисковых LIKE.
+db.function('lower_u', (s) => (s == null ? null : String(s).toLowerCase()));
+
 db.exec(`
   PRAGMA journal_mode = WAL;
 
@@ -95,6 +100,21 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_lm_list ON list_members(list_id);
+
+  -- Прайс-лист услуг из YClients (для подсказок в конструкторе, включая услуги без визитов)
+  CREATE TABLE IF NOT EXISTS services (
+    id          INTEGER PRIMARY KEY,
+    yc_id       INTEGER,
+    company_id  INTEGER,
+    branch      TEXT,
+    title       TEXT,
+    category    TEXT,
+    price_min   REAL,
+    price_max   REAL,
+    active      INTEGER DEFAULT 1,
+    updated_at  TEXT
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_services_uniq ON services(company_id, yc_id);
 
   CREATE INDEX IF NOT EXISTS idx_visits_client ON visits(client_id);
   CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
