@@ -104,6 +104,15 @@
   .stile .n{font-size:22px;font-weight:700;color:#1c2028}
   .stile .l{font-size:12px;color:var(--muted);margin-top:2px}
   .two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .collap{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:12px;overflow:hidden}
+  .collap>summary{list-style:none;cursor:pointer;padding:13px 16px;display:flex;align-items:center;gap:10px;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:600}
+  .collap>summary::-webkit-details-marker{display:none}
+  .collap>summary::before{content:'▶';font-size:9px;color:var(--accent2);transition:transform .15s}
+  .collap[open]>summary::before{transform:rotate(90deg)}
+  .collap>summary:hover{background:var(--panel2)}
+  .collap .cnt{margin-left:auto;font-size:12px;color:var(--muted);text-transform:none;letter-spacing:0;font-weight:600;background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:1px 9px}
+  .collap .cbody{padding:2px 16px 14px}
+  .collap .timeline{margin-top:6px}
   .brk{padding:7px 0;border-bottom:1px solid var(--line)}
   .brk:last-child{border-bottom:none}
   .brk .row1{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:13px;margin-bottom:5px}
@@ -112,6 +121,9 @@
   .brk .v b{color:var(--accent2)}
   .brk .bar{height:6px;background:var(--panel2);border-radius:4px;overflow:hidden}
   .brk .bar>div{height:100%;background:var(--accent);border-radius:4px}
+  .brk.top .nm{color:var(--accent2)}
+  .brk.top .bar>div{background:linear-gradient(90deg,var(--accent),var(--accent2))}
+  .prio{display:inline-block;font-size:10px;font-weight:700;padding:1px 7px;border-radius:20px;background:#e7f6f4;color:var(--accent2);border:1px solid #c4ebe6;margin-left:6px;vertical-align:middle}
   .monthchart{display:flex;align-items:flex-end;gap:5px;height:96px;padding:12px 14px}
   .mbar{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:flex-end}
   .mbar .bar{width:100%;min-height:2px;background:var(--accent);border-radius:4px 4px 0 0;transition:height .2s}
@@ -293,18 +305,18 @@
     <div class="grid statTiles" id="statTiles"></div>
     <div class="section-title">Активность за 12 месяцев</div>
     <div class="card monthchart" id="monthChart"></div>
-    <div class="two-col">
-      <div>
-        <div class="section-title">Услуги</div>
-        <div class="card" id="statServices"></div>
-      </div>
-      <div>
-        <div class="section-title">Мастера</div>
-        <div class="card" id="statMasters"></div>
-      </div>
-    </div>
-    <div class="section-title">Лента событий</div>
-    <div class="timeline" id="timeline"></div>
+    <details class="collap">
+      <summary>Мастера <span class="cnt" id="cntMasters"></span></summary>
+      <div class="cbody" id="statMasters"></div>
+    </details>
+    <details class="collap">
+      <summary>Услуги <span class="cnt" id="cntServices"></span></summary>
+      <div class="cbody" id="statServices"></div>
+    </details>
+    <details class="collap">
+      <summary>Лента событий <span class="cnt" id="cntTimeline"></span></summary>
+      <div class="cbody"><div class="timeline" id="timeline"></div></div>
+    </details>
   </div>
 </aside>
 
@@ -590,17 +602,22 @@ async function openClient(id){
       <div class="ml">${m.label}</div>
     </div>`).join('');
 
-  // полный список мастеров/услуг, ранжированный по частоте, с долей визитов и полосой
-  const brk = (arr,withSum)=> arr.length? arr.map(x=>`
-    <div class="brk">
-      <div class="row1"><span class="nm">${x.name}</span><span class="v">${x.count}× · <b>${x.pct}%</b>${withSum?' · '+rub(x.sum):''}</span></div>
+  // полный список мастеров/услуг, ранжированный по частоте, с долей визитов и полосой.
+  // markTop — пометить первого (самого частого) как приоритетного
+  const brk = (arr,withSum,markTop)=> arr.length? arr.map((x,i)=>`
+    <div class="brk${markTop&&i===0?' top':''}">
+      <div class="row1"><span class="nm">${markTop&&i===0?'★ ':''}${x.name}${markTop&&i===0?' <span class="prio">приоритет</span>':''}</span><span class="v">${x.count}× · <b>${x.pct}%</b>${withSum?' · '+rub(x.sum):''}</span></div>
       <div class="bar"><div style="width:${x.pct}%"></div></div>
     </div>`).join('')
     : '<div class="muted" style="font-size:13px">Нет данных</div>';
-  $('#statServices').innerHTML = brk(s.services,true);
-  $('#statMasters').innerHTML = brk(s.masters,false);
+  $('#statServices').innerHTML = brk(s.services,true,false);
+  $('#statMasters').innerHTML = brk(s.masters,false,true);
+  $('#cntServices').textContent = s.services.length||'';
+  $('#cntMasters').textContent = s.masters.length? `${s.masters.length}${s.masters[0]&&s.masters[0].name!=='—'?' · ★ '+s.masters[0].name:''}` : '';
 
+  const topMaster = s.masters[0] && s.masters[0].name!=='—' ? `${s.masters[0].name} · ${s.masters[0].pct}%` : (c.favorite_staff||'—');
   $('#drawerInfo').innerHTML = [
+    ['Приоритетный мастер', topMaster],
     ['Телефон', c.phone?`<a href="tel:+${String(c.phone).replace(/\D/g,'')}">${c.phone}</a>`:'—'],
     ['Филиал', c.branch||'—'],
     ['Последний визит', daysAgoTxt(c.last_visit)],
@@ -614,6 +631,7 @@ async function openClient(id){
       return `<div class="ev call"><div class="d">${fmtDT(e.date)} · ${e.admin||''}</div><div class="t">Звонок${e.result?` — ${R[e.result]||e.result}`:''}</div>${e.note?`<div class="s">«${e.note}»</div>`:''}</div>`;}
     return `<div class="ev task"><div class="d">${fmtDT(e.date)}</div><div class="t">Задача: ${e.type_label} <span class="pill">${e.status}</span></div><div class="s">${e.reason||''}</div></div>`;
   }).join('') || '<div class="muted">Событий пока нет</div>';
+  $('#cntTimeline').textContent = timeline.length||'';
 
   $('#overlay').classList.add('open');$('#drawer').classList.add('open');
 }
