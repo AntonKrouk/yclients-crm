@@ -90,6 +90,7 @@
   .note-box.dnc{background:#fbe4e4;border-color:#f2c9c9;color:#a33636;font-weight:600}
   .dnc-badge{font-size:12px;font-weight:700;padding:3px 11px;border-radius:20px;background:#fbe4e4;border:1px solid #f2c9c9;color:#d14343;white-space:nowrap}
   .dep-tag{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:20px;background:#eef7f0;color:#2a8a5f;border:1px solid #bfe6cf;white-space:nowrap;vertical-align:middle;font-variant-numeric:tabular-nums}
+  .dep-tag.debt{background:#fbe4e4;color:#c0392b;border-color:#f2c9c9}
   .dnc-toggle{margin-top:12px;width:100%;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer}
   .dnc-toggle:hover{border-color:#f2c9c9;color:#d14343;background:#fdf5f5}
   .dnc-toggle.on{background:#fbe4e4;border-color:#f2c9c9;color:#a33636}
@@ -345,7 +346,9 @@
         <label class="segfld">Депозит
           <select id="segDeposit">
             <option value="">Все клиенты</option>
-            <option value="only">Только депозитники (есть остаток)</option>
+            <option value="nonzero">Депозитники (остаток или долг)</option>
+            <option value="positive">Только с остатком</option>
+            <option value="debt">Только с долгом</option>
           </select>
         </label>
       </div>
@@ -470,6 +473,9 @@ function reloadCurrentView(){
   else loadTasks();
 }
 const rub = n => (n||0).toLocaleString('ru-RU') + ' ₽';
+const depTag = bal => !bal ? '' : bal>0
+  ? ` <span class="dep-tag" title="Остаток депозита">💰 ${rub(bal)}</span>`
+  : ` <span class="dep-tag debt" title="Долг (баланс в минусе)">⚠ ${rub(bal)}</span>`;
 const fmtDate = d => d ? new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'short',year:'2-digit'}) : '—';
 const fmtDT = d => d ? new Date(d).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
 const daysAgoTxt = d => { if(!d) return '—'; const n=Math.round((Date.now()-new Date(d))/864e5); return n<=0?'сегодня':`${n} дн. назад`; };
@@ -765,6 +771,7 @@ async function openClient(id){
     ['Не был', s.since_last_days!=null?s.since_last_days+' дн.':'—'],
   ];
   if(c.yc_balance>0) tiles.push(['Остаток депозита', `<span style="color:var(--accent2)">${rub(c.yc_balance)}</span>`]);
+  else if(c.yc_balance<0) tiles.push(['Долг (депозит в минусе)', `<span style="color:var(--red)">${rub(c.yc_balance)}</span>`]);
   $('#statTiles').innerHTML = tiles.map(([l,n])=>`<div class="stile"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
 
   // график по месяцам
@@ -879,7 +886,7 @@ async function runSegment(){
   const tb=$('#segTable tbody');
   tb.innerHTML = r.clients.map(c=>`
     <tr class="crow" onclick="openClient(${c.id})">
-      <td title="${(c.comment||'').replace(/"/g,'&quot;')}">${c.do_not_call?'🚫 ':''}${c.name||'—'}${branchTag(c.branch)}${c.deposit_balance>0?` <span class="dep-tag" title="Остаток депозита">💰 ${rub(c.deposit_balance)}</span>`:''}</td>
+      <td title="${(c.comment||'').replace(/"/g,'&quot;')}">${c.do_not_call?'🚫 ':''}${c.name||'—'}${branchTag(c.branch)}${depTag(c.deposit_balance)}</td>
       <td class="phone">${c.phone||'—'}</td>
       <td><b>${c.match_visits}</b></td>
       <td>${c.total_visits||0}</td>

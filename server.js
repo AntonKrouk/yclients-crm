@@ -171,7 +171,7 @@ function querySegment(f = {}) {
   const branch = (f.branch || '').trim();
   const comment = (f.comment || '').toLowerCase().trim();
   const dnc = (f.dnc || '').trim(); // '' = исключить «не беспокоить» (по умолч.) | 'all' = включая | 'only' = только они
-  const deposit = (f.deposit || '').trim(); // 'only' = только с остатком депозита (balance>0)
+  const deposit = (f.deposit || '').trim(); // депозитники: 'nonzero' = остаток или долг (≠0) | 'positive' = только с остатком | 'debt' = только с долгом
 
   const conds = ["v.status = 'completed'"];
   const params = [];
@@ -181,7 +181,9 @@ function querySegment(f = {}) {
   if (from) { conds.push('v.date >= ?'); params.push(from); }
   if (to) { conds.push('v.date <= ?'); params.push(to + 'T23:59:59'); }
   if (comment) { conds.push('lower_u(COALESCE(c.comment,\'\')) LIKE ?'); params.push('%' + comment + '%'); }
-  if (deposit === 'only') conds.push('COALESCE(c.yc_balance,0) > 0');
+  if (deposit === 'positive' || deposit === 'only') conds.push('COALESCE(c.yc_balance,0) > 0');
+  else if (deposit === 'debt') conds.push('COALESCE(c.yc_balance,0) < 0');
+  else if (deposit === 'nonzero') conds.push('COALESCE(c.yc_balance,0) <> 0');
   if (dnc === 'only') conds.push('COALESCE(c.do_not_call,0) = 1');
   else if (dnc !== 'all') conds.push('COALESCE(c.do_not_call,0) = 0');
 
