@@ -537,6 +537,42 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
+// Детальный журнал обзвона для владельца: кто звонил, кому, результат, заметка,
+// и если записал — ближайшая запись клиента (услуга/мастер/время из YClients-визитов).
+app.get('/api/overview/journal', (req, res) => {
+  const branch = (req.query.branch || '').trim();
+  const days = Math.min(90, Math.max(1, Number(req.query.days) || 7));
+  const filterAdmin = (req.query.admin || '').trim();
+  const filterResult = (req.query.result || '').trim();
+
+  const conds = [`a.created_at >= datetime('now', ?)`];
+  const args = [`-${days} days`];
+  if (branch) { conds.push('c.branch = ?'); args.push(branch); }
+  if (filterAdmin) { conds.push('a.admin = ?'); args.push(filterAdmin); }
+  if (filterResult) { conds.push('a.result = ?'); args.push(filterResult); }
+
+  const rows = db.prepare(`
+    SELECT a.id, a.created_at, a.admin, a.result, a.note,
+           c.id AS client_id, c.name, c.phone, c.branch
+    FROM task_actions a JOIN clients c ON c.id = a.client_id
+    WHERE ${conds.join(' AND ')}
+    ORDER BY a.created_at DESC
+    LIMIT 300
+  `).all(...args);
+
+  // ближайшая будущая запись клиента (для тех, кого записали)
+  const upStmt = db.prepare(`
+    SELECT date, service, staff, branch FROM visits
+    WHERE client_id = ? AND status = 'upcoming' AND date >= datetime('now')
+    ORDER BY date ASC LIMIT 1`);
+
+  const items = rows.map(r => {
+    const booking = (r.result === 'booked') ? upStmt.get(r.client_id) : null;
+    return { ...r, booking: booking || null };
+  });
+  res.json({ days, count: items.length, items });
+});
+
 // Первичное наполнение + автологин + очистка демо-данных при переходе на боевой режим
 async function bootstrap() {
   // автовход по логину/паролю из .env (если задан), чтобы получить user_token

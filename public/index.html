@@ -192,6 +192,25 @@
   .admin-add{display:flex;gap:8px;margin-top:14px}
   .admin-add input{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:9px 12px;font-size:14px;font-family:inherit}
   .admin-add input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(18,179,166,.12)}
+  /* журнал обзвона (Обзор) */
+  .jr-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:22px 0 10px;flex-wrap:wrap}
+  .jr-filters{display:flex;gap:8px}
+  .jr-filters select{padding:7px 11px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:13px;font-family:inherit;cursor:pointer}
+  .jr-item{display:flex;gap:12px;align-items:flex-start;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px 16px;margin-bottom:9px;box-shadow:var(--shadow)}
+  .jr-res{flex:0 0 auto;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;white-space:nowrap;margin-top:2px}
+  .jr-res.booked{background:#eef8f2;color:#22a06b;border:1px solid #bfe6cf}
+  .jr-res.refused{background:#fbe4e4;color:#d14343;border:1px solid #f2c9c9}
+  .jr-res.callback{background:#fbf0da;color:#b9791b;border:1px solid #f0dbb0}
+  .jr-res.no_answer{background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
+  .jr-body{flex:1;min-width:0}
+  .jr-name{font-weight:600;font-size:15px;cursor:pointer;color:#1c2028}
+  .jr-name:hover{color:var(--accent2)}
+  .jr-meta{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .jr-meta b{color:var(--accent2);font-weight:600}
+  .jr-note{font-size:13.5px;color:#525a68;margin-top:5px}
+  .jr-booking{margin-top:6px;font-size:13px;background:#eef8f2;border:1px solid #cdeadb;border-radius:9px;padding:6px 10px;color:#227a52}
+  .jr-when{flex:0 0 auto;font-size:12px;color:var(--muted);text-align:right;white-space:nowrap}
+  @media(max-width:560px){.jr-when{display:none}}
 </style>
 </head>
 <body>
@@ -269,6 +288,25 @@
     <div class="card" id="ovTypes"></div>
     <div class="section-title">Работа администраторов сегодня</div>
     <div class="card"><table id="ovAdmins"><thead><tr><th>Администратор</th><th>Обработано</th><th>Записал</th><th>Конверсия</th></tr></thead><tbody></tbody></table></div>
+
+    <div class="jr-head">
+      <div class="section-title" style="margin:0">Журнал обзвона</div>
+      <div class="jr-filters">
+        <select id="jrDays">
+          <option value="1">Сегодня</option>
+          <option value="7" selected>7 дней</option>
+          <option value="30">30 дней</option>
+        </select>
+        <select id="jrResult">
+          <option value="">Все результаты</option>
+          <option value="booked">Записал</option>
+          <option value="refused">Отказ</option>
+          <option value="callback">Перезвонить</option>
+          <option value="no_answer">Не ответил</option>
+        </select>
+      </div>
+    </div>
+    <div id="ovJournal"></div>
   </section>
 
   <!-- ВЫБОРКИ -->
@@ -634,7 +672,33 @@ async function loadOverview(){
     const conv=a.total?Math.round(a.booked/a.total*100):0;
     return `<tr><td>${a.admin}</td><td>${a.total}</td><td>${a.booked}</td><td>${conv}%</td></tr>`;
   }).join('') : '<tr><td colspan="4" class="muted">Сегодня ещё не было звонков</td></tr>';
+
+  loadJournal();
 }
+const JR_RES={booked:'Записал',refused:'Отказ',callback:'Перезвонить',no_answer:'Не ответил',wrong_number:'Неверный номер',done:'Обработан'};
+async function loadJournal(){
+  const days=$('#jrDays').value, result=$('#jrResult').value;
+  let url=`/api/overview/journal?days=${days}`+(result?`&result=${result}`:'');
+  const box=$('#ovJournal');
+  const r=await api(bp(url));
+  if(!r.items.length){ box.innerHTML='<div class="empty">За выбранный период звонков нет</div>'; return; }
+  box.innerHTML=r.items.map(it=>{
+    const b=it.booking;
+    const booking=b?`<div class="jr-booking">📅 Записан: ${b.service||'услуга'} · ${b.staff||'мастер'} · ${fmtDT(b.date)}${b.branch?' · '+b.branch:''}</div>`:'';
+    return `<div class="jr-item">
+      <span class="jr-res ${it.result||'no_answer'}">${JR_RES[it.result]||'звонок'}</span>
+      <div class="jr-body">
+        <div class="jr-name" onclick="openClient(${it.client_id})">${it.name||'Без имени'}${branchTag(it.branch)}</div>
+        <div class="jr-meta"><span class="phone">${it.phone||'—'}</span> · звонил: <b>${it.admin||'—'}</b></div>
+        ${it.note?`<div class="jr-note">«${it.note}»</div>`:''}
+        ${booking}
+      </div>
+      <div class="jr-when">${fmtDT(it.created_at)}</div>
+    </div>`;
+  }).join('');
+}
+$('#jrDays').onchange=loadJournal;
+$('#jrResult').onchange=loadJournal;
 
 // --- КЛИЕНТЫ ---
 let searchTimer;
