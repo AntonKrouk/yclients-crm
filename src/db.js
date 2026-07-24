@@ -136,6 +136,11 @@ ensureColumn('lists', 'assignee', 'TEXT');
 ensureColumn('clients', 'comment', 'TEXT');
 ensureColumn('clients', 'do_not_call', 'INTEGER DEFAULT 0');
 ensureColumn('clients', 'comment_checked_at', 'TEXT');
+// Ручное переопределение «не беспокоить» из дашборда: NULL = авто по комменту, 1 = принудительно да, 0 = принудительно нет
+ensureColumn('clients', 'dnc_manual', 'INTEGER');
+// Настоящие деньги из карточки YClients (с учётом депозитов) + остаток депозита
+ensureColumn('clients', 'yc_spent', 'REAL');
+ensureColumn('clients', 'yc_balance', 'REAL');
 
 // Одноразовый сброс под режим «не больше 10 открытых задач на филиал»:
 // старый движок навалил сотни открытых задач — снимаем их, дальше держим по лимиту

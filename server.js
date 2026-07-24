@@ -343,6 +343,26 @@ app.post('/api/tasks/reopen-due', (req, res) => {
   res.json({ reopened: n.changes });
 });
 
+// Ручная отметка «не беспокоить» из дашборда (переопределяет авто-детект по комментарию).
+// value: true — принудительно ДА, false — принудительно НЕТ, null — снять ручную отметку (вернуть авто).
+app.post('/api/clients/:id/dnc', (req, res) => {
+  const id = Number(req.params.id);
+  const c = db.prepare('SELECT id, name, comment FROM clients WHERE id=?').get(id);
+  if (!c) return res.status(404).json({ error: 'client not found' });
+  const v = req.body?.value;
+  const manual = v === true ? 1 : v === false ? 0 : null;
+  // при снятии ручной отметки возвращаемся к авто-детекту по имени/комментарию
+  const auto = (sync.DNC_RE.test(c.name || '') || sync.DNC_RE.test(sync.originalComment(c.comment))) ? 1 : 0;
+  const eff = manual != null ? manual : auto;
+  db.prepare('UPDATE clients SET dnc_manual=?, do_not_call=? WHERE id=?').run(manual, eff, id);
+  // если теперь «не беспокоить» — снимаем его открытые задачи
+  if (eff) {
+    db.prepare(`UPDATE tasks SET status='dismissed', closed_at=? WHERE client_id=? AND status IN ('open','snoozed')`)
+      .run(new Date().toISOString(), id);
+  }
+  res.json({ ok: true, do_not_call: eff, manual });
+});
+
 // --- Клиенты / история -------------------------------------------------------
 
 app.get('/api/clients', (req, res) => {

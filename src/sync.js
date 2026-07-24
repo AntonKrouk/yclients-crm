@@ -224,22 +224,23 @@ async function syncComments({ full = false } = {}) {
   if (yc.isDemo()) return { skipped: 'demo' };
   if (commentSync.running) return { skipped: 'already_running' };
   const rows = db.prepare(`
-    SELECT id, yclients_id, company_id, name FROM clients
+    SELECT id, yclients_id, company_id, name, dnc_manual FROM clients
     WHERE yclients_id IS NOT NULL AND company_id IS NOT NULL
     ${full ? '' : `AND (comment_checked_at IS NULL
                        OR (comment_checked_at < datetime('now','-3 days')
                            AND last_visit >= datetime('now','-120 days')))`}
   `).all();
   commentSync = { running: true, done: 0, total: rows.length };
-  const upd = db.prepare('UPDATE clients SET comment=?, do_not_call=?, comment_checked_at=? WHERE id=?');
+  const upd = db.prepare('UPDATE clients SET comment=?, do_not_call=?, yc_spent=?, yc_balance=?, comment_checked_at=? WHERE id=?');
   let dnc = 0;
   try {
     for (const r of rows) {
       try {
         const card = await yc.fetchClientCard(r.company_id, r.yclients_id);
         const comment = String(card?.comment || '').trim();
-        const flag = (DNC_RE.test(originalComment(comment)) || DNC_RE.test(r.name || '')) ? 1 : 0;
-        upd.run(comment || null, flag, iso(Date.now()), r.id);
+        const derived = (DNC_RE.test(originalComment(comment)) || DNC_RE.test(r.name || '')) ? 1 : 0;
+        const flag = r.dnc_manual != null ? r.dnc_manual : derived; // ручная отметка из дашборда важнее
+        upd.run(comment || null, flag, card?.spent ?? null, card?.balance ?? null, iso(Date.now()), r.id);
         if (flag) dnc++;
       } catch { /* сетевая ошибка или клиент удалён — не трогаем, попробуем в следующий проход */ }
       commentSync.done++;
@@ -298,10 +299,11 @@ async function run(opts = {}) {
 
   // «Не беспокоить» ловим и в имени клиента: в этом салоне админы пишут заметки прямо в имя
   // («писать в WA», «не звонить» и т.п.). Имя обновляется каждым синком — пересчитываем флаг.
-  const flagRows = db.prepare(`SELECT id, name, comment, COALESCE(do_not_call,0) AS f FROM clients`).all();
+  const flagRows = db.prepare(`SELECT id, name, comment, dnc_manual, COALESCE(do_not_call,0) AS f FROM clients`).all();
   const updFlag = db.prepare('UPDATE clients SET do_not_call=? WHERE id=?');
   for (const r of flagRows) {
-    const flag = (DNC_RE.test(r.name || '') || DNC_RE.test(originalComment(r.comment))) ? 1 : 0;
+    const derived = (DNC_RE.test(r.name || '') || DNC_RE.test(originalComment(r.comment))) ? 1 : 0;
+    const flag = r.dnc_manual != null ? r.dnc_manual : derived; // ручная отметка из дашборда важнее
     if (flag !== r.f) updFlag.run(flag, r.id);
   }
 
@@ -316,4 +318,4 @@ async function run(opts = {}) {
   return { mode: yc.isDemo() ? 'demo' : 'live', clients: totalC, visits: totalV, tasks: tasksN, at: now };
 }
 
-module.exports = { run, computeFrequency, syncComments, commentSyncStatus, writeCallToYclients, CRM_MARK };
+module.exports = { run, computeFrequency, syncComments, commentSyncStatus, writeCallToYclients, CRM_MARK, originalComment, DNC_RE };

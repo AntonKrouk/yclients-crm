@@ -89,6 +89,10 @@
   .note-box{margin-top:12px;background:#fbf0da;border:1px solid #f0dbb0;color:#7a5410;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.45}
   .note-box.dnc{background:#fbe4e4;border-color:#f2c9c9;color:#a33636;font-weight:600}
   .dnc-badge{font-size:12px;font-weight:700;padding:3px 11px;border-radius:20px;background:#fbe4e4;border:1px solid #f2c9c9;color:#d14343;white-space:nowrap}
+  .dnc-toggle{margin-top:12px;width:100%;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer}
+  .dnc-toggle:hover{border-color:#f2c9c9;color:#d14343;background:#fdf5f5}
+  .dnc-toggle.on{background:#fbe4e4;border-color:#f2c9c9;color:#a33636}
+  .dnc-toggle.on:hover{background:#f8d9d9}
   table{width:100%;border-collapse:collapse;font-size:14px}
   th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line)}
   th{color:var(--muted);font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
@@ -301,6 +305,7 @@
     </div>
     <div class="cinfo" id="drawerInfo"></div>
     <div id="drawerComment" style="display:none" class="note-box"></div>
+    <button id="dncToggle" class="dnc-toggle" onclick="toggleDnc()"></button>
   </div>
   <div class="body">
     <div class="section-title" style="margin-top:0">Статистика клиента</div>
@@ -571,6 +576,22 @@ async function loadClients(q=''){
 }
 
 // --- ЛЕНТА КЛИЕНТА ---
+let drawerClientId=null;
+async function toggleDnc(){
+  if(!drawerClientId) return;
+  const dt=$('#dncToggle');
+  const turnOn = !dt.classList.contains('on');
+  dt.disabled=true;
+  try{
+    await api(`/api/clients/${drawerClientId}/dnc`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:turnOn})});
+    dt.classList.toggle('on',turnOn);
+    dt.textContent = turnOn ? '✓ Не беспокоить — снять отметку' : '🚫 Отметить «не беспокоить»';
+    $('#drawerDnc').style.display = turnOn ? '' : 'none';
+    toast(turnOn?'Клиент отмечен «не беспокоить»':'Отметка снята');
+    if(turnOn) loadTasks(); // задачи по нему сняты
+  }catch(e){ toast('Не удалось сохранить'); }
+  dt.disabled=false;
+}
 async function openClient(id){
   const {client:c, stats:s, timeline} = await api(`/api/clients/${id}/timeline`);
   $('#drawerName').textContent = c.name || 'Без имени';
@@ -580,11 +601,15 @@ async function openClient(id){
   sb.className = 'status-badge st-'+s.status;
 
   // пометка «не беспокоить» + комментарий из карточки YClients (без нашего CRM-лога — он в ленте)
+  drawerClientId = c.id;
   $('#drawerDnc').style.display = c.do_not_call ? '' : 'none';
   const cb=$('#drawerComment');
   const ownComment=(c.comment||'').split('——— Обзвон (CRM) ———')[0].trim();
   if(ownComment){cb.textContent='💬 '+ownComment;cb.className='note-box'+(c.do_not_call?' dnc':'');cb.style.display='';}
   else cb.style.display='none';
+  const dt=$('#dncToggle');
+  dt.classList.toggle('on', !!c.do_not_call);
+  dt.textContent = c.do_not_call ? '✓ Не беспокоить — снять отметку' : '🚫 Отметить «не беспокоить»';
 
   // плитки статистики
   $('#statTiles').innerHTML = [
