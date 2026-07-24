@@ -89,6 +89,7 @@
   .note-box{margin-top:12px;background:#fbf0da;border:1px solid #f0dbb0;color:#7a5410;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.45}
   .note-box.dnc{background:#fbe4e4;border-color:#f2c9c9;color:#a33636;font-weight:600}
   .dnc-badge{font-size:12px;font-weight:700;padding:3px 11px;border-radius:20px;background:#fbe4e4;border:1px solid #f2c9c9;color:#d14343;white-space:nowrap}
+  .dep-tag{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:20px;background:#eef7f0;color:#2a8a5f;border:1px solid #bfe6cf;white-space:nowrap;vertical-align:middle;font-variant-numeric:tabular-nums}
   .dnc-toggle{margin-top:12px;width:100%;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer}
   .dnc-toggle:hover{border-color:#f2c9c9;color:#d14343;background:#fdf5f5}
   .dnc-toggle.on{background:#fbe4e4;border-color:#f2c9c9;color:#a33636}
@@ -178,6 +179,19 @@
   .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:6px}
   .modal-note{font-size:11px;color:var(--muted);margin-top:14px;text-align:center}
   @media(max-width:640px){.task{flex-direction:column}.actions{min-width:0}}
+  /* панель выбора администратора */
+  .admin-bar{display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:10px 14px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
+  .admin-bar-lbl{font-size:13px;color:var(--muted);font-weight:600}
+  .admin-bar select{flex:0 1 240px;padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:14px;font-family:inherit;cursor:pointer}
+  .admin-bar select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(18,179,166,.12)}
+  .admin-manage{margin-left:auto;width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--muted);cursor:pointer;font-size:16px}
+  .admin-manage:hover{border-color:var(--accent);color:var(--accent2)}
+  .admin-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .admin-row:last-child{border-bottom:none}
+  .admin-row button{border:none;background:none;color:var(--red);cursor:pointer;font-size:13px}
+  .admin-add{display:flex;gap:8px;margin-top:14px}
+  .admin-add input{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:9px 12px;font-size:14px;font-family:inherit}
+  .admin-add input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(18,179,166,.12)}
 </style>
 </head>
 <body>
@@ -215,9 +229,30 @@
   </div>
 </div>
 
+<!-- Модальное окно управления администраторами -->
+<div class="modal-overlay" id="adminModal">
+  <div class="modal">
+    <div class="modal-title">Администраторы</div>
+    <p class="modal-sub">Список тех, кто обзванивает клиентов. Имя выбирается на дашборде, чтобы звонки записывались на нужного сотрудника.</p>
+    <div id="adminList"></div>
+    <div class="admin-add">
+      <input id="adminNewName" placeholder="Имя администратора" maxlength="40">
+      <button class="btn primary" id="adminAdd">Добавить</button>
+    </div>
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn" onclick="closeAdminModal()">Готово</button>
+    </div>
+  </div>
+</div>
+
 <main>
   <!-- ЗАДАЧИ -->
   <section id="view-tasks">
+    <div class="admin-bar">
+      <span class="admin-bar-lbl">Кто звонит:</span>
+      <select id="adminSel" title="Выберите себя — все звонки запишутся на вас"></select>
+      <button class="admin-manage" id="adminManage" title="Управлять списком администраторов">⚙</button>
+    </div>
     <div class="grid kpis" id="taskKpis"></div>
     <div id="listSection" style="display:none">
       <div class="section-title">Списки обзвона</div>
@@ -267,6 +302,12 @@
             <option value="">Исключить (по умолч.)</option>
             <option value="all">Включая их</option>
             <option value="only">Только они</option>
+          </select>
+        </label>
+        <label class="segfld">Депозит
+          <select id="segDeposit">
+            <option value="">Все клиенты</option>
+            <option value="only">Только депозитники (есть остаток)</option>
           </select>
         </label>
       </div>
@@ -332,6 +373,43 @@
 <script>
 const $ = s => document.querySelector(s);
 const api = (p,o) => fetch(p,o).then(r=>r.json());
+
+// --- Администраторы (кто звонит) ---
+let admins = [];
+const currentAdmin = () => $('#adminSel')?.value || localStorage.getItem('admin_name') || 'Администратор';
+async function loadAdmins(){
+  admins = await api('/api/admins');
+  const sel=$('#adminSel'), saved=localStorage.getItem('admin_name')||'';
+  if(!admins.length){
+    sel.innerHTML='<option value="">— добавьте админов ⚙ —</option>';
+  }else{
+    sel.innerHTML = admins.map(a=>`<option value="${a.name.replace(/"/g,'&quot;')}">${a.name}</option>`).join('');
+    sel.value = admins.some(a=>a.name===saved) ? saved : admins[0].name;
+    localStorage.setItem('admin_name', sel.value);
+  }
+}
+function renderAdminList(){
+  $('#adminList').innerHTML = admins.length
+    ? admins.map(a=>`<div class="admin-row"><span>${a.name}</span><button onclick="removeAdmin(${a.id})">Удалить</button></div>`).join('')
+    : '<div class="muted" style="font-size:13px">Пока никого. Добавьте первого администратора ниже.</div>';
+}
+function openAdminModal(){ renderAdminList(); $('#adminModal').classList.add('open'); }
+function closeAdminModal(){ $('#adminModal').classList.remove('open'); }
+async function addAdmin(){
+  const name=$('#adminNewName').value.trim();
+  if(!name) return;
+  const r=await api('/api/admins',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+  admins=r.admins||[]; $('#adminNewName').value=''; renderAdminList(); await refreshAdminSel();
+}
+async function removeAdmin(id){
+  const r=await api(`/api/admins/${id}`,{method:'DELETE'});
+  admins=r.admins||[]; renderAdminList(); await refreshAdminSel();
+}
+async function refreshAdminSel(){
+  const sel=$('#adminSel'), cur=sel.value;
+  sel.innerHTML = admins.length ? admins.map(a=>`<option value="${a.name.replace(/"/g,'&quot;')}">${a.name}</option>`).join('') : '<option value="">— добавьте админов ⚙ —</option>';
+  if(admins.some(a=>a.name===cur)) sel.value=cur; else if(admins.length){ sel.value=admins[0].name; localStorage.setItem('admin_name',sel.value); }
+}
 
 // --- Филиалы ---
 let currentBranch = '';
@@ -444,7 +522,7 @@ async function loadTasks(){
 
 async function act(taskId,result,btn){
   const note = $('#note-'+taskId)?.value || '';
-  const admin = localStorage.getItem('admin_name') || 'Администратор';
+  const admin = currentAdmin();
   await api(`/api/tasks/${taskId}/action`,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({result,note,admin})});
   const card = btn.closest('.task');
@@ -506,7 +584,7 @@ function renderMember(listId,m){
 }
 async function memAct(listId,memberId,result,btn){
   const note=$('#memnote-'+memberId)?.value||'';
-  const admin=localStorage.getItem('admin_name')||'Администратор';
+  const admin=currentAdmin();
   await api(`/api/lists/${listId}/members/${memberId}/action`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({result,note,admin})});
   toast(result==='booked'?'Записан ✅':result==='callback'?'Отложено':'Отмечено');
   // обновим блок: перерисуем участников и прогресс
@@ -518,7 +596,7 @@ async function memAct(listId,memberId,result,btn){
   block.querySelector('.lb-progress>div').style.width=(members.length?Math.round(done/members.length*100):0)+'%';
 }
 async function setAssignee(id,current){
-  const name=prompt('Ответственный администратор (пусто — убрать):',current||localStorage.getItem('admin_name')||'');
+  const name=prompt('Ответственный администратор (пусто — убрать):',current||currentAdmin()||'');
   if(name===null) return;
   await api(`/api/lists/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({assignee:name})});
   toast(name.trim()?`Ответственный: ${name.trim()}`:'Ответственный убран');
@@ -611,15 +689,19 @@ async function openClient(id){
   dt.classList.toggle('on', !!c.do_not_call);
   dt.textContent = c.do_not_call ? '✓ Не беспокоить — снять отметку' : '🚫 Отметить «не беспокоить»';
 
-  // плитки статистики
-  $('#statTiles').innerHTML = [
+  // плитки статистики. Настоящая сумма трат (из YClients, с депозитами) если известна, иначе по визитам
+  const realSpent = c.yc_spent!=null ? c.yc_spent : s.total_spent;
+  const spentLabel = c.yc_spent!=null ? 'Потрачено (с депозитом)' : 'Потрачено';
+  const tiles = [
     ['Визитов', s.total_visits],
     ['Средний чек', rub(s.avg_check)],
-    ['Потрачено', rub(s.total_spent)],
+    [spentLabel, rub(realSpent)],
     ['Периодичность', c.avg_interval_days?'~'+Math.round(c.avg_interval_days)+' дн.':'—'],
     ['Не пришёл', s.no_show + (s.completion_rate!=null?` · ${s.completion_rate}% доходит`:'')],
     ['Не был', s.since_last_days!=null?s.since_last_days+' дн.':'—'],
-  ].map(([l,n])=>`<div class="stile"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+  ];
+  if(c.yc_balance>0) tiles.push(['Остаток депозита', `<span style="color:var(--accent2)">${rub(c.yc_balance)}</span>`]);
+  $('#statTiles').innerHTML = tiles.map(([l,n])=>`<div class="stile"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
 
   // график по месяцам
   const maxM = Math.max(1,...s.months.map(m=>m.count));
@@ -702,6 +784,7 @@ function currentFilter(){
   const ms=$('#segMinSpent').value; if(ms&&ms!=='0')f.min_spent=ms;
   const cm=$('#segComment').value.trim(); if(cm)f.comment=cm;
   const dnc=$('#segDnc').value; if(dnc)f.dnc=dnc;
+  const dep=$('#segDeposit').value; if(dep)f.deposit=dep;
   if(currentBranch) f.branch=currentBranch;
   return f;
 }
@@ -714,6 +797,7 @@ function filterLabel(f){
   if(f.min_spent)parts.push('от '+f.min_spent+'₽');
   if(f.comment)parts.push('коммент «'+f.comment+'»');
   if(f.dnc==='only')parts.push('не беспокоить');
+  if(f.deposit==='only')parts.push('депозитники');
   return parts.join(', ')||'Все клиенты';
 }
 let segReq=0;
@@ -731,7 +815,7 @@ async function runSegment(){
   const tb=$('#segTable tbody');
   tb.innerHTML = r.clients.map(c=>`
     <tr class="crow" onclick="openClient(${c.id})">
-      <td title="${(c.comment||'').replace(/"/g,'&quot;')}">${c.do_not_call?'🚫 ':''}${c.name||'—'}${branchTag(c.branch)}</td>
+      <td title="${(c.comment||'').replace(/"/g,'&quot;')}">${c.do_not_call?'🚫 ':''}${c.name||'—'}${branchTag(c.branch)}${c.deposit_balance>0?` <span class="dep-tag" title="Остаток депозита">💰 ${rub(c.deposit_balance)}</span>`:''}</td>
       <td class="phone">${c.phone||'—'}</td>
       <td><b>${c.match_visits}</b></td>
       <td>${c.total_visits||0}</td>
@@ -765,7 +849,7 @@ async function createListFromFilter(){
   const suggested='Обзвон: '+filterLabel(segFilter);
   const name=prompt('Название списка для дашборда:', suggested);
   if(!name) return;
-  const assignee=prompt('Ответственный администратор (пусто — без ответственного):', localStorage.getItem('admin_name')||'');
+  const assignee=prompt('Ответственный администратор (пусто — без ответственного):', currentAdmin()||'');
   if(assignee===null) return;
   try{
     const r=await api('/api/lists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,filter:segFilter,assignee})});
@@ -781,8 +865,8 @@ $('#segToList').onclick=createListFromFilter;
 let segTimer;
 const segAuto=()=>{clearTimeout(segTimer);segTimer=setTimeout(runSegment,350);};
 ['segService','segStaff','segFrom','segTo','segMinVisits','segMinSpent','segComment'].forEach(id=>$('#'+id).addEventListener('input',segAuto));
-['segFrom','segTo','segDnc'].forEach(id=>$('#'+id).addEventListener('change',segAuto));
-$('#segReset').onclick=()=>{clearTimeout(segTimer);['segService','segStaff','segFrom','segTo','segComment','segDnc'].forEach(id=>$('#'+id).value='');$('#segMinVisits').value='1';$('#segMinSpent').value='0';$('#segSummary').textContent='';$('#segTable tbody').innerHTML='';$('#segExport').disabled=true;$('#segToList').disabled=true;segResults=[];};
+['segFrom','segTo','segDnc','segDeposit'].forEach(id=>$('#'+id).addEventListener('change',segAuto));
+$('#segReset').onclick=()=>{clearTimeout(segTimer);['segService','segStaff','segFrom','segTo','segComment','segDnc','segDeposit'].forEach(id=>$('#'+id).value='');$('#segMinVisits').value='1';$('#segMinSpent').value='0';$('#segSummary').textContent='';$('#segTable tbody').innerHTML='';$('#segExport').disabled=true;$('#segToList').disabled=true;segResults=[];};
 
 // --- Синхронизация ---
 $('#syncBtn').onclick = async ()=>{
@@ -793,7 +877,15 @@ $('#syncBtn').onclick = async ()=>{
   loadTasks();
 };
 
+// --- Администраторы: события ---
+$('#adminSel').onchange = ()=>{ localStorage.setItem('admin_name', $('#adminSel').value); };
+$('#adminManage').onclick = openAdminModal;
+$('#adminModal').onclick = e=>{ if(e.target.id==='adminModal') closeAdminModal(); };
+$('#adminAdd').onclick = addAdmin;
+$('#adminNewName').onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); addAdmin(); } };
+
 // Старт
+loadAdmins();
 loadBranches();
 loadTasks();
 </script>

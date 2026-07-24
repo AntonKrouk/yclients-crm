@@ -90,6 +90,21 @@ app.post('/api/sync-comments', (req, res) => {
 });
 app.get('/api/sync-comments/status', (req, res) => res.json(sync.commentSyncStatus()));
 
+// --- Администраторы (редактируемый список для выбора «кто звонил») ------------
+app.get('/api/admins', (req, res) => {
+  res.json(db.prepare('SELECT id, name FROM admins WHERE active=1 ORDER BY sort, name').all());
+});
+app.post('/api/admins', (req, res) => {
+  const name = (req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Укажите имя' });
+  db.prepare('INSERT INTO admins(name,active) VALUES(?,1) ON CONFLICT(name) DO UPDATE SET active=1').run(name);
+  res.json({ ok: true, admins: db.prepare('SELECT id, name FROM admins WHERE active=1 ORDER BY sort, name').all() });
+});
+app.delete('/api/admins/:id', (req, res) => {
+  db.prepare('UPDATE admins SET active=0 WHERE id=?').run(Number(req.params.id));
+  res.json({ ok: true, admins: db.prepare('SELECT id, name FROM admins WHERE active=1 ORDER BY sort, name').all() });
+});
+
 // Список филиалов (для переключателя на дашборде)
 app.get('/api/branches', (req, res) => {
   const rows = db.prepare(`
@@ -156,6 +171,7 @@ function querySegment(f = {}) {
   const branch = (f.branch || '').trim();
   const comment = (f.comment || '').toLowerCase().trim();
   const dnc = (f.dnc || '').trim(); // '' = исключить «не беспокоить» (по умолч.) | 'all' = включая | 'only' = только они
+  const deposit = (f.deposit || '').trim(); // 'only' = только с остатком депозита (balance>0)
 
   const conds = ["v.status = 'completed'"];
   const params = [];
@@ -165,12 +181,13 @@ function querySegment(f = {}) {
   if (from) { conds.push('v.date >= ?'); params.push(from); }
   if (to) { conds.push('v.date <= ?'); params.push(to + 'T23:59:59'); }
   if (comment) { conds.push('lower_u(COALESCE(c.comment,\'\')) LIKE ?'); params.push('%' + comment + '%'); }
+  if (deposit === 'only') conds.push('COALESCE(c.yc_balance,0) > 0');
   if (dnc === 'only') conds.push('COALESCE(c.do_not_call,0) = 1');
   else if (dnc !== 'all') conds.push('COALESCE(c.do_not_call,0) = 0');
 
   const sql = `
     SELECT c.id, c.name, c.phone, c.branch, c.comment, COALESCE(c.do_not_call,0) AS do_not_call,
-           c.visits_count AS total_visits,
+           c.visits_count AS total_visits, COALESCE(c.yc_spent, c.spent) AS real_spent, COALESCE(c.yc_balance,0) AS deposit_balance,
            COUNT(v.id) AS match_visits,
            MAX(v.date) AS last_match,
            ROUND(SUM(v.cost)) AS match_spent,

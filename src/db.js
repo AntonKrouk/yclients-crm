@@ -116,6 +116,14 @@ db.exec(`
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_services_uniq ON services(company_id, yc_id);
 
+  -- Администраторы (редактируемый список) — для выбора «кто звонил» при фиксации звонка
+  CREATE TABLE IF NOT EXISTS admins (
+    id     INTEGER PRIMARY KEY,
+    name   TEXT UNIQUE,
+    active INTEGER DEFAULT 1,
+    sort   INTEGER DEFAULT 0
+  );
+
   CREATE INDEX IF NOT EXISTS idx_visits_client ON visits(client_id);
   CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
   CREATE INDEX IF NOT EXISTS idx_actions_client ON task_actions(client_id);
