@@ -25,8 +25,11 @@ const insertTask = db.prepare(`
   VALUES (?,?,?,?,'open',?, ?)
 `);
 
-// Приоритет типов при заполнении дневных слотов: свежая неявка важнее рутинной записи
-const TYPE_RANK = { no_show: 0, rebook: 1, reactivation: 2 };
+// Порядок обхода типов при заполнении дневных слотов. Слоты раздаются ЧЕРЕДОВАНИЕМ:
+// по одному кандидату каждого типа по кругу, пока лимит не исчерпан. Иначе список админа
+// забивали бы неявки (их всегда хватает), а «пора записать» и реактивация не доходили бы
+// до звонка вовсе. Порядок внутри круга = приоритет: свежая неявка важнее рутинной записи.
+const TYPE_ORDER = ['no_show', 'rebook', 'reactivation'];
 
 function generate() {
   const nowIso = new Date().toISOString();
@@ -148,11 +151,13 @@ function generate() {
     }
   }
 
-  // Очередь: сперва «частые» (ходят раз в месяц и чаще), внутри — по важности типа, потом по числу визитов
-  candidates.sort((a, b) =>
-    (b.frequent - a.frequent)
-    || (TYPE_RANK[a.type] - TYPE_RANK[b.type])
-    || (b.visits - a.visits));
+  // Очереди кандидатов: филиал → тип. Внутри типа порядок прежний — сперва «частые»
+  // (ходят раз в месяц и чаще), затем по числу визитов.
+  const byBranch = new Map();
+  for (const cand of candidates) {
+    if (!byBranch.has(cand.branch)) byBranch.set(cand.branch, new Map(TYPE_ORDER.map(t => [t, []])));
+    byBranch.get(cand.branch).get(cand.type).push(cand);
+  }
 
   // Свободные слоты по филиалам: цель — DAILY_OPEN_TARGET открытых задач на филиал
   const openBy = new Map(db.prepare(`
@@ -162,13 +167,29 @@ function generate() {
   `).all().map(r => [r.b, r.n]));
 
   let created = 0;
-  for (const cand of candidates) {
-    const open = openBy.get(cand.branch) || 0;
-    if (open >= DAILY_OPEN_TARGET) continue;
-    if (hasOpen.get(cand.clientId, cand.type)) continue;
-    insertTask.run(cand.clientId, cand.type, today(), cand.priority, cand.reason, nowIso);
-    openBy.set(cand.branch, open + 1);
-    created++;
+  for (const [branch, queues] of byBranch) {
+    for (const q of queues.values()) {
+      q.sort((a, b) => (b.frequent - a.frequent) || (b.visits - a.visits));
+    }
+    let open = openBy.get(branch) || 0;
+    // Круг за кругом берём по одному кандидату каждого типа. Пустой тип пропускаем —
+    // его слоты достаются остальным, так что лимит заполняется всегда, если есть кого звать.
+    while (open < DAILY_OPEN_TARGET) {
+      let tookAny = false;
+      for (const type of TYPE_ORDER) {
+        if (open >= DAILY_OPEN_TARGET) break;
+        const q = queues.get(type);
+        while (q.length) {
+          const cand = q.shift();
+          if (hasOpen.get(cand.clientId, cand.type)) continue; // задача такого типа уже висит
+          insertTask.run(cand.clientId, cand.type, today(), cand.priority, cand.reason, nowIso);
+          open++; created++; tookAny = true;
+          break;
+        }
+      }
+      if (!tookAny) break; // кандидаты кончились раньше, чем слоты
+    }
+    openBy.set(branch, open);
   }
 
   return created;
