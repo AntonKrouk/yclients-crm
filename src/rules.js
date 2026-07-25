@@ -80,16 +80,28 @@ function generate() {
     if (arr.some(c => upMap.has(c.id))) personBooked.add(prio.id);
   }
 
-  // Снимаем ранее созданные задачи по неприоритетным дублям (чтобы не висели после включения дедупа)
-  if (suppressed.size) {
-    const ids = [...suppressed];
+  const dismissFor = (ids) => {
     const CH = 400;
+    let n = 0;
     for (let i = 0; i < ids.length; i += CH) {
       const part = ids.slice(i, i + CH);
-      db.prepare(`UPDATE tasks SET status='dismissed', closed_at=?
-                  WHERE status IN ('open','snoozed') AND client_id IN (${part.map(() => '?').join(',')})`)
-        .run(nowIso, ...part);
+      n += db.prepare(`UPDATE tasks SET status='dismissed', closed_at=?
+                       WHERE status IN ('open','snoozed') AND client_id IN (${part.map(() => '?').join(',')})`)
+        .run(nowIso, ...part).changes;
     }
+    return n;
+  };
+
+  // Снимаем ранее созданные задачи по неприоритетным дублям (чтобы не висели после включения дедупа)
+  if (suppressed.size) dismissFor([...suppressed]);
+
+  // Клиент записался (сам, через админа или из дашборда) — снимаем висящие задачи «позвонить
+  // и записать». Создание новых мы и так пропускаем ниже, но уже открытые надо закрыть, иначе
+  // админ звонит человеку, который сидит в журнале на следующей неделе.
+  const booked = [...new Set([...upMap.keys(), ...personBooked])];
+  if (booked.length) {
+    const n = dismissFor(booked);
+    if (n) console.log(`[rules] снято задач по уже записавшимся клиентам: ${n}`);
   }
 
   const lastNoShow = db.prepare(`

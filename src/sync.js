@@ -125,6 +125,23 @@ function syncBranch(clients, records, company, now) {
   return { clients: clientsN, visits: visitsN };
 }
 
+// Отменённые и удалённые записи YClients из выдачи /records просто пропадают, а не приходят
+// с флагом. Поэтому после синка сверяем БУДУЩИЕ визиты филиала со свежей выдачей: чего нет —
+// помечаем отменённым. Иначе клиент навсегда остался бы «уже записан»: задач ему не ставили бы,
+// а в журнале обзвона висела бы несуществующая запись.
+function reconcileFuture(records, company, endIso) {
+  const alive = new Set(records.filter(r => !r.deleted).map(r => String(r.id)));
+  const rows = db.prepare(`SELECT id, yclients_record_id FROM visits
+    WHERE company_id = ? AND status = 'upcoming' AND date > ? AND date <= ?`)
+    .all(Number(company.id) || null, iso(Date.now()), endIso);
+  const upd = db.prepare("UPDATE visits SET status='cancelled' WHERE id=?");
+  let n = 0;
+  for (const r of rows) {
+    if (!alive.has(String(r.yclients_record_id))) { upd.run(r.id); n++; }
+  }
+  return n;
+}
+
 // Подтянуть ОДНУ запись из YClients в локальную базу — вызывается сразу после создания записи
 // из дашборда, чтобы она мгновенно появилась в ленте клиента и в журнале без полного синка
 // (полный проход по 22 тыс. записей занимает минуты). Ночной синк потом всё равно всё сверит.
@@ -297,7 +314,11 @@ async function run(opts = {}) {
   } else {
     await yc.ensureAuth(); // если токена нет, но есть логин/пароль в .env — получим токен
     const months = Number(opts.months) || Number(process.env.YCLIENTS_SYNC_MONTHS) || 12;
-    const end = new Date();
+    // Окно синка обязательно захватывает БУДУЩЕЕ: /records фильтрует по дате визита, и без
+    // этого предстоящие записи к нам не попадали вовсе. А без них движок задач считал
+    // записанных клиентов незаписанными и звал их записываться повторно.
+    const futureDays = Number(opts.futureDays) || Number(process.env.YCLIENTS_SYNC_FUTURE_DAYS) || 180;
+    const end = new Date(); end.setDate(end.getDate() + futureDays);
     const start = new Date(); start.setMonth(start.getMonth() - months);
     const fmt = (d) => d.toISOString().slice(0, 10);
 
@@ -313,7 +334,10 @@ async function run(opts = {}) {
       const clients = clientsFromRecords(records);
       const res = syncBranch(clients, records, { id: comp.id, name }, now);
       totalC += res.clients; totalV += res.visits;
-      console.log(`[sync] ${name}: клиентов ${res.clients}, визитов ${res.visits} (окно ${months} мес.)`);
+      const cancelled = reconcileFuture(records, { id: comp.id, name }, iso(end));
+      console.log(`[sync] ${name}: клиентов ${res.clients}, визитов ${res.visits}`
+        + ` (окно ${months} мес. назад + ${futureDays} дн. вперёд)`
+        + (cancelled ? `, отменено записей: ${cancelled}` : ''));
       try {
         const svcN = await syncServices({ id: comp.id, name }, now);
         console.log(`[sync] ${name}: услуг в прайсе ${svcN}`);
