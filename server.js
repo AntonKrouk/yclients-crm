@@ -105,6 +105,62 @@ app.delete('/api/admins/:id', (req, res) => {
   res.json({ ok: true, admins: db.prepare('SELECT id, name FROM admins WHERE active=1 ORDER BY sort, name').all() });
 });
 
+// Кто в YClients действительно администратор: берём пользователей филиала с ролью
+// administrator/manager (user_role_slug) по ВСЕМ филиалам. Имя в users бывает короткое
+// («Екатерина») — дополняем полным ФИО из staff по user_id, если оно длиннее.
+const ADMIN_ROLES = new Set(['administrator', 'manager']);
+async function ycAdmins() {
+  const byId = new Map();
+  for (const comp of yc.companies()) {
+    let users = [], staff = [];
+    try { users = await yc.fetchUsers(comp.id); } catch (e) { console.error('[admins] users', comp.id, e.message); continue; }
+    try { staff = await yc.fetchStaff(comp.id); } catch { /* ФИО необязательны */ }
+    const fullName = new Map();
+    for (const s of (staff || [])) {
+      if (s.user_id && s.name && !s.fired) fullName.set(String(s.user_id), s.name.trim());
+    }
+    for (const u of (users || [])) {
+      if (!ADMIN_ROLES.has(u.user_role_slug)) continue;
+      const key = String(u.id);
+      const full = fullName.get(key) || '';
+      const name = (full.length > (u.name || '').length ? full : (u.name || '')).trim();
+      if (!name) continue;
+      const prev = byId.get(key);
+      if (prev) { if (!prev.branches.includes(comp.name)) prev.branches.push(comp.name); continue; }
+      byId.set(key, { user_id: key, name, phone: u.phone || '', role: u.user_role_slug, branches: [comp.name] });
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+}
+
+// Показать администраторов из YClients (с пометкой, кто уже в списке «кто звонит»)
+app.get('/api/admins/yclients', async (req, res) => {
+  if (yc.isDemo()) return res.status(400).json({ error: 'Демо-режим: список из YClients недоступен' });
+  try {
+    const list = await ycAdmins();
+    const have = new Set(db.prepare('SELECT name FROM admins WHERE active=1').all().map(r => r.name));
+    res.json(list.map(a => ({ ...a, added: have.has(a.name) })));
+  } catch (e) {
+    console.error('[admins/yclients]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Добавить выбранных (или всех) администраторов YClients в список «кто звонит»
+app.post('/api/admins/import', async (req, res) => {
+  if (yc.isDemo()) return res.status(400).json({ error: 'Демо-режим: импорт недоступен' });
+  try {
+    const only = Array.isArray(req.body?.names) && req.body.names.length ? new Set(req.body.names) : null;
+    const list = (await ycAdmins()).filter(a => !only || only.has(a.name));
+    const ins = db.prepare('INSERT INTO admins(name,active) VALUES(?,1) ON CONFLICT(name) DO UPDATE SET active=1');
+    for (const a of list) ins.run(a.name);
+    res.json({ ok: true, imported: list.length, admins: db.prepare('SELECT id, name FROM admins WHERE active=1 ORDER BY sort, name').all() });
+  } catch (e) {
+    console.error('[admins/import]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Список филиалов (для переключателя на дашборде)
 app.get('/api/branches', (req, res) => {
   const rows = db.prepare(`
@@ -253,11 +309,11 @@ app.get('/api/lists/:id/members', (req, res) => {
   res.json(rows);
 });
 
-// Отметить результат звонка по участнику списка + записать в ленту клиента
-app.post('/api/lists/:id/members/:memberId/action', (req, res) => {
-  const { result, note, admin } = req.body || {};
-  const m = db.prepare('SELECT * FROM list_members WHERE id=?').get(Number(req.params.memberId));
-  if (!m) return res.status(404).json({ error: 'member not found' });
+// Фиксация звонка по участнику списка: обновляет статус, пишет в ленту клиента и в YClients.
+// Вынесено в функцию, чтобы этим же путём отмечался звонок при создании записи из формы.
+function applyMemberAction(memberId, { result, note, admin } = {}) {
+  const m = db.prepare('SELECT * FROM list_members WHERE id=?').get(Number(memberId));
+  if (!m) return null;
   const status = (result === 'callback' || result === 'no_answer') ? 'snoozed' : 'done';
   db.prepare('UPDATE list_members SET status=?, result=?, note=?, admin=?, updated_at=? WHERE id=?')
     .run(status, result || null, note || '', admin || 'admin', new Date().toISOString(), m.id);
@@ -268,7 +324,15 @@ app.post('/api/lists/:id/members/:memberId/action', (req, res) => {
   setImmediate(() => sync.writeCallToYclients(m.client_id, { result, note, admin })
     .catch(e => console.error('[yc-writeback list]', e.message)));
 
-  res.json({ ok: true, status });
+  return { status, client_id: m.client_id };
+}
+
+// Отметить результат звонка по участнику списка + записать в ленту клиента
+app.post('/api/lists/:id/members/:memberId/action', (req, res) => {
+  const { result, note, admin } = req.body || {};
+  const r = applyMemberAction(req.params.memberId, { result, note, admin });
+  if (!r) return res.status(404).json({ error: 'member not found' });
+  res.json({ ok: true, status: r.status });
 });
 
 // Сменить ответственного админа у списка
@@ -325,12 +389,12 @@ app.get('/api/tasks', (req, res) => {
   res.json(rows.map(r => ({ ...r, type_label: TYPE_LABEL[r.type] || r.type })));
 });
 
-// Зафиксировать результат звонка + заметку. Меняет статус задачи.
-app.post('/api/tasks/:id/action', (req, res) => {
-  const taskId = Number(req.params.id);
-  const { result, note, admin, snooze_days } = req.body || {};
+// Фиксация звонка по задаче: статус задачи + запись в ленту клиента + обратная запись в YClients.
+// Вынесено в функцию — тем же путём отмечается звонок при создании записи из формы.
+function applyTaskAction(rawTaskId, { result, note, admin, snooze_days } = {}) {
+  const taskId = Number(rawTaskId);
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
-  if (!task) return res.status(404).json({ error: 'task not found' });
+  if (!task) return null;
 
   db.prepare(`
     INSERT INTO task_actions (task_id, client_id, admin, result, note, created_at)
@@ -353,13 +417,160 @@ app.post('/api/tasks/:id/action', (req, res) => {
   setImmediate(() => sync.writeCallToYclients(task.client_id, { result, note, admin })
     .catch(e => console.error('[yc-writeback task]', e.message)));
 
-  res.json({ ok: true, status: newStatus });
+  return { status: newStatus, client_id: task.client_id };
+}
+
+// Зафиксировать результат звонка + заметку. Меняет статус задачи.
+app.post('/api/tasks/:id/action', (req, res) => {
+  const { result, note, admin, snooze_days } = req.body || {};
+  const r = applyTaskAction(req.params.id, { result, note, admin, snooze_days });
+  if (!r) return res.status(404).json({ error: 'task not found' });
+  res.json({ ok: true, status: r.status });
 });
 
 // Вернуть отложенную задачу в работу (для «снуз» на сегодня)
 app.post('/api/tasks/reopen-due', (req, res) => {
   const n = db.prepare(`UPDATE tasks SET status='open' WHERE status='snoozed' AND due_date <= date('now')`).run();
   res.json({ reopened: n.changes });
+});
+
+// --- Запись клиента к мастеру (создание записи прямо в YClients) --------------
+// Цепочка справочников повторяет виджет онлайн-записи: мастера → услуги мастера →
+// рабочие дни → свободные слоты. Филиал берём из карточки клиента (у человека может быть
+// по карточке в каждом филиале — записываем в тот, из которого пришла задача).
+
+const CLIENT_FIELDS = 'id, yclients_id, company_id, branch, name, phone, favorite_staff, favorite_service';
+const getClient = (id) => db.prepare(`SELECT ${CLIENT_FIELDS} FROM clients WHERE id=?`).get(Number(id));
+
+// company_id: явный параметр или филиал клиента
+function bookingCompany(req) {
+  const cid = (req.query.company_id || '').trim();
+  if (cid) return cid;
+  const c = req.query.client_id ? getClient(req.query.client_id) : null;
+  return c?.company_id ? String(c.company_id) : '';
+}
+const svcIds = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
+
+app.get('/api/booking/staff', async (req, res) => {
+  const cid = bookingCompany(req);
+  if (!cid) return res.status(400).json({ error: 'Не определён филиал' });
+  try {
+    const list = await yc.fetchBookStaff(cid);
+    const client = req.query.client_id ? getClient(req.query.client_id) : null;
+    res.json((Array.isArray(list) ? list : [])
+      .filter(s => s.bookable && !s.fired)
+      .map(s => ({
+        id: s.id, name: s.name, specialization: s.specialization || '',
+        // подсветим «любимого» мастера клиента, чтобы админ не искал его в списке
+        favorite: Boolean(client?.favorite_staff && client.favorite_staff === s.name),
+      })));
+  } catch (e) { console.error('[booking/staff]', e.message); res.status(502).json({ error: e.message }); }
+});
+
+app.get('/api/booking/services', async (req, res) => {
+  const cid = bookingCompany(req);
+  const staffId = (req.query.staff_id || '').trim();
+  if (!cid) return res.status(400).json({ error: 'Не определён филиал' });
+  try {
+    const data = await yc.fetchBookServices(cid, staffId);
+    const cats = {};
+    for (const c of (data?.category || [])) cats[c.id] = c.title || '';
+    const client = req.query.client_id ? getClient(req.query.client_id) : null;
+    res.json((data?.services || []).map(s => ({
+      id: s.id, title: s.title, category: cats[s.category_id] || '',
+      price_min: s.price_min, price_max: s.price_max, seance_length: s.seance_length || 0,
+      favorite: Boolean(client?.favorite_service && String(client.favorite_service).includes(s.title)),
+    })));
+  } catch (e) { console.error('[booking/services]', e.message); res.status(502).json({ error: e.message }); }
+});
+
+app.get('/api/booking/dates', async (req, res) => {
+  const cid = bookingCompany(req);
+  const staffId = (req.query.staff_id || '').trim();
+  if (!cid || !staffId) return res.status(400).json({ error: 'Нужны филиал и мастер' });
+  try {
+    const d = await yc.fetchBookDates(cid, staffId, svcIds(req.query.service_ids));
+    res.json({ dates: d?.booking_dates || d?.working_dates || [] });
+  } catch (e) { console.error('[booking/dates]', e.message); res.status(502).json({ error: e.message }); }
+});
+
+app.get('/api/booking/times', async (req, res) => {
+  const cid = bookingCompany(req);
+  const staffId = (req.query.staff_id || '').trim();
+  const date = (req.query.date || '').trim();
+  if (!cid || !staffId || !date) return res.status(400).json({ error: 'Нужны филиал, мастер и дата' });
+  try {
+    const list = await yc.fetchBookTimes(cid, staffId, date, svcIds(req.query.service_ids));
+    res.json((Array.isArray(list) ? list : []).map(t => ({
+      time: t.time, datetime: t.datetime, seance_length: t.seance_length || t.sum_length || 0,
+    })));
+  } catch (e) { console.error('[booking/times]', e.message); res.status(502).json({ error: e.message }); }
+});
+
+// Создать запись в YClients + сразу подтянуть её к нам + зафиксировать звонок как «Записал»
+app.post('/api/booking/create', async (req, res) => {
+  if (yc.isDemo()) return res.status(400).json({ error: 'Демо-режим: запись в YClients недоступна' });
+  const {
+    client_id, staff_id, service_ids, datetime, seance_length,
+    comment, send_sms, task_id, member_id, note, admin,
+  } = req.body || {};
+
+  const client = getClient(client_id);
+  if (!client) return res.status(404).json({ error: 'Клиент не найден' });
+  if (!client.yclients_id || !client.company_id) return res.status(400).json({ error: 'У клиента нет карточки в YClients' });
+  if (!staff_id || !datetime || !Array.isArray(service_ids) || !service_ids.length) {
+    return res.status(400).json({ error: 'Нужны мастер, услуга и время' });
+  }
+
+  let record;
+  try {
+    const created = await yc.createRecord(client.company_id, {
+      staff_id: Number(staff_id),
+      services: service_ids.map(id => ({ id: Number(id) })),
+      client: { id: client.yclients_id, phone: String(client.phone || '').replace(/\D/g, ''), name: client.name || '' },
+      datetime,
+      seance_length: Number(seance_length) || undefined,
+      save_if_busy: false,
+      send_sms: send_sms !== false, // по умолчанию клиент получает обычное СМС-подтверждение
+      comment: comment || '',
+      api_id: '',
+    });
+    record = Array.isArray(created) ? created[0] : created;
+  } catch (e) {
+    console.error('[booking/create]', e.message);
+    return res.status(502).json({ error: 'YClients не принял запись: ' + e.message });
+  }
+  if (!record?.id) return res.status(502).json({ error: 'YClients не вернул номер записи' });
+
+  // Подтягиваем созданную запись к себе, чтобы она сразу была видна в ленте и в журнале
+  let imported = null;
+  try {
+    imported = await sync.importRecord(client.company_id, client.branch, record.id);
+  } catch (e) { console.error('[booking/import]', e.message); }
+
+  const staffName = record.staff?.name || '';
+  const svcTitles = (record.services || []).map(s => s.title).filter(Boolean).join(', ');
+  const when = new Date(record.datetime || datetime).toLocaleString('ru-RU',
+    { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' });
+  const booking = `Запись: ${when}, ${svcTitles}${staffName ? ' — ' + staffName : ''}`;
+  const fullNote = [note && note.trim(), booking].filter(Boolean).join('. ');
+
+  // Фиксируем звонок как «Записал»: задача/участник списка + лента клиента + карточка YClients
+  let action = null;
+  if (task_id) action = applyTaskAction(task_id, { result: 'booked', note: fullNote, admin });
+  else if (member_id) action = applyMemberAction(member_id, { result: 'booked', note: fullNote, admin });
+  else {
+    db.prepare('INSERT INTO task_actions(task_id,client_id,admin,result,note,created_at) VALUES(NULL,?,?,?,?,?)')
+      .run(client.id, admin || 'admin', 'booked', fullNote, new Date().toISOString());
+    setImmediate(() => sync.writeCallToYclients(client.id, { result: 'booked', note: fullNote, admin })
+      .catch(e => console.error('[yc-writeback booking]', e.message)));
+  }
+
+  res.json({
+    ok: true, record_id: record.id, datetime: record.datetime || datetime,
+    staff: staffName, services: svcTitles, when, imported: Boolean(imported?.ok),
+    status: action?.status || null,
+  });
 });
 
 // Ручная отметка «не беспокоить» из дашборда (переопределяет авто-детект по комментарию).

@@ -123,6 +123,13 @@ async function fetchStaff(cid = companyId()) {
   return api(`/company/${cid}/staff/`);
 }
 
+// Пользователи филиала с ролями доступа (user_role_slug: administrator/manager/worker/owner/accountant).
+// Это НАСТОЯЩИЙ список тех, кто работает в YClients — в отличие от staff, где админы заведены
+// как «сотрудники» и часто скрыты/уволены.
+async function fetchUsers(cid = companyId()) {
+  return api(`/company/${cid}/users/`);
+}
+
 // Прайс-лист услуг филиала: title, price_min/max, category_id, active
 async function fetchServices(cid = companyId()) {
   return api(`/company/${cid}/services/`);
@@ -196,6 +203,50 @@ async function fetchRecords(cid, startDate, endDate, onProgress) {
     if (page > 500) break; // предохранитель
   }
   return all;
+}
+
+// --- Онлайн-запись: справочники, свободные слоты, создание записи -------------
+// Цепочка (проверено на боевом): book_staff → book_services?staff_id → book_dates → book_times.
+// Эти эндпоинты отдают ровно то, что видит виджет онлайн-записи: только реально свободное время
+// с учётом графика мастера, длительности услуги и уже существующих записей.
+
+const qsServices = (ids = []) => (ids || []).map(id => `service_ids[]=${encodeURIComponent(id)}`).join('&');
+
+// Мастера, доступные для записи (bookable=true — можно записывать)
+async function fetchBookStaff(cid) {
+  return api(`/book_staff/${cid}`);
+}
+
+// Услуги, доступные к записи (если задан staff_id — только те, что делает этот мастер).
+// Возвращает { services: [...], category: [...] }
+async function fetchBookServices(cid, staffId) {
+  return api(`/book_services/${cid}${staffId ? `?staff_id=${staffId}` : ''}`);
+}
+
+// Дни, в которые мастер работает и есть свободные окна
+async function fetchBookDates(cid, staffId, serviceIds = []) {
+  const q = [staffId ? `staff_id=${staffId}` : '', qsServices(serviceIds)].filter(Boolean).join('&');
+  return api(`/book_dates/${cid}${q ? '?' + q : ''}`);
+}
+
+// Свободные слоты мастера на дату (с учётом длительности выбранных услуг)
+async function fetchBookTimes(cid, staffId, date, serviceIds = []) {
+  const q = qsServices(serviceIds);
+  return api(`/book_times/${cid}/${staffId}/${date}${q ? '?' + q : ''}`);
+}
+
+// Создать запись в журнале филиала (админский эндпоинт — от лица салона, без кода подтверждения).
+// services: [{id, cost?, seance_length?}], client: {id?, phone, name, email?}
+async function createRecord(cid, payload) {
+  return api(`/records/${cid}`, { method: 'POST', body: payload });
+}
+
+async function fetchRecord(cid, recordId) {
+  return api(`/record/${cid}/${recordId}`);
+}
+
+async function deleteRecord(cid, recordId) {
+  return api(`/record/${cid}/${recordId}`, { method: 'DELETE' });
 }
 
 // --- Демо-данные -------------------------------------------------------------
@@ -281,11 +332,19 @@ module.exports = {
   ensureAuth,
   fetchMyCompanies,
   fetchStaff,
+  fetchUsers,
   fetchServices,
   fetchServiceCategories,
   fetchClients,
   fetchClientCard,
   updateClient,
   fetchRecords,
+  fetchBookStaff,
+  fetchBookServices,
+  fetchBookDates,
+  fetchBookTimes,
+  createRecord,
+  fetchRecord,
+  deleteRecord,
   demoData,
 };

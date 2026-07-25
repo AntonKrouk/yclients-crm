@@ -125,6 +125,30 @@ function syncBranch(clients, records, company, now) {
   return { clients: clientsN, visits: visitsN };
 }
 
+// Подтянуть ОДНУ запись из YClients в локальную базу — вызывается сразу после создания записи
+// из дашборда, чтобы она мгновенно появилась в ленте клиента и в журнале без полного синка
+// (полный проход по 22 тыс. записей занимает минуты). Ночной синк потом всё равно всё сверит.
+async function importRecord(cid, branch, recordId) {
+  const r = await yc.fetchRecord(cid, recordId);
+  const v = normalizeRecord(r);
+  if (!v.client_id) return { skipped: 'no_client' };
+  const local = getClientLocalId.get(v.client_id);
+  if (!local) return { skipped: 'client_not_in_db' };
+  upsertVisit.run(v.yclients_record_id, local.id, Number(cid) || null, branch || null,
+    v.date, v.service, v.staff, v.cost, v.status);
+  // пересчитываем агрегаты клиента по локальным визитам (новая запись — будущая,
+  // на статистику завершённых не влияет, но держим строку клиента консистентной)
+  const visits = db.prepare('SELECT date, service, staff, cost, status FROM visits WHERE client_id=?').all(local.id);
+  const f = computeFrequency(visits);
+  if (f) {
+    db.prepare(`UPDATE clients SET first_visit=?, last_visit=?, visits_count=?, spent=?,
+                avg_interval_days=?, predicted_next=?, favorite_staff=?, favorite_service=?, updated_at=? WHERE id=?`)
+      .run(f.first_visit, f.last_visit, f.visits_count, f.spent, f.avg_interval_days,
+        f.predicted_next, f.favorite_staff, f.favorite_service, iso(Date.now()), local.id);
+  }
+  return { ok: true, client_id: local.id, visit: v };
+}
+
 // Прайс-лист услуг филиала → таблица services (полная замена по филиалу)
 const upsertService = db.prepare(`
   INSERT INTO services (yc_id, company_id, branch, title, category, price_min, price_max, active, updated_at)
@@ -318,4 +342,4 @@ async function run(opts = {}) {
   return { mode: yc.isDemo() ? 'demo' : 'live', clients: totalC, visits: totalV, tasks: tasksN, at: now };
 }
 
-module.exports = { run, computeFrequency, syncComments, commentSyncStatus, writeCallToYclients, CRM_MARK, originalComment, DNC_RE };
+module.exports = { run, computeFrequency, importRecord, syncComments, commentSyncStatus, writeCallToYclients, CRM_MARK, originalComment, DNC_RE };

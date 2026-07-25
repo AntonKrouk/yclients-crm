@@ -179,6 +179,24 @@
   .login-error{color:var(--red);font-size:13px;min-height:18px;margin-bottom:4px}
   .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:6px}
   .modal-note{font-size:11px;color:var(--muted);margin-top:14px;text-align:center}
+  /* модалка записи к мастеру */
+  .book-modal{width:min(520px,100%)}
+  .fld select{width:100%;margin-top:5px;background:var(--panel);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:10px 12px;font-size:14px;font-family:inherit;cursor:pointer}
+  .fld select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(18,179,166,.12)}
+  .fld select:disabled{background:var(--panel2);color:var(--muted);cursor:default}
+  .book-row{display:flex;gap:12px}
+  .book-row .fld{flex:1;min-width:0}
+  .book-sms{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin:2px 0 14px;cursor:pointer}
+  .book-sms input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+  .modal-note a{color:var(--accent);text-decoration:none;display:block;margin-top:6px}
+  .modal-note a:hover{text-decoration:underline}
+  /* импорт админов из YClients */
+  .adm-import{margin:14px 0 4px;border-top:1px solid var(--line);padding-top:12px}
+  .adm-import-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;font-weight:600}
+  .adm-yc{max-height:210px;overflow:auto;margin-top:8px}
+  .adm-yc label{display:flex;align-items:center;gap:8px;font-size:13px;padding:5px 2px;cursor:pointer}
+  .adm-yc label.added{color:var(--muted)}
+  .adm-yc .rl{font-size:11px;color:var(--muted);margin-left:auto;white-space:nowrap}
   @media(max-width:640px){.task{flex-direction:column}.actions{min-width:0}}
   /* панель выбора администратора */
   .admin-bar{display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:10px 14px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow)}
@@ -259,9 +277,42 @@
       <input id="adminNewName" placeholder="Имя администратора" maxlength="40">
       <button class="btn primary" id="adminAdd">Добавить</button>
     </div>
+    <div class="adm-import">
+      <div class="adm-import-hd">
+        <span>Из YClients</span>
+        <button class="btn" id="admLoadYc">Показать сотрудников</button>
+      </div>
+      <div class="adm-yc" id="admYcList"></div>
+      <div class="modal-actions" id="admImportActions" style="display:none;margin-top:10px">
+        <button class="btn primary" id="admImport">Добавить отмеченных</button>
+      </div>
+    </div>
     <div class="modal-actions" style="margin-top:16px">
       <button class="btn" onclick="closeAdminModal()">Готово</button>
     </div>
+  </div>
+</div>
+
+<!-- Модальное окно записи клиента к мастеру (создаёт настоящую запись в YClients) -->
+<div class="modal-overlay" id="bookModal">
+  <div class="modal book-modal">
+    <div class="modal-title">Записать к мастеру</div>
+    <p class="modal-sub" id="bookWho"></p>
+    <label class="fld">Мастер<select id="bookStaff"><option value="">Загрузка…</option></select></label>
+    <label class="fld">Услуга<select id="bookService" disabled><option value="">Сначала выберите мастера</option></select></label>
+    <div class="book-row">
+      <label class="fld">Дата<select id="bookDate" disabled><option value="">—</option></select></label>
+      <label class="fld">Время<select id="bookTime" disabled><option value="">—</option></select></label>
+    </div>
+    <label class="fld">Комментарий к записи<input type="text" id="bookComment" placeholder="Необязательно — увидят мастер и админы"></label>
+    <label class="book-sms"><input type="checkbox" id="bookSms" checked> Отправить клиенту СМС-подтверждение</label>
+    <div id="bookError" class="login-error"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeBooking()">Отмена</button>
+      <button class="btn primary" id="bookSubmit">Записать в YClients</button>
+    </div>
+    <div class="modal-note">Показано только реально свободное время мастера.
+      <a href="#" id="bookJustMark">Запись уже создана в YClients — просто отметить</a></div>
   </div>
 </div>
 
@@ -434,7 +485,11 @@ function renderAdminList(){
     ? admins.map(a=>`<div class="admin-row"><span>${a.name}</span><button onclick="removeAdmin(${a.id})">Удалить</button></div>`).join('')
     : '<div class="muted" style="font-size:13px">Пока никого. Добавьте первого администратора ниже.</div>';
 }
-function openAdminModal(){ renderAdminList(); $('#adminModal').classList.add('open'); }
+function openAdminModal(){
+  renderAdminList();
+  $('#admYcList').innerHTML=''; $('#admImportActions').style.display='none';
+  $('#adminModal').classList.add('open');
+}
 function closeAdminModal(){ $('#adminModal').classList.remove('open'); }
 async function addAdmin(){
   const name=$('#adminNewName').value.trim();
@@ -445,6 +500,28 @@ async function addAdmin(){
 async function removeAdmin(id){
   const r=await api(`/api/admins/${id}`,{method:'DELETE'});
   admins=r.admins||[]; renderAdminList(); await refreshAdminSel();
+}
+// Сотрудники с ролью «администратор»/«менеджер» из YClients — по обоим филиалам
+const ROLE_RU={administrator:'админ',manager:'менеджер'};
+async function loadYcAdmins(){
+  const box=$('#admYcList'); box.innerHTML='<div class="muted" style="font-size:13px">Загрузка из YClients…</div>';
+  try{
+    const list=await api('/api/admins/yclients');
+    if(!list.length){ box.innerHTML='<div class="muted" style="font-size:13px">YClients не вернул администраторов</div>'; return; }
+    box.innerHTML=list.map(a=>`<label class="${a.added?'added':''}">
+      <input type="checkbox" value="${a.name.replace(/"/g,'&quot;')}" ${a.added?'disabled':'checked'}>
+      <span>${a.name}</span>
+      <span class="rl">${ROLE_RU[a.role]||a.role} · ${a.branches.join(', ')}${a.added?' · уже в списке':''}</span>
+    </label>`).join('');
+    $('#admImportActions').style.display = list.some(a=>!a.added) ? 'flex' : 'none';
+  }catch(e){ box.innerHTML=`<div class="muted" style="font-size:13px">Ошибка: ${e.message}</div>`; }
+}
+async function importYcAdmins(){
+  const names=[...$('#admYcList').querySelectorAll('input:checked:not(:disabled)')].map(i=>i.value);
+  if(!names.length){ toast('Никто не отмечен'); return; }
+  const r=await api('/api/admins/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({names})});
+  admins=r.admins||[]; renderAdminList(); await refreshAdminSel(); await loadYcAdmins();
+  toast(`Добавлено: ${names.length}`);
 }
 async function refreshAdminSel(){
   const sel=$('#adminSel'), cur=sel.value;
@@ -528,8 +605,9 @@ $('#loginSubmit').onclick=async ()=>{
 };
 
 // --- ЗАДАЧИ ---
+const q1 = s => String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); // имя внутри onclick='…'
 const RES = [
-  {k:'booked',   t:'✅ Записал',    cls:'booked'},
+  {k:'booked',   t:'✅ Записать',   cls:'booked'},
   {k:'callback', t:'⏳ Перезвонить', cls:''},
   {k:'no_answer',t:'📵 Не ответил',  cls:''},
   {k:'refused',  t:'✖ Отказ',       cls:'refused'},
@@ -557,11 +635,128 @@ async function loadTasks(){
       </div>
       <div class="actions">
         <div class="res-row">
-          ${RES.map(r=>`<button class="res ${r.cls}" onclick="act(${t.id},'${r.k}',this)">${r.t}</button>`).join('')}
+          ${RES.map(r=>`<button class="res ${r.cls}" onclick="${r.k==='booked'
+              ? `openBooking({client_id:${t.client_id},name:'${q1(t.name)}',task_id:${t.id},noteEl:'#note-${t.id}'})`
+              : `act(${t.id},'${r.k}',this)`}">${r.t}</button>`).join('')}
         </div>
         <textarea placeholder="Заметка о звонке…" id="note-${t.id}"></textarea>
       </div>
     </div>`).join('');
+}
+
+// --- ЗАПИСЬ К МАСТЕРУ (создаёт настоящую запись в YClients) ---
+// ctx: {client_id, name, task_id | member_id, list_id, noteEl} — откуда пришли и куда вернуть результат
+let bookCtx = null;
+function openBooking(ctx){
+  bookCtx = ctx;
+  $('#bookWho').textContent = `${ctx.name||'Клиент'} — запись создастся прямо в YClients, в филиале клиента.`;
+  $('#bookError').textContent='';
+  $('#bookComment').value=''; $('#bookSms').checked=true;
+  $('#bookService').innerHTML='<option value="">Сначала выберите мастера</option>'; $('#bookService').disabled=true;
+  $('#bookDate').innerHTML='<option value="">—</option>'; $('#bookDate').disabled=true;
+  $('#bookTime').innerHTML='<option value="">—</option>'; $('#bookTime').disabled=true;
+  $('#bookSubmit').disabled=false; $('#bookSubmit').textContent='Записать в YClients';
+  $('#bookModal').classList.add('open');
+  loadBookStaff();
+}
+function closeBooking(){ $('#bookModal').classList.remove('open'); bookCtx=null; }
+const bookErr = m => { $('#bookError').textContent = m || ''; };
+
+async function loadBookStaff(){
+  const sel=$('#bookStaff');
+  sel.innerHTML='<option value="">Загрузка…</option>';
+  try{
+    const list = await api(`/api/booking/staff?client_id=${bookCtx.client_id}`);
+    if(!list.length){ sel.innerHTML='<option value="">Нет мастеров, доступных к записи</option>'; return; }
+    // «любимого» мастера клиента поднимаем наверх и подставляем сразу
+    list.sort((a,b)=> (b.favorite?1:0)-(a.favorite?1:0));
+    sel.innerHTML='<option value="">— выберите мастера —</option>'+list.map(s=>
+      `<option value="${s.id}">${s.favorite?'★ ':''}${s.name}${s.specialization?' · '+s.specialization:''}</option>`).join('');
+    if(list[0]?.favorite){ sel.value=String(list[0].id); loadBookServices(); }
+  }catch(e){ sel.innerHTML='<option value="">Ошибка загрузки</option>'; bookErr(e.message); }
+}
+async function loadBookServices(){
+  const staff=$('#bookStaff').value, sel=$('#bookService');
+  $('#bookDate').disabled=true; $('#bookDate').innerHTML='<option value="">—</option>';
+  $('#bookTime').disabled=true; $('#bookTime').innerHTML='<option value="">—</option>';
+  if(!staff){ sel.disabled=true; sel.innerHTML='<option value="">Сначала выберите мастера</option>'; return; }
+  sel.disabled=true; sel.innerHTML='<option value="">Загрузка…</option>'; bookErr('');
+  try{
+    const list = await api(`/api/booking/services?client_id=${bookCtx.client_id}&staff_id=${staff}`);
+    if(!list.length){ sel.innerHTML='<option value="">У мастера нет услуг для записи</option>'; return; }
+    list.sort((a,b)=> (b.favorite?1:0)-(a.favorite?1:0));
+    sel.innerHTML='<option value="">— выберите услугу —</option>'+list.map(s=>{
+      const price = s.price_min ? ` · ${rub(s.price_min)}${s.price_max&&s.price_max!==s.price_min?'–'+rub(s.price_max):''}` : '';
+      const len = s.seance_length ? ` · ${Math.round(s.seance_length/60)} мин` : '';
+      return `<option value="${s.id}" data-len="${s.seance_length||0}">${s.favorite?'★ ':''}${s.title}${price}${len}</option>`;
+    }).join('');
+    sel.disabled=false;
+    if(list[0]?.favorite){ sel.value=String(list[0].id); loadBookDates(); }
+  }catch(e){ sel.innerHTML='<option value="">Ошибка загрузки</option>'; bookErr(e.message); }
+}
+async function loadBookDates(){
+  const staff=$('#bookStaff').value, svc=$('#bookService').value, sel=$('#bookDate');
+  $('#bookTime').disabled=true; $('#bookTime').innerHTML='<option value="">—</option>';
+  if(!staff||!svc){ sel.disabled=true; sel.innerHTML='<option value="">—</option>'; return; }
+  sel.disabled=true; sel.innerHTML='<option value="">Загрузка…</option>'; bookErr('');
+  try{
+    const r = await api(`/api/booking/dates?client_id=${bookCtx.client_id}&staff_id=${staff}&service_ids=${svc}`);
+    const dates=r.dates||[];
+    if(!dates.length){ sel.innerHTML='<option value="">У мастера нет свободных дней</option>'; return; }
+    sel.innerHTML='<option value="">— выберите дату —</option>'+dates.map(d=>{
+      const dt=new Date(d+'T12:00:00');
+      return `<option value="${d}">${dt.toLocaleDateString('ru-RU',{day:'2-digit',month:'long',weekday:'short'})}</option>`;
+    }).join('');
+    sel.disabled=false;
+  }catch(e){ sel.innerHTML='<option value="">Ошибка загрузки</option>'; bookErr(e.message); }
+}
+async function loadBookTimes(){
+  const staff=$('#bookStaff').value, svc=$('#bookService').value, date=$('#bookDate').value, sel=$('#bookTime');
+  if(!staff||!svc||!date){ sel.disabled=true; sel.innerHTML='<option value="">—</option>'; return; }
+  sel.disabled=true; sel.innerHTML='<option value="">Загрузка…</option>'; bookErr('');
+  try{
+    const list = await api(`/api/booking/times?client_id=${bookCtx.client_id}&staff_id=${staff}&date=${date}&service_ids=${svc}`);
+    if(!list.length){ sel.innerHTML='<option value="">Свободных окон нет</option>'; return; }
+    sel.innerHTML='<option value="">— выберите время —</option>'+list.map(t=>
+      `<option value="${t.datetime}" data-len="${t.seance_length||0}">${t.time}</option>`).join('');
+    sel.disabled=false;
+  }catch(e){ sel.innerHTML='<option value="">Ошибка загрузки</option>'; bookErr(e.message); }
+}
+async function submitBooking(){
+  const ctx=bookCtx; // closeBooking() обнулит bookCtx — держим ссылку для обновления блока
+  const staff=$('#bookStaff').value, svc=$('#bookService').value, dt=$('#bookTime').value;
+  if(!staff||!svc||!dt){ bookErr('Выберите мастера, услугу, дату и время'); return; }
+  const btn=$('#bookSubmit'); btn.disabled=true; btn.textContent='Записываем…'; bookErr('');
+  const len = $('#bookTime').selectedOptions[0]?.dataset.len || $('#bookService').selectedOptions[0]?.dataset.len || 0;
+  try{
+    const r = await api('/api/booking/create',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        client_id:ctx.client_id, staff_id:Number(staff), service_ids:[Number(svc)],
+        datetime:dt, seance_length:Number(len)||undefined,
+        comment:$('#bookComment').value.trim(), send_sms:$('#bookSms').checked,
+        task_id:ctx.task_id||null, member_id:ctx.member_id||null,
+        note:ctx.noteEl?($(ctx.noteEl)?.value||''):'', admin:currentAdmin(),
+      })});
+    closeBooking();
+    toast(`Записан ✅ ${r.when}${r.staff?' · '+r.staff:''}`);
+    if(ctx.list_id) await reloadListBlock(ctx.list_id); else loadTasks();
+  }catch(e){ bookErr(e.message||'Не удалось создать запись'); btn.disabled=false; btn.textContent='Записать в YClients'; }
+}
+// «запись уже создана в YClients» — просто фиксируем звонок как раньше, без создания записи
+async function bookJustMark(){
+  const ctx=bookCtx;
+  const note = ctx.noteEl ? ($(ctx.noteEl)?.value||'') : '';
+  const admin = currentAdmin();
+  closeBooking();
+  if(ctx.task_id){
+    await api(`/api/tasks/${ctx.task_id}/action`,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({result:'booked',note,admin})});
+    toast('Отмечено ✅'); loadTasks();
+  }else if(ctx.member_id){
+    await api(`/api/lists/${ctx.list_id}/members/${ctx.member_id}/action`,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({result:'booked',note,admin})});
+    toast('Отмечено ✅'); await reloadListBlock(ctx.list_id);
+  }
 }
 
 async function act(taskId,result,btn){
@@ -621,7 +816,9 @@ function renderMember(listId,m){
       ${done?`<div class="treason">✓ ${R[m.result]||'обработан'}${m.note?' — «'+m.note+'»':''} · ${m.admin||''}</div>`:''}
     </div>
     ${done?'':`<div class="actions">
-      <div class="res-row">${RES.map(r=>`<button class="res ${r.cls}" onclick="memAct(${listId},${m.member_id},'${r.k}',this)">${r.t}</button>`).join('')}</div>
+      <div class="res-row">${RES.map(r=>`<button class="res ${r.cls}" onclick="${r.k==='booked'
+        ? `openBooking({client_id:${m.client_id},name:'${q1(m.name)}',member_id:${m.member_id},list_id:${listId},noteEl:'#memnote-${m.member_id}'})`
+        : `memAct(${listId},${m.member_id},'${r.k}',this)`}">${r.t}</button>`).join('')}</div>
       <textarea placeholder="Заметка о звонке…" id="memnote-${m.member_id}"></textarea>
     </div>`}
   </div>`;
@@ -631,11 +828,16 @@ async function memAct(listId,memberId,result,btn){
   const admin=currentAdmin();
   await api(`/api/lists/${listId}/members/${memberId}/action`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({result,note,admin})});
   toast(result==='booked'?'Записан ✅':result==='callback'?'Отложено':'Отмечено');
-  // обновим блок: перерисуем участников и прогресс
+  await reloadListBlock(listId);
+}
+// перерисовать участников списка и прогресс (после звонка или записи)
+async function reloadListBlock(listId){
   const members=await api(`/api/lists/${listId}/members`);
-  $('#lb-body-'+listId).innerHTML=members.map(m=>renderMember(listId,m)).join('');
+  const body=$('#lb-body-'+listId);
+  if(body) body.innerHTML=members.map(m=>renderMember(listId,m)).join('');
   const done=members.filter(m=>m.status==='done').length;
   const block=document.querySelector(`.listblock[data-id="${listId}"]`);
+  if(!block) return;
   block.querySelector('.lb-count').textContent=`обработано ${done} из ${members.length}`;
   block.querySelector('.lb-progress>div').style.width=(members.length?Math.round(done/members.length*100):0)+'%';
 }
@@ -948,11 +1150,21 @@ $('#syncBtn').onclick = async ()=>{
   loadTasks();
 };
 
+// --- Запись к мастеру: события формы (каждый шаг подгружает следующий) ---
+$('#bookStaff').onchange = loadBookServices;
+$('#bookService').onchange = loadBookDates;
+$('#bookDate').onchange = loadBookTimes;
+$('#bookSubmit').onclick = submitBooking;
+$('#bookJustMark').onclick = e=>{ e.preventDefault(); bookJustMark(); };
+$('#bookModal').onclick = e=>{ if(e.target.id==='bookModal') closeBooking(); };
+
 // --- Администраторы: события ---
 $('#adminSel').onchange = ()=>{ localStorage.setItem('admin_name', $('#adminSel').value); };
 $('#adminManage').onclick = openAdminModal;
 $('#adminModal').onclick = e=>{ if(e.target.id==='adminModal') closeAdminModal(); };
 $('#adminAdd').onclick = addAdmin;
+$('#admLoadYc').onclick = loadYcAdmins;
+$('#admImport').onclick = importYcAdmins;
 $('#adminNewName').onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); addAdmin(); } };
 
 // Старт
