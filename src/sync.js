@@ -166,6 +166,39 @@ async function importRecord(cid, branch, recordId) {
   return { ok: true, client_id: local.id, visit: v };
 }
 
+// Лёгкий синк ТОЛЬКО будущего: окно «сегодня → +N дней» это пара страниц на филиал (секунды
+// против минут у полного прохода), поэтому его можно гонять кроном часто. Нужен затем, чтобы
+// клиент, записавшийся сам во время рабочего дня, быстро уходил из списка задач.
+// ВАЖНО: обновляем только визиты. Карточки клиентов НЕ пересчитываем — их статистика считается
+// по завершённым визитам, а здесь их нет, и пересчёт обнулил бы историю (visits_count, spent).
+async function syncUpcoming(opts = {}) {
+  if (yc.isDemo()) return { skipped: 'demo' };
+  await yc.ensureAuth();
+  const days = Number(opts.futureDays) || Number(process.env.YCLIENTS_SYNC_FUTURE_DAYS) || 180;
+  const start = new Date();
+  const end = new Date(); end.setDate(end.getDate() + days);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+
+  let visits = 0, cancelled = 0, unknown = 0;
+  for (const comp of yc.companies()) {
+    const name = comp.name || comp.id;
+    const cid = Number(comp.id) || null;
+    const records = await yc.fetchRecords(comp.id, fmt(start), fmt(end));
+    for (const r of records) {
+      const v = normalizeRecord(r);
+      if (!v.client_id) continue;                      // блокировка времени без клиента
+      const local = getClientLocalId.get(v.client_id);
+      if (!local) { unknown++; continue; }             // новый клиент — приедет полным синком
+      upsertVisit.run(v.yclients_record_id, local.id, cid, name, v.date, v.service, v.staff, v.cost, v.status);
+      visits++;
+    }
+    cancelled += reconcileFuture(records, { id: comp.id, name }, iso(end));
+  }
+  const tasks = rules.generate();
+  console.log(`[upcoming] визитов ${visits}, отменено ${cancelled}, новых клиентов пропущено ${unknown}, задач создано ${tasks}`);
+  return { visits, cancelled, unknown, tasks, at: iso(Date.now()) };
+}
+
 // Прайс-лист услуг филиала → таблица services (полная замена по филиалу)
 const upsertService = db.prepare(`
   INSERT INTO services (yc_id, company_id, branch, title, category, price_min, price_max, active, updated_at)
@@ -366,4 +399,4 @@ async function run(opts = {}) {
   return { mode: yc.isDemo() ? 'demo' : 'live', clients: totalC, visits: totalV, tasks: tasksN, at: now };
 }
 
-module.exports = { run, computeFrequency, importRecord, syncComments, commentSyncStatus, writeCallToYclients, CRM_MARK, originalComment, DNC_RE };
+module.exports = { run, syncUpcoming, computeFrequency, importRecord, syncComments, commentSyncStatus, writeCallToYclients, CRM_MARK, originalComment, DNC_RE };

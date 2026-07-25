@@ -44,8 +44,9 @@ app.post('/api/logout', (req, res) => {
 app.use((req, res, next) => {
   if (!AUTH_ON) return next();
   if (req.path === '/api/login' || req.path === '/api/health') return next();
-  // авто-синк по крону: разрешаем /api/sync с валидным токеном без куки
-  if (req.path === '/api/sync' && CRON_SECRET && req.query.token === CRON_SECRET) return next();
+  // авто-синк по крону: разрешаем синки с валидным токеном без куки
+  if ((req.path === '/api/sync' || req.path === '/api/sync-upcoming')
+      && CRON_SECRET && req.query.token === CRON_SECRET) return next();
   if (parseCookies(req).sess === sessionCookie()) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Требуется вход' });
   return res.sendFile(path.join(__dirname, 'public', 'login.html'));
@@ -76,6 +77,17 @@ app.post('/api/sync', async (req, res) => {
     res.json({ ...result, telegram: tg });
   } catch (e) {
     console.error('[sync]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Лёгкий синк только будущих записей (секунды) — для частого крона в течение дня.
+// Клиент записался сам, пока админы работают → его задача снимается, не дожидаясь ночного синка.
+app.post('/api/sync-upcoming', async (req, res) => {
+  try {
+    res.json(await sync.syncUpcoming());
+  } catch (e) {
+    console.error('[sync-upcoming]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
