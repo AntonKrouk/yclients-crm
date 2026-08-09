@@ -478,7 +478,7 @@
     <button class="tab" data-view="segments">Конструктор</button>
   </div>
   <button class="btn primary" id="connectBtn" style="display:none">Подключить YClients</button>
-  <button class="btn" id="syncBtn">Синхронизировать</button>
+  <button class="btn" id="syncBtn" title="Подтянуть свежие записи из YClients — несколько секунд">Обновить</button>
 </header>
 
 <!-- Модальное окно входа в YClients -->
@@ -1584,12 +1584,22 @@ const segAuto=()=>{clearTimeout(segTimer);segTimer=setTimeout(runSegment,350);};
 ['segFrom','segTo','segDnc','segDeposit','segDiscount'].forEach(id=>$('#'+id).addEventListener('change',segAuto));
 $('#segReset').onclick=()=>{clearTimeout(segTimer);['segService','segStaff','segFrom','segTo','segComment','segDnc','segDeposit','segSpentFrom','segSpentTo','segDiscount','segDiscountFrom'].forEach(id=>$('#'+id).value='');$('#segMinVisits').value='1';segPresetNew=false;$('#segNew').classList.remove('on');$('#segNewHint').classList.remove('on');$('#segSummary').textContent='';$('#segTable tbody').innerHTML='';$('#segToList').disabled=true;segResults=[];};
 
-// --- Синхронизация ---
+// --- Обновление ---
+// Дёргаем ТОЛЬКО будущие записи (окно «сегодня → +180 дн», 3-6 секунд). Нужно, когда
+// админ записал клиента прямо в YClients и хочет сразу убрать его из задач, не дожидаясь
+// получасового крона. Полный синк (12 мес. истории, минуты, сводка в Telegram) остаётся
+// за кроном в 08:00 — из интерфейса его больше не запустить случайно.
 $('#syncBtn').onclick = async ()=>{
-  const b=$('#syncBtn');b.textContent='Синхронизация…';b.disabled=true;
-  try{const r=await api('/api/sync',{method:'POST'});toast(`Готово: ${r.clients} клиентов, ${r.tasks} новых задач`);}
-  catch(e){toast('Ошибка синхронизации');}
-  b.textContent='Синхронизировать';b.disabled=false;
+  const b=$('#syncBtn');b.textContent='Обновляю…';b.disabled=true;
+  try{
+    // api() не бросает на HTTP-ошибке — YClients мог не ответить, проверяем тело
+    const r=await api('/api/sync-upcoming',{method:'POST'});
+    if(r.error) toast('YClients не ответил — попробуйте позже');
+    else if(r.skipped) toast('Демо-режим: обновлять нечего');
+    else toast(`Обновлено: ${r.visits} записей${r.cancelled?`, отменено ${r.cancelled}`:''}`);
+  }
+  catch(e){toast('Не удалось обновить');}
+  b.textContent='Обновить';b.disabled=false;
   loadTasks();
 };
 
