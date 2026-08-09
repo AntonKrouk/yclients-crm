@@ -19,13 +19,17 @@
     --ink:#171614;          /* основной текст */
     --ink-2:#4A4640;        /* вторичный */
     --muted:#8B857B;        /* подписи */
-    --accent:#8A6A2F;       /* приглушённое золото — акцент */
-    --accent-soft:#F1EADD;
-    --green:#4A6B4E; --green-soft:#E9EFE7;
-    --red:#9B3B32;   --red-soft:#F6E7E4;
-    --amber:#8A6A2F; --amber-soft:#F3EBDC;
-    --violet:#5A5470; --violet-soft:#EBE9EF;
-    --blue:#3E5A73;  --blue-soft:#E6ECF1;
+    /* Акцент — фирменная бирюзовая зелень. Светлый тон для заливок и полос,
+       тёмный — для текста (контраст на бумаге ≥ 4.5:1). */
+    --accent:#12B3A6;       /* заливки, полосы, точки */
+    --accent-2:#0B776D;     /* текст и цифры */
+    --accent-soft:#E4F3F1;
+    --gold:#8A6A2F;         /* скидки — второй акцент */
+    --green:#2A7D52; --green-soft:#E6F2EA;
+    --red:#A33A2F;   --red-soft:#F8E8E5;
+    --amber:#9A6B14; --amber-soft:#F8EEDC;
+    --violet:#5A4E86; --violet-soft:#EDEAF5;
+    --blue:#2F6285;  --blue-soft:#E5EEF5;
     --radius:3px;
     --serif:'Georgia','Times New Roman',serif;
     --sans:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
@@ -73,15 +77,15 @@
     border-right:1px solid var(--line);transition:color .18s,background .18s}
   .tab:last-child{border-right:none}
   .tab:hover{color:var(--ink);background:var(--panel2)}
-  .tab.active{background:var(--ink);color:var(--paper)}
+  .tab.active{background:var(--accent-2);color:#fff}
 
   button{font-family:inherit}
   .btn{padding:9px 15px;border-radius:var(--radius);border:1px solid var(--line-strong);
     background:transparent;color:var(--ink);cursor:pointer;font-size:12px;letter-spacing:.06em;
     transition:border-color .18s,background .18s,color .18s}
   .btn:hover{border-color:var(--ink);background:var(--panel)}
-  .btn.primary{background:var(--ink);border-color:var(--ink);color:var(--paper)}
-  .btn.primary:hover{background:#000;border-color:#000}
+  .btn.primary{background:var(--accent-2);border-color:var(--accent-2);color:#fff}
+  .btn.primary:hover{background:#095F57;border-color:#095F57}
   .btn:disabled{opacity:.4;cursor:default}
   .btn:disabled:hover{border-color:var(--line-strong);background:transparent}
 
@@ -90,7 +94,7 @@
   .kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));border:1px solid var(--line)}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:var(--sp)}
   .kpi{background:var(--panel);padding:18px 20px;border:none}
-  .kpi .n{font-family:var(--serif);font-size:34px;line-height:1;color:var(--ink)}
+  .kpi .n{font-family:var(--serif);font-size:34px;line-height:1;color:var(--accent-2)}
   .kpi .l{margin-top:9px}
   .section-title{margin:34px 0 12px}
   .muted{color:var(--muted)}
@@ -114,15 +118,21 @@
   .t-no_show{color:var(--red);border-color:var(--red);background:var(--red-soft)}
   .t-reactivation{color:var(--violet);border-color:var(--violet);background:var(--violet-soft)}
   .phone{font-variant-numeric:tabular-nums;letter-spacing:.02em}
-  .actions{display:flex;flex-direction:column;gap:9px;min-width:216px}
-  .res-row{display:flex;gap:6px;flex-wrap:wrap}
-  .res{flex:1;min-width:64px;padding:8px 6px;font-size:11px;letter-spacing:.04em;
-    border:1px solid var(--line-strong);background:transparent;color:var(--ink-2);cursor:pointer;
-    border-radius:var(--radius);transition:all .18s;display:flex;align-items:center;justify-content:center;gap:5px}
-  .res:hover{border-color:var(--ink);color:var(--ink)}
-  .res.booked{border-color:var(--ink);background:var(--ink);color:var(--paper)}
-  .res.booked:hover{background:#000}
-  .res.refused:hover{border-color:var(--red);color:var(--red)}
+  .actions{display:flex;flex-direction:column;gap:9px;min-width:232px}
+  /* 2×2: четыре кнопки одного размера, подписи не переносятся */
+  .res-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  /* Кнопки результата звонка различаются цветом: админ бьёт по ним весь день,
+     и цвет читается быстрее подписи. «Записать» — заливка, остальные — контур. */
+  .res{padding:9px 8px;font-size:11px;letter-spacing:.04em;white-space:nowrap;
+    border:1px solid var(--line-strong);background:var(--panel);color:var(--ink-2);cursor:pointer;
+    border-radius:var(--radius);transition:all .18s;display:flex;align-items:center;justify-content:center;gap:6px}
+  .res:hover{border-color:var(--accent-2);color:var(--accent-2);background:var(--accent-soft)}
+  .res.booked{border-color:var(--accent-2);background:var(--accent-2);color:#fff;font-weight:600}
+  .res.booked:hover{background:#095F57;border-color:#095F57;color:#fff}
+  .res.callback{border-color:#E2CFA6;color:var(--amber)}
+  .res.callback:hover{border-color:var(--amber);color:var(--amber);background:var(--amber-soft)}
+  .res.refused{border-color:#E8C7C1;color:var(--red)}
+  .res.refused:hover{border-color:var(--red);color:var(--red);background:var(--red-soft)}
   .res svg{width:12px;height:12px;flex:none}
   textarea{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
     color:var(--ink);padding:9px 10px;font-family:inherit;font-size:13px;resize:vertical;min-height:38px}
@@ -154,6 +164,9 @@
     color:var(--green);border:1px solid var(--green);margin-left:6px;white-space:nowrap;
     vertical-align:middle;font-variant-numeric:tabular-nums}
   .dep-tag.debt{color:var(--red);border-color:var(--red)}
+  .disc-tag{display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;color:var(--gold);
+    border:1px solid var(--gold);margin-left:6px;white-space:nowrap;vertical-align:middle;
+    font-variant-numeric:tabular-nums}
 
   /* ── боковая карточка клиента ──────────────────────────────────────────── */
   .overlay{position:fixed;inset:0;background:rgba(23,22,20,.28);display:none;z-index:50}
@@ -182,7 +195,7 @@
     display:inline-flex;align-items:center;gap:6px;transition:all .18s}
   .dact:hover{border-color:var(--ink);color:var(--ink)}
   .dact svg{width:12px;height:12px}
-  .dact.on{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+  .dact.on{background:var(--gold);border-color:var(--gold);color:#fff}
   .dact.dnc.on{background:var(--red);border-color:var(--red);color:#fff}
   /* вкладки внутри карточки */
   .dtabs{display:flex;gap:26px;margin-top:16px}
@@ -190,7 +203,7 @@
     font-size:10.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
     border-bottom:1.5px solid transparent;margin-bottom:-1px;transition:color .18s}
   .dtab:hover{color:var(--ink-2)}
-  .dtab.active{color:var(--ink);border-bottom-color:var(--ink)}
+  .dtab.active{color:var(--accent-2);border-bottom-color:var(--accent-2)}
   .dtab .cnt{color:var(--muted);font-weight:400;margin-left:5px}
   .dbody{flex:1;overflow-y:auto;padding:22px 24px 56px;overscroll-behavior:contain}
   .dpane{display:none}
@@ -201,12 +214,23 @@
   .ev{position:relative;margin-bottom:20px}
   .ev::before{content:'';position:absolute;left:-22px;top:6px;width:7px;height:7px;border-radius:50%;
     background:var(--paper);border:1px solid var(--line-strong)}
-  .ev.visit::before{background:var(--ink);border-color:var(--ink)}
-  .ev.call::before{background:var(--accent);border-color:var(--accent)}
-  .ev.task::before{background:var(--paper);border-color:var(--accent)}
+  .ev.visit::before{background:var(--accent);border-color:var(--accent)}
+  .ev.call::before{background:var(--gold);border-color:var(--gold)}
+  .ev.task::before{background:var(--paper);border-color:var(--amber)}
   .ev .d{font-size:11px;color:var(--muted);letter-spacing:.06em}
   .ev .t{font-weight:500;margin-top:3px;font-size:14px;line-height:1.4}
   .ev .s{font-size:12.5px;color:var(--muted);margin-top:3px}
+  /* услуги внутри одного похода в салон */
+  .vsvc{margin-top:7px}
+  .vrow{display:grid;grid-template-columns:1fr auto;gap:2px 14px;padding:6px 0;
+    border-bottom:1px solid var(--line)}
+  .vrow:first-child{padding-top:0}
+  .vrow:last-child{border-bottom:none}
+  .vn{font-size:13.5px;color:var(--ink);line-height:1.4}
+  .vm{grid-column:1;font-size:12px;color:var(--muted)}
+  .vc{grid-column:2;grid-row:1/span 2;align-self:center;font-size:13px;color:var(--accent-2);
+    white-space:nowrap;font-variant-numeric:tabular-nums}
+  .vsum{margin-top:7px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
   .pill{display:inline-block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
     padding:2px 7px;border:1px solid var(--line-strong);color:var(--muted);margin-left:7px;vertical-align:middle}
 
@@ -221,12 +245,12 @@
 
   .statTiles{grid-template-columns:repeat(3,1fr);border:1px solid var(--line)}
   .stile{background:var(--panel);padding:16px 15px}
-  .stile .n{font-family:var(--serif);font-size:23px;line-height:1.15;color:var(--ink)}
+  .stile .n{font-family:var(--serif);font-size:23px;line-height:1.15;color:var(--accent-2)}
   .stile .l{margin-top:8px;line-height:1.4}
   .monthchart{display:flex;align-items:flex-end;gap:5px;height:110px;padding:16px;
     background:var(--panel);border:1px solid var(--line)}
   .mbar{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
-  .mbar .bar{width:100%;min-height:1px;background:var(--ink);transition:height .25s}
+  .mbar .bar{width:100%;min-height:1px;background:var(--accent);transition:height .25s}
   .mbar .ml{font-size:9px;color:var(--muted);letter-spacing:.04em}
   .mbar .mc{font-size:10px;color:var(--ink-2);font-variant-numeric:tabular-nums}
 
@@ -244,13 +268,13 @@
   .brk .row1{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:13px;margin-bottom:6px}
   .brk .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
   .brk .v{color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;font-size:12px}
-  .brk .v b{color:var(--ink);font-weight:600}
-  .brk .bar{height:2px;background:var(--panel2)}
-  .brk .bar>div{height:100%;background:var(--line-strong)}
-  .brk.top .nm{color:var(--ink);font-weight:600}
-  .brk.top .bar>div{background:var(--ink)}
+  .brk .v b{color:var(--accent-2);font-weight:600}
+  .brk .bar{height:3px;background:var(--panel2)}
+  .brk .bar>div{height:100%;background:var(--accent);opacity:.55}
+  .brk.top .nm{color:var(--accent-2);font-weight:600}
+  .brk.top .bar>div{background:var(--accent);opacity:1}
   .prio{display:inline-block;font-size:9px;letter-spacing:.12em;text-transform:uppercase;
-    padding:1px 6px;color:var(--accent);border:1px solid var(--accent);margin-left:7px;vertical-align:middle}
+    padding:1px 6px;color:var(--accent-2);border:1px solid var(--accent-2);margin-left:7px;vertical-align:middle}
 
   /* ── конструктор ───────────────────────────────────────────────────────── */
   .seg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:16px}
@@ -262,12 +286,12 @@
     font-family:inherit;letter-spacing:normal;text-transform:none;font-weight:400}
   .segfld input:focus,.segfld select:focus{outline:none;border-color:var(--ink)}
   .seg-actions{display:flex;gap:10px;align-items:center;margin-top:20px;flex-wrap:wrap}
-  .seg-new.on{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+  .seg-new.on{background:var(--accent-2);border-color:var(--accent-2);color:#fff}
   .seg-hint{width:100%;font-size:12.5px;color:var(--ink-2);background:var(--accent-soft);
     border:1px solid var(--line);padding:11px 14px;margin-top:6px;display:none;line-height:1.55}
   .seg-hint.on{display:block}
   .seg-summary{font-size:12.5px;color:var(--muted)}
-  .seg-summary b{color:var(--ink);font-weight:600}
+  .seg-summary b{color:var(--accent-2);font-weight:600}
   .seg-coverage{font-size:12px;margin-top:16px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted)}
   .seg-coverage a{color:var(--ink);cursor:pointer;border-bottom:1px solid var(--line-strong);text-decoration:none}
   .seg-coverage a:hover{border-color:var(--ink)}
@@ -283,8 +307,8 @@
     padding:4px 10px;cursor:pointer;white-space:nowrap}
   .lb-assignee:hover{border-color:var(--ink);color:var(--ink)}
   .lb-assignee.empty{color:var(--muted)}
-  .lb-progress{flex:1;max-width:200px;height:2px;background:var(--panel2)}
-  .lb-progress>div{height:100%;background:var(--ink);transition:width .3s}
+  .lb-progress{flex:1;max-width:200px;height:3px;background:var(--panel2)}
+  .lb-progress>div{height:100%;background:var(--accent);transition:width .3s}
   .lb-actions{margin-left:auto;display:flex;align-items:center;gap:14px}
   .lb-chev{color:var(--muted);transition:transform .2s;display:flex}
   .lb-chev svg{width:11px;height:11px}
@@ -310,21 +334,21 @@
   .vip-sug.added{opacity:.4;cursor:default}
   .vip-sug .nm{font-size:14px;color:var(--ink)}
   .vip-sug .mt{font-size:11.5px;color:var(--muted);margin-top:3px}
-  .vip-sug .sp{margin-left:auto;font-size:13px;color:var(--ink);white-space:nowrap;
+  .vip-sug .sp{margin-left:auto;font-size:13px;color:var(--accent-2);white-space:nowrap;
     font-variant-numeric:tabular-nums;font-family:var(--serif)}
-  .vip-card{background:var(--panel);border:1px solid var(--line);padding:20px;margin-bottom:-1px;
+  .vip-card{background:var(--panel);border:1px solid var(--line);border-left:2px solid var(--gold);padding:20px;margin-bottom:-1px;
     display:flex;gap:24px;align-items:flex-start}
   .vip-card .left{flex:1;min-width:0}
   .vip-nm{font-family:var(--serif);font-size:19px;cursor:pointer;color:var(--ink);
     display:flex;align-items:center;gap:9px;flex-wrap:wrap;line-height:1.3}
   .vip-nm:hover{text-decoration:underline;text-underline-offset:3px}
-  .vip-star{color:var(--accent);display:inline-flex}
+  .vip-star{color:var(--gold);display:inline-flex}
   .vip-star svg{width:13px;height:13px}
   .vip-metrics{display:flex;flex-wrap:wrap;gap:22px;margin-top:14px}
   .vip-m{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
   .vip-m b{display:block;font-family:var(--serif);font-size:17px;letter-spacing:normal;
-    text-transform:none;color:var(--ink);margin-top:4px;font-weight:400}
-  .vip-next{margin-top:14px;font-size:12.5px;border-left:2px solid var(--ink);
+    text-transform:none;color:var(--accent-2);margin-top:4px;font-weight:400}
+  .vip-next{margin-top:14px;font-size:12.5px;border-left:2px solid var(--accent);
     padding:5px 0 5px 12px;color:var(--ink-2)}
   .vip-note{margin-top:12px;font-size:12.5px;color:var(--ink-2);background:var(--accent-soft);
     border:1px solid var(--line);padding:8px 12px;cursor:pointer;line-height:1.5}
@@ -348,9 +372,9 @@
   .jr-name{font-family:var(--serif);font-size:16px;cursor:pointer;color:var(--ink)}
   .jr-name:hover{text-decoration:underline;text-underline-offset:3px}
   .jr-meta{font-size:12px;color:var(--muted);margin-top:4px}
-  .jr-meta b{color:var(--ink-2);font-weight:600}
+  .jr-meta b{color:var(--accent-2);font-weight:600}
   .jr-note{font-size:13px;color:var(--ink-2);margin-top:7px}
-  .jr-booking{margin-top:9px;font-size:12.5px;border-left:2px solid var(--ink);
+  .jr-booking{margin-top:9px;font-size:12.5px;border-left:2px solid var(--accent);
     padding:4px 0 4px 12px;color:var(--ink-2)}
   .jr-when{flex:0 0 auto;font-size:11px;color:var(--muted);text-align:right;white-space:nowrap;letter-spacing:.04em}
 
@@ -528,7 +552,7 @@
     <div class="admin-bar">
       <span class="admin-bar-lbl">Кто звонит:</span>
       <select id="adminSel" title="Выберите себя — все звонки запишутся на вас"></select>
-      <button class="admin-manage" id="adminManage" title="Управлять списком администраторов">${ICON.gear}</button>
+      <button class="admin-manage" id="adminManage" title="Управлять списком администраторов"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="2.4"/><path d="M8 1.5v1.8M8 12.7v1.8M14.5 8h-1.8M3.3 8H1.5M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3M12.6 12.6l-1.3-1.3M4.7 4.7L3.4 3.4"/></svg></button>
     </div>
     <div class="grid kpis" id="taskKpis"></div>
     <div id="listSection" style="display:none">
@@ -603,6 +627,16 @@
             <option value="only">Только они</option>
           </select>
         </label>
+        <label class="segfld">Персональная скидка
+          <select id="segDiscount">
+            <option value="">Все клиенты</option>
+            <option value="any">Со скидкой</option>
+            <option value="none">Без скидки</option>
+          </select>
+        </label>
+        <label class="segfld">Скидка от, %
+          <input id="segDiscountFrom" type="number" min="0" max="100" placeholder="любая" step="5">
+        </label>
         <label class="segfld">Депозит
           <select id="segDeposit">
             <option value="">Все клиенты</option>
@@ -621,7 +655,7 @@
         <div class="seg-hint" id="segNewHint">Первичные клиенты: были в салоне ровно один раз и ещё не обработаны админом.
           Цель звонка — обратная связь (NPS). Клиент уходит из списка сам: после второго визита или после любой отметки звонка.</div>
       </div>
-      <div class="seg-coverage muted" id="segCoverage"></div>
+      <div class="seg-coverage"><a onclick="syncComments()">Обновить комментарии, суммы и скидки из YClients</a></div>
     </div>
     <div class="card" style="margin-top:14px;padding:0">
       <table id="segTable"><thead><tr><th>Клиент</th><th>Телефон</th><th title="Услуг, попавших под условия выборки">Совпало услуг</th><th title="Походов в салон за всю историю (несколько услуг в один день = один визит)">Всего визитов</th><th>Потратил всего</th><th>Сумма по выборке</th><th>Последний</th><th>Мастера</th></tr></thead><tbody></tbody></table>
@@ -736,7 +770,7 @@ async function loadAdmins(){
   admins = await api('/api/admins');
   const sel=$('#adminSel'), saved=localStorage.getItem('admin_name')||'';
   if(!admins.length){
-    sel.innerHTML='<option value="">— добавьте админов ${ICON.gear} —</option>';
+    sel.innerHTML='<option value="">— добавьте админов —</option>';
   }else{
     sel.innerHTML = admins.map(a=>`<option value="${a.name.replace(/"/g,'&quot;')}">${a.name}</option>`).join('');
     sel.value = admins.some(a=>a.name===saved) ? saved : admins[0].name;
@@ -788,7 +822,7 @@ async function importYcAdmins(){
 }
 async function refreshAdminSel(){
   const sel=$('#adminSel'), cur=sel.value;
-  sel.innerHTML = admins.length ? admins.map(a=>`<option value="${a.name.replace(/"/g,'&quot;')}">${a.name}</option>`).join('') : '<option value="">— добавьте админов ${ICON.gear} —</option>';
+  sel.innerHTML = admins.length ? admins.map(a=>`<option value="${a.name.replace(/"/g,'&quot;')}">${a.name}</option>`).join('') : '<option value="">— добавьте админов —</option>';
   if(admins.some(a=>a.name===cur)) sel.value=cur; else if(admins.length){ sel.value=admins[0].name; localStorage.setItem('admin_name',sel.value); }
 }
 
@@ -821,6 +855,8 @@ const realSpentOf = (c,s) => c.yc_spent!=null ? c.yc_spent : s.total_spent;
 const depTag = bal => !bal ? '' : bal>0
   ? ` <span class="dep-tag" title="Остаток депозита">депозит ${rub(bal)}</span>`
   : ` <span class="dep-tag debt" title="Долг (баланс в минусе)">долг ${rub(bal)}</span>`;
+// персональная скидка из карточки YClients
+const discTag = d => !d ? '' : ` <span class="disc-tag" title="Персональная скидка">−${d}%</span>`;
 const fmtDate = d => d ? new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'short',year:'2-digit'}) : '—';
 const fmtDT = d => d ? new Date(d).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
 const daysAgoTxt = d => { if(!d) return '—'; const n=Math.round((Date.now()-new Date(d))/864e5); return n<=0?'сегодня':`${n} дн. назад`; };
@@ -877,7 +913,7 @@ $('#loginSubmit').onclick=async ()=>{
 const q1 = s => String(s||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); // имя внутри onclick='…'
 const RES = [
   {k:'booked',   t:ICON.check+'Записать',    cls:'booked'},
-  {k:'callback', t:ICON.clock+'Перезвонить', cls:''},
+  {k:'callback', t:ICON.clock+'Перезвонить', cls:'callback'},
   {k:'no_answer',t:ICON.phoneOff+'Не ответил', cls:''},
   {k:'refused',  t:ICON.cross+'Отказ',       cls:'refused'},
 ];
@@ -1383,16 +1419,49 @@ async function openClient(id){
     ['Филиал', (c.branches&&c.branches.length?c.branches.join(', '):c.branch)||'—'],
     ['Последний визит', daysAgoTxt(s.last_visit)],
     ['Прогноз следующего', fmtDate(s.predicted_next)],
+    ['Персональная скидка', c.yc_discount ? `−${c.yc_discount}%` : '—'],
   ].map(([k,v])=>`<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
 
   const STAT={completed:'выполнен',upcoming:'предстоит',no_show:'не пришёл',cancelled:'отменён',unmarked:'не отмечен в YClients'};
-  $('#timeline').innerHTML = timeline.map(e=>{
-    if(e.kind==='visit') return `<div class="ev visit"><div class="d">${fmtDT(e.date)}${e.branch?' · '+e.branch:''}</div><div class="t">${e.title}${e.status!=='completed'?`<span class="pill">${STAT[e.status]||e.status}</span>`:''}</div><div class="s">${e.staff||''}${e.cost?' · '+rub(e.cost):''}</div></div>`;
-    if(e.kind==='call'){const R={booked:'записал',callback:'перезвонить',no_answer:'не ответил',refused:'отказ'};
+
+  // Один поход в салон = один блок. За визит клиент берёт несколько услуг у разных
+  // мастеров, и каждая приезжает из YClients отдельной записью — раньше они шли
+  // подряд, каждая со своей датой, и выглядели как четыре визита в один день.
+  const dayOf = d => new Date(d).toLocaleDateString('sv-SE',{timeZone:'Europe/Moscow'});
+  const fmtDay = d => new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'2-digit'});
+  const fmtTime = d => new Date(d).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
+  const groups=[], byKey=new Map();
+  for(const e of timeline){
+    if(e.kind!=='visit'){ groups.push({kind:e.kind,date:e.date,ev:e}); continue; }
+    const key=dayOf(e.date)+'|'+(e.status||'')+'|'+(e.branch||'');
+    let g=byKey.get(key);
+    if(!g){ g={kind:'day',date:e.date,status:e.status,branch:e.branch,items:[],sum:0}; byKey.set(key,g); groups.push(g); }
+    g.items.push(e); g.sum+=e.cost||0;
+    if(new Date(e.date)<new Date(g.date)) g.date=e.date;   // начало похода
+  }
+  groups.sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const trips=groups.filter(g=>g.kind==='day').length;
+
+  $('#timeline').innerHTML = groups.map(g=>{
+    if(g.kind==='day'){
+      const rows=g.items.map(i=>`<div class="vrow">
+          <span class="vn">${i.title}</span>
+          <span class="vm">${i.staff||''}</span>
+          <span class="vc">${i.cost?rub(i.cost):''}</span>
+        </div>`).join('');
+      return `<div class="ev visit">
+        <div class="d">${fmtDay(g.date)}, ${fmtTime(g.date)}${g.branch?' · '+g.branch:''}${
+          g.status!=='completed'?`<span class="pill">${STAT[g.status]||g.status}</span>`:''}</div>
+        <div class="vsvc">${rows}</div>
+        <div class="vsum">${g.items.length>1?plural(g.items.length,'услуга','услуги','услуг')+' · ':''}${rub(g.sum)}</div>
+      </div>`;
+    }
+    const e=g.ev;
+    if(g.kind==='call'){const R={booked:'записал',callback:'перезвонить',no_answer:'не ответил',refused:'отказ'};
       return `<div class="ev call"><div class="d">${fmtDT(e.date)} · ${e.admin||''}</div><div class="t">Звонок${e.result?` — ${R[e.result]||e.result}`:''}</div>${e.note?`<div class="s">«${e.note}»</div>`:''}</div>`;}
     return `<div class="ev task"><div class="d">${fmtDT(e.date)}</div><div class="t">Задача: ${e.type_label} <span class="pill">${e.status}</span></div><div class="s">${e.reason||''}</div></div>`;
   }).join('') || '<div class="muted">Событий пока нет</div>';
-  $('#cntTimeline').textContent = timeline.length||'';
+  $('#cntTimeline').textContent = trips||'';
 
   $('#overlay').classList.add('open');$('#drawer').classList.add('open');
 }
@@ -1402,7 +1471,6 @@ $('#overlay').onclick=closeDrawer;
 // --- ВЫБОРКИ ---
 let segLoaded=false, segResults=[], segFilter={};
 async function loadSegments(){
-  await refreshCoverage();
   if(segLoaded) return; segLoaded=true;
   const svcs = await api(bp('/api/services-list'));
   $('#servicesList').innerHTML = svcs.map(s=>{
@@ -1410,20 +1478,14 @@ async function loadSegments(){
     return `<option value="${s.name.replace(/"/g,'&quot;')}">${hint}</option>`;
   }).join('');
 }
-async function refreshCoverage(){
-  const r = await api(bp('/api/data-range'));
-  const el=$('#segCoverage');
-  if(!r.min_date){el.textContent='База пуста — сначала синхронизируйте.';return;}
-  el.innerHTML = `В базе ${r.clients} клиентов, ${r.visits} визитов за период ${fmtDate(r.min_date)} — ${fmtDate(r.max_date)}. `+
-    `Нужно глубже? <a onclick="deepSync(36)">Загрузить 3 года</a> · <a onclick="deepSync(60)">5 лет</a> · <a onclick="deepSync(120)">всю историю</a>. `+
-    `<a onclick="syncComments()">Обновить комментарии из YClients</a>`;
-}
+// Ручной полный проход по карточкам YClients. Инкрементальный идёт сам после каждого
+// ночного синка — эта кнопка нужна, чтобы обновить разом всех, включая давно не заходивших.
 async function syncComments(){
   const st=await api('/api/sync-comments/status');
   if(st.running){toast(`Уже идёт: проверено ${st.done} из ${st.total}`);return;}
-  if(!confirm('Подтянуть комментарии из карточек всех клиентов YClients? Идёт в фоне, займёт до получаса.')) return;
+  if(!confirm('Подтянуть комментарии, суммы и скидки из карточек всех клиентов YClients? Идёт в фоне, займёт до получаса.')) return;
   await api('/api/sync-comments?full=1',{method:'POST'});
-  toast('Запущено в фоне — комментарии подтянутся постепенно');
+  toast('Запущено в фоне — данные подтянутся постепенно');
 }
 let segPresetNew=false;
 function currentFilter(){
@@ -1439,6 +1501,8 @@ function currentFilter(){
   const cm=$('#segComment').value.trim(); if(cm)f.comment=cm;
   const dnc=$('#segDnc').value; if(dnc)f.dnc=dnc;
   const dep=$('#segDeposit').value; if(dep)f.deposit=dep;
+  const dsc=$('#segDiscount').value; if(dsc)f.discount=dsc;
+  const dscf=$('#segDiscountFrom').value; if(dscf&&Number(dscf)>0)f.discount_from=dscf;
   if(currentBranch) f.branch=currentBranch;
   return f;
 }
@@ -1453,6 +1517,9 @@ function filterLabel(f){
   if(f.comment)parts.push('коммент «'+f.comment+'»');
   if(f.dnc==='only')parts.push('не беспокоить');
   if(f.deposit==='only')parts.push('депозитники');
+  if(f.discount==='any')parts.push('со скидкой');
+  if(f.discount==='none')parts.push('без скидки');
+  if(f.discount_from)parts.push('скидка от '+f.discount_from+'%');
   return parts.join(', ')||'Все клиенты';
 }
 let segReq=0;
@@ -1475,7 +1542,7 @@ async function runSegment(){
   tb.innerHTML = r.clients.map(c=>{
     const br=(c.branches&&c.branches.length>1)?c.branches.map(branchTag).join(''):branchTag(c.branch);
     return `<tr class="crow" onclick="openClient(${c.id})">
-      <td title="${(c.comment||'').replace(/"/g,'&quot;')}">${c.do_not_call?ICON.ban:''}${c.name||'—'}${br}${depTag(c.deposit_balance)}</td>
+      <td title="${(c.comment||'').replace(/"/g,'&quot;')}">${c.do_not_call?ICON.ban:''}${c.name||'—'}${br}${discTag(c.discount)}${depTag(c.deposit_balance)}</td>
       <td class="phone">${c.phone||'—'}</td>
       <td><b>${c.match_visits}</b></td>
       <td>${c.total_visits||0}</td>
@@ -1485,15 +1552,6 @@ async function runSegment(){
       <td class="muted" style="font-size:12px">${(c.masters||'').split(',').slice(0,3).join(', ')}</td>
     </tr>`;
   }).join('') || '<tr><td colspan="8" class="empty">Ничего не найдено под эти условия</td></tr>';
-}
-async function deepSync(months){
-  if(!confirm(`Загрузить историю за ${months} мес.? Это может занять несколько минут.`)) return;
-  toast('Загружаю историю… это займёт время');
-  const b=$('#segRun');b.disabled=true;
-  try{ const r=await api('/api/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({months})});
-    toast(`Готово: ${r.clients} клиентов, ${r.visits} визитов`); segLoaded=false; await loadSegments(); }
-  catch(e){ toast('Ошибка загрузки'); }
-  b.disabled=false;
 }
 async function createListFromFilter(){
   if(!segResults.length) return;
@@ -1522,9 +1580,9 @@ $('#segNew').onclick=()=>{
 // Автопоиск при вводе любого критерия (с задержкой), чтобы список появлялся сразу
 let segTimer;
 const segAuto=()=>{clearTimeout(segTimer);segTimer=setTimeout(runSegment,350);};
-['segService','segStaff','segFrom','segTo','segMinVisits','segSpentFrom','segSpentTo','segComment'].forEach(id=>$('#'+id).addEventListener('input',segAuto));
-['segFrom','segTo','segDnc','segDeposit'].forEach(id=>$('#'+id).addEventListener('change',segAuto));
-$('#segReset').onclick=()=>{clearTimeout(segTimer);['segService','segStaff','segFrom','segTo','segComment','segDnc','segDeposit','segSpentFrom','segSpentTo'].forEach(id=>$('#'+id).value='');$('#segMinVisits').value='1';segPresetNew=false;$('#segNew').classList.remove('on');$('#segNewHint').classList.remove('on');$('#segSummary').textContent='';$('#segTable tbody').innerHTML='';$('#segToList').disabled=true;segResults=[];};
+['segService','segStaff','segFrom','segTo','segMinVisits','segSpentFrom','segSpentTo','segDiscountFrom','segComment'].forEach(id=>$('#'+id).addEventListener('input',segAuto));
+['segFrom','segTo','segDnc','segDeposit','segDiscount'].forEach(id=>$('#'+id).addEventListener('change',segAuto));
+$('#segReset').onclick=()=>{clearTimeout(segTimer);['segService','segStaff','segFrom','segTo','segComment','segDnc','segDeposit','segSpentFrom','segSpentTo','segDiscount','segDiscountFrom'].forEach(id=>$('#'+id).value='');$('#segMinVisits').value='1';segPresetNew=false;$('#segNew').classList.remove('on');$('#segNewHint').classList.remove('on');$('#segSummary').textContent='';$('#segTable tbody').innerHTML='';$('#segToList').disabled=true;segResults=[];};
 
 // --- Синхронизация ---
 $('#syncBtn').onclick = async ()=>{

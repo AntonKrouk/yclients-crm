@@ -46,8 +46,8 @@ app.use((req, res, next) => {
   if (!AUTH_ON) return next();
   if (req.path === '/api/login' || req.path === '/api/health') return next();
   // авто-синк по крону: разрешаем синки с валидным токеном без куки
-  if ((req.path === '/api/sync' || req.path === '/api/sync-upcoming')
-      && CRON_SECRET && req.query.token === CRON_SECRET) return next();
+  const CRON_PATHS = ['/api/sync', '/api/sync-upcoming', '/api/sync-comments'];
+  if (CRON_PATHS.includes(req.path) && CRON_SECRET && req.query.token === CRON_SECRET) return next();
   if (parseCookies(req).sess === sessionCookie()) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Требуется вход' });
   return res.sendFile(path.join(__dirname, 'public', 'login.html'));
@@ -336,6 +336,10 @@ function querySegment(f = {}) {
   const comment = (f.comment || '').toLowerCase().trim();
   const dnc = (f.dnc || '').trim(); // '' = исключить «не беспокоить» (по умолч.) | 'all' = включая | 'only' = только они
   const deposit = (f.deposit || '').trim(); // депозитники: 'nonzero' = остаток или долг (≠0) | 'positive' = только с остатком | 'debt' = только с долгом
+  // Персональная скидка из карточки YClients: 'any' = есть любая | 'none' = без скидки.
+  // discount_from — «скидка не меньше N %». Поле заполняется проходом по карточкам.
+  const discount = (f.discount || '').trim();
+  const discountFrom = Math.max(0, Number(f.discount_from) || 0);
 
   const conds = ["v.status = 'completed'"];
   const params = [];
@@ -350,6 +354,9 @@ function querySegment(f = {}) {
   else if (deposit === 'nonzero') conds.push('COALESCE(c.yc_balance,0) <> 0');
   if (dnc === 'only') conds.push('COALESCE(c.do_not_call,0) = 1');
   else if (dnc !== 'all') conds.push('COALESCE(c.do_not_call,0) = 0');
+  if (discount === 'any') conds.push('COALESCE(c.yc_discount,0) > 0');
+  else if (discount === 'none') conds.push('COALESCE(c.yc_discount,0) = 0');
+  if (discountFrom) { conds.push('COALESCE(c.yc_discount,0) >= ?'); params.push(discountFrom); }
 
   // VIP ведут персонально — в выборки конструктора они не попадают вовсе
   conds.push('c.id NOT IN (SELECT client_id FROM vip_clients)');
@@ -363,6 +370,7 @@ function querySegment(f = {}) {
     SELECT c.id, c.name, c.phone, c.branch, c.comment, COALESCE(c.do_not_call,0) AS do_not_call,
            c.visits_count AS total_visits, c.last_visit,
            COALESCE(c.yc_spent, c.spent, 0) AS real_spent, COALESCE(c.yc_balance,0) AS deposit_balance,
+           COALESCE(c.yc_discount,0) AS discount,
            COUNT(v.id) AS match_visits,
            MAX(v.date) AS last_match,
            ROUND(SUM(v.cost)) AS match_spent,
@@ -392,6 +400,7 @@ function querySegment(f = {}) {
       base.total_visits = cards.reduce((s, c) => s + (c.total_visits || 0), 0);
       base.real_spent = cards.reduce((s, c) => s + (c.real_spent || 0), 0);
       base.deposit_balance = cards.reduce((s, c) => s + (c.deposit_balance || 0), 0);
+      base.discount = Math.max(...cards.map(c => c.discount || 0)); // скидка бывает только в одной карточке
       base.last_match = cards.map(c => c.last_match).sort().pop();
       base.masters = [...new Set(cards.flatMap(c => (c.masters || '').split(',')).filter(Boolean))].join(',');
       base.do_not_call = cards.some(c => c.do_not_call) ? 1 : 0;
@@ -877,6 +886,7 @@ function loadPerson(id) {
     ...client,
     yc_spent: hasYcSpent ? ycSpent : null,
     yc_balance: cards.reduce((s, c) => s + (c.yc_balance || 0), 0),
+    yc_discount: Math.max(...cards.map(c => c.yc_discount || 0)),
     branches: cards.map(c => c.branch).filter(Boolean),
     // комментарии админов бывают в обеих карточках — показываем оба
     comment: [...new Set(cards.map(c => c.comment).filter(Boolean))].join('\n'),

@@ -347,7 +347,7 @@ async function syncComments({ full = false } = {}) {
                            AND last_visit >= datetime('now','-120 days')))`}
   `).all();
   commentSync = { running: true, done: 0, total: rows.length };
-  const upd = db.prepare('UPDATE clients SET comment=?, do_not_call=?, yc_spent=?, yc_balance=?, comment_checked_at=? WHERE id=?');
+  const upd = db.prepare('UPDATE clients SET comment=?, do_not_call=?, yc_spent=?, yc_balance=?, yc_discount=?, comment_checked_at=? WHERE id=?');
   let dnc = 0;
   try {
     for (const r of rows) {
@@ -356,7 +356,8 @@ async function syncComments({ full = false } = {}) {
         const comment = String(card?.comment || '').trim();
         const derived = (DNC_RE.test(originalComment(comment)) || DNC_RE.test(r.name || '')) ? 1 : 0;
         const flag = r.dnc_manual != null ? r.dnc_manual : derived; // ручная отметка из дашборда важнее
-        upd.run(comment || null, flag, card?.spent ?? null, card?.balance ?? null, iso(Date.now()), r.id);
+        upd.run(comment || null, flag, card?.spent ?? null, card?.balance ?? null,
+          Number(card?.discount) || 0, iso(Date.now()), r.id);
         if (flag) dnc++;
       } catch { /* сетевая ошибка или клиент удалён — не трогаем, попробуем в следующий проход */ }
       commentSync.done++;
