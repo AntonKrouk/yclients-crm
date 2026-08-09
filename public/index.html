@@ -242,7 +242,6 @@
   .vip-toggle{margin-top:8px;width:100%;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer}
   .vip-toggle:hover{border-color:#d4af37;color:#8a6d1f;background:#fdfaf0}
   .vip-toggle.on{background:#fdf6e3;border-color:#e8d59a;color:#8a6d1f}
-  .warn-box{margin-top:12px;background:#fbf0da;border:1px solid #f0dbb0;color:#7a5410;border-radius:10px;padding:9px 12px;font-size:12.5px;line-height:1.45}
   /* журнал обзвона (Обзор) */
   .jr-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:22px 0 10px;flex-wrap:wrap}
   .jr-filters{display:flex;gap:8px}
@@ -491,7 +490,6 @@
     </div>
     <div class="cinfo" id="drawerInfo"></div>
     <div id="drawerComment" style="display:none" class="note-box"></div>
-    <div id="drawerWarn" style="display:none" class="warn-box"></div>
     <button id="vipToggle" class="vip-toggle" onclick="toggleVipFromDrawer()"></button>
     <button id="dncToggle" class="dnc-toggle" onclick="toggleDnc()"></button>
   </div>
@@ -1109,13 +1107,6 @@ async function openClient(id){
   dt.classList.toggle('on', !!c.do_not_call);
   dt.textContent = c.do_not_call ? '✓ Не беспокоить — снять отметку' : '🚫 Отметить «не беспокоить»';
   renderVipToggle();
-
-  // Почему статус может расходиться с ожиданиями админа — объясняем прямо в карточке
-  const warns=[];
-  if(s.unmarked) warns.push(`В YClients ${s.unmarked} ${s.unmarked===1?'запись с прошедшей датой, которой не проставили':'записей с прошедшей датой, которым не проставили'} посещаемость. Они не считаются ни визитом, ни будущей записью — из-за них суммы ниже реальных.`);
-  if(s.cards>1) warns.push(`У человека ${s.cards} карточки в YClients (${(c.branches||[]).join(', ')}) — визиты и деньги здесь сложены по обеим.`);
-  const wb=$('#drawerWarn');
-  if(warns.length){wb.innerHTML='⚠ '+warns.join('<br>⚠ ');wb.style.display='';} else wb.style.display='none';
 
   // плитки статистики. Настоящая сумма трат (из YClients, с депозитами) если известна, иначе по визитам
   const realSpent = c.yc_spent!=null ? c.yc_spent : s.total_spent;
