@@ -1,6 +1,7 @@
 'use strict';
 
 const { db } = require('./db');
+const people = require('./people');
 
 const DAY = 86400000;
 const today = () => new Date().toISOString().slice(0, 10);
@@ -62,25 +63,13 @@ function generate() {
   // --- Дедуп по филиалам: один человек ходит в оба филиала как ДВЕ карточки (разный
   // yclients_id, один телефон). Приоритетный филиал = где больше визитов; задачу ставим
   // только там, дубль в другом филиале подавляем. «Записан» считаем по ЛЮБОМУ филиалу.
-  const normPhone = p => String(p || '').replace(/\D/g, '');
-  const isRealPhone = d => d.length >= 10 && new Set(d.split('')).size > 2; // отсечь 79999999999 и мусор
-  const groups = new Map();
-  for (const c of clients) {
-    const d = normPhone(c.phone);
-    const key = isRealPhone(d) ? 'p:' + d.slice(-10) : 'id:' + c.id; // без телефона — сам по себе
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(c);
-  }
+  // Группировка общая с конструктором и карточкой клиента — см. src/people.js.
   const suppressed = new Set();      // id неприоритетных дублей — задачи не ставим
   const personBooked = new Set();    // id приоритетного, если человек записан в каком-то филиале
-  for (const arr of groups.values()) {
+  for (const arr of people.groupByPerson(clients)) {
     if (arr.length < 2) continue;
-    // приоритет: больше визитов, при равенстве — более свежий визит, затем меньший id
-    arr.sort((a, b) => (b.visits_count - a.visits_count)
-      || (new Date(b.last_visit || 0) - new Date(a.last_visit || 0)) || (a.id - b.id));
-    const prio = arr[0];
     for (let i = 1; i < arr.length; i++) suppressed.add(arr[i].id);
-    if (arr.some(c => upMap.has(c.id))) personBooked.add(prio.id);
+    if (arr.some(c => upMap.has(c.id))) personBooked.add(arr[0].id);
   }
 
   const dismissFor = (ids) => {

@@ -44,20 +44,44 @@ function normalizeRecord(r) {
   };
 }
 
+// --- Визит = один поход в салон, а не одна строка записи -----------------------
+// В этом салоне клиент за одно посещение берёт несколько услуг у РАЗНЫХ мастеров
+// (услуга «*Параллельная работа мастеров»), и каждая приезжает из YClients отдельной
+// записью. Считая их разными визитами, мы получали периодичность в часы вместо недель:
+// у Бразговской выходило «~6 дней» при реальных ~3 неделях, а у карточки с тремя услугами
+// в один день — 0.04 дня. На этом стоит вся логика задач (реактивация = 2× периодичности),
+// поэтому клиентов звали возвращаться через неделю после визита.
+// Считаем по календарным дням в часовом поясе салона.
+const dayKey = (d) => new Date(d).toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' });
+
+// Группирует записи в походы: [{ day: 'YYYY-MM-DD', date: самая ранняя запись дня, cost, rows }]
+function toTrips(visits) {
+  const byDay = new Map();
+  for (const v of visits) {
+    const k = dayKey(v.date);
+    if (!byDay.has(k)) byDay.set(k, { day: k, date: v.date, cost: 0, rows: 0 });
+    const t = byDay.get(k);
+    if (new Date(v.date) < new Date(t.date)) t.date = v.date;
+    t.cost += v.cost || 0;
+    t.rows++;
+  }
+  return [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+}
+
 function computeFrequency(visits) {
-  const completed = visits
-    .filter(v => v.status === 'completed')
-    .sort((a, b) => new Date(a.date) - new Date(b.date));
+  const completed = visits.filter(v => v.status === 'completed');
   if (completed.length === 0) return null;
-  const first = completed[0].date;
-  const last = completed[completed.length - 1].date;
+  const trips = toTrips(completed);
+  const first = trips[0].date;
+  const last = trips[trips.length - 1].date;
   let avg = null;
-  if (completed.length >= 2) {
-    const span = new Date(last) - new Date(first);
-    avg = span / (completed.length - 1) / DAY;
+  if (trips.length >= 2) {
+    // интервал считаем между ДНЯМИ походов — время внутри дня роли не играет
+    const span = new Date(trips[trips.length - 1].day) - new Date(trips[0].day);
+    avg = span / (trips.length - 1) / DAY;
   }
   const predicted = avg ? iso(new Date(new Date(last).getTime() + avg * DAY)) : null;
-  // любимый мастер/услуга — по частоте
+  // любимый мастер/услуга — по частоте оказанных услуг
   const top = (key) => {
     const m = {};
     completed.forEach(v => { if (v[key]) m[v[key]] = (m[v[key]] || 0) + 1; });
@@ -66,7 +90,8 @@ function computeFrequency(visits) {
   return {
     first_visit: first,
     last_visit: last,
-    visits_count: completed.length,
+    visits_count: trips.length,              // походов в салон
+    services_count: completed.length,        // строк-записей (услуг) — для справки в карточке
     spent: completed.reduce((s, v) => s + (v.cost || 0), 0),
     avg_interval_days: avg,
     predicted_next: predicted,
@@ -75,16 +100,14 @@ function computeFrequency(visits) {
   };
 }
 
+// Карточку клиента заводим/обновляем БЕЗ агрегатов: имя, телефон, филиал. Визиты и деньги
+// пересчитываются отдельно (recomputeClient) по всей локальной истории — см. комментарий там.
 const upsertClient = db.prepare(`
-  INSERT INTO clients (yclients_id, company_id, branch, name, phone, first_visit, last_visit, visits_count, spent,
-                       avg_interval_days, predicted_next, favorite_staff, favorite_service, updated_at)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  INSERT INTO clients (yclients_id, company_id, branch, name, phone, updated_at)
+  VALUES (?,?,?,?,?,?)
   ON CONFLICT(yclients_id) DO UPDATE SET
     company_id=excluded.company_id, branch=excluded.branch,
-    name=excluded.name, phone=excluded.phone, first_visit=excluded.first_visit,
-    last_visit=excluded.last_visit, visits_count=excluded.visits_count, spent=excluded.spent,
-    avg_interval_days=excluded.avg_interval_days, predicted_next=excluded.predicted_next,
-    favorite_staff=excluded.favorite_staff, favorite_service=excluded.favorite_service, updated_at=excluded.updated_at
+    name=excluded.name, phone=excluded.phone, updated_at=excluded.updated_at
 `);
 const upsertVisit = db.prepare(`
   INSERT INTO visits (yclients_record_id, client_id, company_id, branch, date, service, staff, cost, status)
@@ -94,6 +117,37 @@ const upsertVisit = db.prepare(`
     date=excluded.date, service=excluded.service, staff=excluded.staff, cost=excluded.cost, status=excluded.status
 `);
 const getClientLocalId = db.prepare('SELECT id FROM clients WHERE yclients_id = ?');
+
+// --- Агрегаты клиента: ВСЕГДА по всей локальной истории визитов ---------------
+// Раньше visits_count/spent считались по записям ТЕКУЩЕГО окна синка. Из-за этого
+// «Загрузить 3 года» складывало глубокую историю в visits, а следующий рутинный синк
+// (окно 12 мес.) затирал агрегаты урезанными числами — суммы в конструкторе выходили
+// в разы меньше настоящих, а у клиентов, не заходивших год, обнулялись вовсе.
+// Теперь окно синка определяет только то, ЧТО докачали; счёт идёт по таблице visits.
+const clientVisitsStmt = db.prepare('SELECT date, service, staff, cost, status FROM visits WHERE client_id = ?');
+const updAggregates = db.prepare(`
+  UPDATE clients SET first_visit=?, last_visit=?, visits_count=?, services_count=?, spent=?,
+    avg_interval_days=?, predicted_next=?, favorite_staff=?, favorite_service=?, updated_at=? WHERE id=?
+`);
+const EMPTY_FREQ = {
+  first_visit: null, last_visit: null, visits_count: 0, services_count: 0, spent: 0,
+  avg_interval_days: null, predicted_next: null, favorite_staff: null, favorite_service: null,
+};
+
+function recomputeClient(localId, now) {
+  const f = computeFrequency(clientVisitsStmt.all(localId)) || EMPTY_FREQ;
+  updAggregates.run(f.first_visit, f.last_visit, f.visits_count, f.services_count, f.spent,
+    f.avg_interval_days, f.predicted_next, f.favorite_staff, f.favorite_service, now, localId);
+}
+
+// Разовый (и безопасный к повтору) пересчёт агрегатов по всем клиентам — чинит строки,
+// испорченные прежней логикой окна.
+function rebuildAggregates() {
+  const now = iso(Date.now());
+  const ids = db.prepare('SELECT id FROM clients').all();
+  for (const r of ids) recomputeClient(r.id, now);
+  return ids.length;
+}
 
 // Записывает клиентов и визиты одного филиала в базу с пометкой company_id/branch
 function syncBranch(clients, records, company, now) {
@@ -108,18 +162,13 @@ function syncBranch(clients, records, company, now) {
   let clientsN = 0, visitsN = 0;
   for (const c of clients) {
     const visits = byClient.get(c.id) || [];
-    const freq = computeFrequency(visits) || {
-      first_visit: null, last_visit: null, visits_count: 0, spent: 0,
-      avg_interval_days: null, predicted_next: null, favorite_staff: null, favorite_service: null,
-    };
-    upsertClient.run(c.id, cid, company.name, c.name || '', c.phone || '', freq.first_visit, freq.last_visit,
-      freq.visits_count, freq.spent, freq.avg_interval_days, freq.predicted_next,
-      freq.favorite_staff, freq.favorite_service, now);
+    upsertClient.run(c.id, cid, company.name, c.name || '', c.phone || '', now);
     const local = getClientLocalId.get(c.id);
     for (const v of visits) {
       upsertVisit.run(v.yclients_record_id, local.id, cid, company.name, v.date, v.service, v.staff, v.cost, v.status);
       visitsN++;
     }
+    recomputeClient(local.id, now); // после записи визитов — по всей истории, а не по окну
     clientsN++;
   }
   return { clients: clientsN, visits: visitsN };
@@ -155,14 +204,7 @@ async function importRecord(cid, branch, recordId) {
     v.date, v.service, v.staff, v.cost, v.status);
   // пересчитываем агрегаты клиента по локальным визитам (новая запись — будущая,
   // на статистику завершённых не влияет, но держим строку клиента консистентной)
-  const visits = db.prepare('SELECT date, service, staff, cost, status FROM visits WHERE client_id=?').all(local.id);
-  const f = computeFrequency(visits);
-  if (f) {
-    db.prepare(`UPDATE clients SET first_visit=?, last_visit=?, visits_count=?, spent=?,
-                avg_interval_days=?, predicted_next=?, favorite_staff=?, favorite_service=?, updated_at=? WHERE id=?`)
-      .run(f.first_visit, f.last_visit, f.visits_count, f.spent, f.avg_interval_days,
-        f.predicted_next, f.favorite_staff, f.favorite_service, iso(Date.now()), local.id);
-  }
+  recomputeClient(local.id, iso(Date.now()));
   return { ok: true, client_id: local.id, visit: v };
 }
 
@@ -399,4 +441,7 @@ async function run(opts = {}) {
   return { mode: yc.isDemo() ? 'demo' : 'live', clients: totalC, visits: totalV, tasks: tasksN, at: now };
 }
 
-module.exports = { run, syncUpcoming, computeFrequency, importRecord, syncComments, commentSyncStatus, writeCallToYclients, CRM_MARK, originalComment, DNC_RE };
+module.exports = {
+  run, syncUpcoming, computeFrequency, toTrips, recomputeClient, rebuildAggregates, importRecord,
+  syncComments, commentSyncStatus, writeCallToYclients, CRM_MARK, originalComment, DNC_RE,
+};

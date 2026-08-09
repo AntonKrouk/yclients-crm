@@ -142,6 +142,9 @@
   .segfld input,.segfld select{background:var(--panel);border:1px solid var(--line);border-radius:9px;color:var(--text);padding:9px 11px;font-size:14px;font-family:inherit}
   .segfld input:focus,.segfld select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(18,179,166,.12)}
   .seg-actions{display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap}
+  .seg-new.on{background:#e5f0fb;border-color:#c3ddf5;color:#2b7cd3;font-weight:600}
+  .seg-hint{width:100%;font-size:12.5px;color:#2b7cd3;background:#e5f0fb;border:1px solid #c3ddf5;border-radius:9px;padding:7px 11px;margin-top:4px;display:none}
+  .seg-hint.on{display:block}
   .seg-summary{font-size:13px}
   .seg-coverage{font-size:12px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
   .seg-coverage a{color:var(--accent2);cursor:pointer;text-decoration:underline}
@@ -211,6 +214,35 @@
   .admin-add{display:flex;gap:8px;margin-top:14px}
   .admin-add input{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:9px 12px;font-size:14px;font-family:inherit}
   .admin-add input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(18,179,166,.12)}
+  /* VIP */
+  .vip-add{position:relative}
+  .vip-suggest{position:absolute;left:0;right:0;top:calc(100% + 6px);background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(16,24,40,.14);max-height:320px;overflow:auto;z-index:20;display:none}
+  .vip-suggest.open{display:block}
+  .vip-sug{display:flex;align-items:center;gap:12px;padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--line)}
+  .vip-sug:last-child{border-bottom:none}
+  .vip-sug:hover{background:var(--panel2)}
+  .vip-sug.added{opacity:.5;cursor:default}
+  .vip-sug .nm{font-weight:600;font-size:14px}
+  .vip-sug .mt{font-size:12px;color:var(--muted);margin-top:2px}
+  .vip-sug .sp{margin-left:auto;font-size:13px;font-weight:700;color:var(--accent2);white-space:nowrap;font-variant-numeric:tabular-nums}
+  .vip-card{background:var(--panel);border:1px solid var(--line);border-left:3px solid #d4af37;border-radius:var(--radius);padding:14px 16px;margin-bottom:10px;box-shadow:var(--shadow);display:flex;gap:14px;align-items:flex-start}
+  .vip-card .left{flex:1;min-width:0}
+  .vip-nm{font-weight:700;font-size:16px;cursor:pointer;color:#1c2028}
+  .vip-nm:hover{color:var(--accent2)}
+  .vip-metrics{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .vip-m{font-size:12px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:4px 10px;white-space:nowrap}
+  .vip-m b{font-variant-numeric:tabular-nums;color:#1c2028}
+  .vip-next{margin-top:8px;font-size:13px;background:#eef8f2;border:1px solid #cdeadb;border-radius:9px;padding:6px 10px;color:#227a52}
+  .vip-note{margin-top:8px;font-size:13px;color:#7a5410;background:#fbf0da;border:1px solid #f0dbb0;border-radius:9px;padding:6px 10px;cursor:pointer}
+  .vip-note.empty{background:transparent;border:1px dashed var(--line);color:var(--muted)}
+  .vip-acts{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+  .vip-del{border:1px solid var(--line);background:var(--panel);color:var(--muted);cursor:pointer;font-size:12px;border-radius:8px;padding:6px 10px}
+  .vip-del:hover{border-color:#f2c9c9;color:var(--red);background:#fdf5f5}
+  .vip-star{color:#d4af37}
+  .vip-toggle{margin-top:8px;width:100%;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-family:inherit;font-size:13px;font-weight:600;cursor:pointer}
+  .vip-toggle:hover{border-color:#d4af37;color:#8a6d1f;background:#fdfaf0}
+  .vip-toggle.on{background:#fdf6e3;border-color:#e8d59a;color:#8a6d1f}
+  .warn-box{margin-top:12px;background:#fbf0da;border:1px solid #f0dbb0;color:#7a5410;border-radius:10px;padding:9px 12px;font-size:12.5px;line-height:1.45}
   /* журнал обзвона (Обзор) */
   .jr-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:22px 0 10px;flex-wrap:wrap}
   .jr-filters{display:flex;gap:8px}
@@ -245,6 +277,7 @@
     <button class="tab active" data-view="tasks">Задачи</button>
     <button class="tab" data-view="overview">Обзор</button>
     <button class="tab" data-view="clients">Клиенты</button>
+    <button class="tab" data-view="vip">⭐ VIP</button>
     <button class="tab" data-view="segments">Конструктор</button>
   </div>
   <button class="btn primary" id="connectBtn" style="display:none">🔌 Подключить YClients</button>
@@ -381,8 +414,11 @@
         <label class="segfld">Визитов ≥
           <input id="segMinVisits" type="number" min="1" value="1">
         </label>
-        <label class="segfld">Потрачено ≥, ₽
-          <input id="segMinSpent" type="number" min="0" value="0" step="1000">
+        <label class="segfld">Потратил всего от, ₽
+          <input id="segSpentFrom" type="number" min="0" placeholder="без ограничения" step="10000">
+        </label>
+        <label class="segfld">до, ₽
+          <input id="segSpentTo" type="number" min="0" placeholder="без ограничения" step="10000">
         </label>
         <label class="segfld">Комментарий содержит
           <input id="segComment" placeholder="напр. не звонить">
@@ -405,16 +441,33 @@
       </div>
       <div class="seg-actions">
         <button class="btn primary" id="segRun">Показать</button>
+        <button class="btn seg-new" id="segNew" title="Клиенты после первого визита — обзвонить за обратной связью (NPS)">🆕 NEW — первички</button>
         <button class="btn" id="segToList" disabled>➕ Вывести на дашборд</button>
-        <button class="btn" id="segExport" disabled>⭳ Экспорт CSV</button>
         <button class="btn" id="segReset">Сбросить</button>
         <span class="seg-summary muted" id="segSummary"></span>
+        <div class="seg-hint" id="segNewHint">🆕 Первичные клиенты: были в салоне ровно один раз и ещё не обработаны админом.
+          Цель звонка — обратная связь (NPS). Клиент уходит из списка сам: после второго визита или после любой отметки звонка.</div>
       </div>
       <div class="seg-coverage muted" id="segCoverage"></div>
     </div>
     <div class="card" style="margin-top:14px;padding:0">
-      <table id="segTable"><thead><tr><th>Клиент</th><th>Телефон</th><th>Совпадений</th><th>Всего визитов</th><th>Сумма</th><th>Последний</th><th>Мастера</th></tr></thead><tbody></tbody></table>
+      <table id="segTable"><thead><tr><th>Клиент</th><th>Телефон</th><th title="Услуг, попавших под условия выборки">Совпало услуг</th><th title="Походов в салон за всю историю (несколько услуг в один день = один визит)">Всего визитов</th><th>Потратил всего</th><th>Сумма по выборке</th><th>Последний</th><th>Мастера</th></tr></thead><tbody></tbody></table>
     </div>
+  </section>
+
+  <!-- VIP -->
+  <section id="view-vip" style="display:none">
+    <div class="card">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
+        Постоянный список. Клиент остаётся здесь, пока его не удалит администратор, и не попадает в выборки конструктора.
+      </div>
+      <div class="vip-add">
+        <input class="search" id="vipSearch" style="max-width:none" placeholder="Найти клиента по имени или телефону, чтобы добавить в VIP…">
+        <div id="vipSuggest" class="vip-suggest"></div>
+      </div>
+      <div class="seg-summary muted" id="vipSummary" style="margin-top:12px"></div>
+    </div>
+    <div id="vipList" style="margin-top:14px"></div>
   </section>
 
   <!-- КЛИЕНТЫ -->
@@ -438,6 +491,8 @@
     </div>
     <div class="cinfo" id="drawerInfo"></div>
     <div id="drawerComment" style="display:none" class="note-box"></div>
+    <div id="drawerWarn" style="display:none" class="warn-box"></div>
+    <button id="vipToggle" class="vip-toggle" onclick="toggleVipFromDrawer()"></button>
     <button id="dncToggle" class="dnc-toggle" onclick="toggleDnc()"></button>
   </div>
   <div class="body">
@@ -549,7 +604,10 @@ function reloadCurrentView(){
   else if(v==='segments'){ segLoaded=false; loadSegments(); }
   else loadTasks();
 }
-const rub = n => (n||0).toLocaleString('ru-RU') + ' ₽';
+const rub = n => Math.round(n||0).toLocaleString('ru-RU') + ' ₽';
+// «1 клиент / 2 клиента / 5 клиентов»
+const plural = (n,one,few,many) => { const a=Math.abs(n)%100, b=a%10;
+  return n+' '+(a>10&&a<20?many:b===1?one:b>=2&&b<=4?few:many); };
 const depTag = bal => !bal ? '' : bal>0
   ? ` <span class="dep-tag" title="Остаток депозита">💰 ${rub(bal)}</span>`
   : ` <span class="dep-tag debt" title="Долг (баланс в минусе)">⚠ ${rub(bal)}</span>`;
@@ -564,10 +622,11 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   t.classList.add('active');
   const v=t.dataset.view;
-  ['tasks','overview','clients','segments'].forEach(name=>$('#view-'+name).style.display = name===v?'':'none');
+  ['tasks','overview','clients','vip','segments'].forEach(name=>$('#view-'+name).style.display = name===v?'':'none');
   if(v==='tasks') loadTasks();
   if(v==='overview') loadOverview();
   if(v==='clients') loadClients();
+  if(v==='vip') loadVip();
   if(v==='segments') loadSegments();
 });
 
@@ -925,6 +984,95 @@ async function loadClients(q=''){
     </tr>`).join('') || '<tr><td colspan="6" class="empty">Ничего не найдено</td></tr>';
 }
 
+// --- VIP ---
+// Постоянный ручной список. Живёт, пока админ сам не удалит; из конструктора исключён.
+let vipIds=new Set();
+async function loadVip(){
+  const r=await api('/api/vip');
+  vipIds=new Set(r.items.map(i=>i.client_id));
+  $('#vipSummary').innerHTML = r.count
+    ? `В VIP: <b>${plural(r.count,'клиент','клиента','клиентов')}</b> · суммарно потратили ${rub(r.total_spent)}`
+    : '';
+  const box=$('#vipList');
+  if(!r.count){ box.innerHTML='<div class="empty">Пока пусто. Найдите клиента в поле выше и добавьте его в VIP.</div>'; return; }
+  box.innerHTML=r.items.map(v=>{
+    const br=(v.branches||[]).map(branchTag).join('');
+    const n=v.next_visit;
+    return `<div class="vip-card">
+      <div class="left">
+        <div class="vip-nm" onclick="openClient(${v.client_id})"><span class="vip-star">★</span> ${v.do_not_call?'🚫 ':''}${v.name||'Без имени'}${br}</div>
+        <div class="tmeta"><span class="phone">${v.phone||'—'}</span>${v.top_master?' · мастер: '+v.top_master:''} · <span class="status-badge st-${v.status}">${v.status_label}</span></div>
+        <div class="vip-metrics">
+          <span class="vip-m">потратил <b>${rub(v.spent)}</b></span>
+          <span class="vip-m">визитов <b>${v.visits}</b></span>
+          <span class="vip-m">средний чек <b>${rub(v.avg_check)}</b></span>
+          <span class="vip-m">последний <b>${fmtDate(v.last_visit)}</b>${v.since_last_days!=null?` (${v.since_last_days} дн.)`:''}</span>
+          ${v.deposit_balance?`<span class="vip-m">депозит <b>${rub(v.deposit_balance)}</b></span>`:''}
+          ${v.cards>1?`<span class="vip-m">карточек в YClients: <b>${v.cards}</b></span>`:''}
+        </div>
+        ${n?`<div class="vip-next">📅 Записан: ${n.service||'услуга'} · ${n.staff||'мастер'} · ${fmtDT(n.date)}${n.branch?' · '+n.branch:''}</div>`:''}
+        <div class="vip-note ${v.note?'':'empty'}" onclick="editVipNote(${v.client_id},'${q1(v.note)}')">${v.note?'💬 '+v.note:'+ заметка'}</div>
+      </div>
+      <div class="vip-acts">
+        <button class="btn" onclick="openClient(${v.client_id})">История</button>
+        <button class="vip-del" onclick="removeVip(${v.client_id},'${q1(v.name)}')">Убрать из VIP</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+let vipTimer;
+$('#vipSearch').oninput=e=>{clearTimeout(vipTimer);vipTimer=setTimeout(()=>vipSuggest(e.target.value),250);};
+async function vipSuggest(q){
+  const box=$('#vipSuggest');
+  if(!q.trim()){box.classList.remove('open');box.innerHTML='';return;}
+  const list=await api('/api/vip/search?q='+encodeURIComponent(q));
+  box.classList.add('open');
+  box.innerHTML = list.length ? list.map(c=>`
+    <div class="vip-sug ${c.added?'added':''}" ${c.added?'':`onclick="addVip(${c.id},'${q1(c.name)}')"`}>
+      <div>
+        <div class="nm">${c.name||'Без имени'}${(c.branches||[]).map(branchTag).join('')}</div>
+        <div class="mt">${c.phone||'—'} · ${c.visits} визитов · последний ${fmtDate(c.last_visit)}${c.added?' · уже в VIP':''}</div>
+      </div>
+      <div class="sp">${rub(c.spent)}</div>
+    </div>`).join('') : '<div class="vip-sug" style="cursor:default"><div class="mt">Никого не найдено</div></div>';
+}
+async function addVip(id,name){
+  await api('/api/vip',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({client_id:id,admin:currentAdmin()})});
+  $('#vipSearch').value='';$('#vipSuggest').classList.remove('open');
+  toast(`${name} — в VIP ⭐`);
+  await loadVip();
+}
+async function removeVip(id,name){
+  if(!confirm(`Убрать «${name}» из VIP? Клиент снова начнёт попадать в выборки конструктора.`)) return;
+  await api(`/api/vip/${id}`,{method:'DELETE'});
+  toast('Убран из VIP');
+  await loadVip();
+}
+async function editVipNote(id,current){
+  const note=prompt('Заметка по VIP-клиенту (пусто — убрать):',current||'');
+  if(note===null) return;
+  await api(`/api/vip/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({note})});
+  await loadVip();
+}
+// добавить/убрать VIP прямо из карточки клиента
+async function toggleVipFromDrawer(){
+  if(!drawerClientId) return;
+  const on=vipIds.has(drawerClientId);
+  if(on) await api(`/api/vip/${drawerClientId}`,{method:'DELETE'});
+  else await api('/api/vip',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({client_id:drawerClientId,admin:currentAdmin()})});
+  if(on) vipIds.delete(drawerClientId); else vipIds.add(drawerClientId);
+  renderVipToggle();
+  toast(on?'Убран из VIP':'Добавлен в VIP ⭐');
+  if(document.querySelector('.tab.active')?.dataset.view==='vip') loadVip();
+}
+function renderVipToggle(){
+  const b=$('#vipToggle'), on=vipIds.has(drawerClientId);
+  b.classList.toggle('on',on);
+  b.textContent = on ? '★ В VIP — убрать из списка' : '☆ Добавить в VIP';
+}
+
 // --- ЛЕНТА КЛИЕНТА ---
 let drawerClientId=null;
 async function toggleDnc(){
@@ -960,15 +1108,24 @@ async function openClient(id){
   const dt=$('#dncToggle');
   dt.classList.toggle('on', !!c.do_not_call);
   dt.textContent = c.do_not_call ? '✓ Не беспокоить — снять отметку' : '🚫 Отметить «не беспокоить»';
+  renderVipToggle();
+
+  // Почему статус может расходиться с ожиданиями админа — объясняем прямо в карточке
+  const warns=[];
+  if(s.unmarked) warns.push(`В YClients ${s.unmarked} ${s.unmarked===1?'запись с прошедшей датой, которой не проставили':'записей с прошедшей датой, которым не проставили'} посещаемость. Они не считаются ни визитом, ни будущей записью — из-за них суммы ниже реальных.`);
+  if(s.cards>1) warns.push(`У человека ${s.cards} карточки в YClients (${(c.branches||[]).join(', ')}) — визиты и деньги здесь сложены по обеим.`);
+  const wb=$('#drawerWarn');
+  if(warns.length){wb.innerHTML='⚠ '+warns.join('<br>⚠ ');wb.style.display='';} else wb.style.display='none';
 
   // плитки статистики. Настоящая сумма трат (из YClients, с депозитами) если известна, иначе по визитам
   const realSpent = c.yc_spent!=null ? c.yc_spent : s.total_spent;
   const spentLabel = c.yc_spent!=null ? 'Потрачено (с депозитом)' : 'Потрачено';
+  // визит = поход в салон; за один поход клиент берёт несколько услуг у разных мастеров
   const tiles = [
-    ['Визитов', s.total_visits],
-    ['Средний чек', rub(s.avg_check)],
+    ['Визитов' + (s.services_done>s.total_visits?` · ${s.services_done} услуг`:''), s.total_visits],
+    ['Средний чек за визит', rub(s.avg_check)],
     [spentLabel, rub(realSpent)],
-    ['Периодичность', c.avg_interval_days?'~'+Math.round(c.avg_interval_days)+' дн.':'—'],
+    ['Периодичность', s.avg_interval_days?'~'+Math.round(s.avg_interval_days)+' дн.':'—'],
     ['Не пришёл', s.no_show + (s.completion_rate!=null?` · ${s.completion_rate}% доходит`:'')],
     ['Не был', s.since_last_days!=null?s.since_last_days+' дн.':'—'],
   ];
@@ -1002,14 +1159,14 @@ async function openClient(id){
   $('#drawerInfo').innerHTML = [
     ['Приоритетный мастер', topMaster],
     ['Телефон', c.phone?`<a href="tel:+${String(c.phone).replace(/\D/g,'')}">${c.phone}</a>`:'—'],
-    ['Филиал', c.branch||'—'],
-    ['Последний визит', daysAgoTxt(c.last_visit)],
-    ['Прогноз следующего', fmtDate(c.predicted_next)],
+    ['Филиал', (c.branches&&c.branches.length?c.branches.join(', '):c.branch)||'—'],
+    ['Последний визит', daysAgoTxt(s.last_visit)],
+    ['Прогноз следующего', fmtDate(s.predicted_next)],
   ].map(([k,v])=>`<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
 
-  const STAT={completed:'выполнен',upcoming:'предстоит',no_show:'не пришёл',cancelled:'отменён'};
+  const STAT={completed:'выполнен',upcoming:'предстоит',no_show:'не пришёл',cancelled:'отменён',unmarked:'не отмечен в YClients'};
   $('#timeline').innerHTML = timeline.map(e=>{
-    if(e.kind==='visit') return `<div class="ev visit"><div class="d">${fmtDT(e.date)}</div><div class="t">${e.title}${e.status!=='completed'?`<span class="pill">${STAT[e.status]||e.status}</span>`:''}</div><div class="s">${e.staff||''}${e.cost?' · '+rub(e.cost):''}</div></div>`;
+    if(e.kind==='visit') return `<div class="ev visit"><div class="d">${fmtDT(e.date)}${e.branch?' · '+e.branch:''}</div><div class="t">${e.title}${e.status!=='completed'?`<span class="pill">${STAT[e.status]||e.status}</span>`:''}</div><div class="s">${e.staff||''}${e.cost?' · '+rub(e.cost):''}</div></div>`;
     if(e.kind==='call'){const R={booked:'записал',callback:'перезвонить',no_answer:'не ответил',refused:'отказ'};
       return `<div class="ev call"><div class="d">${fmtDT(e.date)} · ${e.admin||''}</div><div class="t">Звонок${e.result?` — ${R[e.result]||e.result}`:''}</div>${e.note?`<div class="s">«${e.note}»</div>`:''}</div>`;}
     return `<div class="ev task"><div class="d">${fmtDT(e.date)}</div><div class="t">Задача: ${e.type_label} <span class="pill">${e.status}</span></div><div class="s">${e.reason||''}</div></div>`;
@@ -1047,14 +1204,17 @@ async function syncComments(){
   await api('/api/sync-comments?full=1',{method:'POST'});
   toast('Запущено в фоне — комментарии подтянутся постепенно');
 }
+let segPresetNew=false;
 function currentFilter(){
   const f={};
+  if(segPresetNew) f.preset='new';
   const service=$('#segService').value.trim(); if(service)f.service=service;
   const staff=$('#segStaff').value.trim(); if(staff)f.staff=staff;
   const from=$('#segFrom').value; if(from)f.from=from;
   const to=$('#segTo').value; if(to)f.to=to;
   const mv=$('#segMinVisits').value; if(mv&&mv!=='1')f.min_visits=mv;
-  const ms=$('#segMinSpent').value; if(ms&&ms!=='0')f.min_spent=ms;
+  const sf=$('#segSpentFrom').value; if(sf&&Number(sf)>0)f.spent_from=sf;
+  const st=$('#segSpentTo').value; if(st&&Number(st)>0)f.spent_to=st;
   const cm=$('#segComment').value.trim(); if(cm)f.comment=cm;
   const dnc=$('#segDnc').value; if(dnc)f.dnc=dnc;
   const dep=$('#segDeposit').value; if(dep)f.deposit=dep;
@@ -1062,12 +1222,13 @@ function currentFilter(){
   return f;
 }
 function filterLabel(f){
+  if(f.preset==='new') return 'NEW — первички (NPS)';
   const parts=[];
   if(f.service)parts.push('«'+f.service+'»');
   if(f.staff)parts.push('мастер '+f.staff);
   if(f.from||f.to)parts.push(`${f.from||'…'}–${f.to||'…'}`);
   if(f.min_visits)parts.push('визитов≥'+f.min_visits);
-  if(f.min_spent)parts.push('от '+f.min_spent+'₽');
+  if(f.spent_from||f.spent_to)parts.push(`траты ${f.spent_from?rub(f.spent_from):'…'}–${f.spent_to?rub(f.spent_to):'…'}`);
   if(f.comment)parts.push('коммент «'+f.comment+'»');
   if(f.dnc==='only')parts.push('не беспокоить');
   if(f.deposit==='only')parts.push('депозитники');
@@ -1082,31 +1243,27 @@ async function runSegment(){
   if(myReq!==segReq) return; // пришёл устаревший ответ — игнорируем
   b.textContent='Показать';b.disabled=false;
   segResults=r.clients;
-  $('#segSummary').textContent = `Найдено: ${r.count} клиентов · ${r.total_visits_matched} совпадающих визитов · ${rub(r.total_spent_matched)}`;
-  $('#segExport').disabled = r.count===0;
+  $('#segSummary').innerHTML = segPresetNew
+    ? `Первичек к обзвону: <b>${r.count}</b> · принесли ${rub(r.total_spent_lifetime)}`
+    : `Найдено: <b>${plural(r.count,'клиент','клиента','клиентов')}</b> · ${r.total_visits_matched} совпадающих визитов · `
+      + `по выборке ${rub(r.total_spent_matched)} · всего потратили ${rub(r.total_spent_lifetime)}`
+      + (r.without_sums?` <span style="color:var(--amber)">· у ${r.without_sums} суммы нет в базе</span>`:'');
   $('#segToList').disabled = r.count===0;
   const tb=$('#segTable tbody');
-  tb.innerHTML = r.clients.map(c=>`
-    <tr class="crow" onclick="openClient(${c.id})">
-      <td title="${(c.comment||'').replace(/"/g,'&quot;')}">${c.do_not_call?'🚫 ':''}${c.name||'—'}${branchTag(c.branch)}${depTag(c.deposit_balance)}</td>
+  // одна строка = один человек: карточки филиалов склеены, суммы сложены
+  tb.innerHTML = r.clients.map(c=>{
+    const br=(c.branches&&c.branches.length>1)?c.branches.map(branchTag).join(''):branchTag(c.branch);
+    return `<tr class="crow" onclick="openClient(${c.id})">
+      <td title="${(c.comment||'').replace(/"/g,'&quot;')}">${c.do_not_call?'🚫 ':''}${c.name||'—'}${br}${depTag(c.deposit_balance)}</td>
       <td class="phone">${c.phone||'—'}</td>
       <td><b>${c.match_visits}</b></td>
       <td>${c.total_visits||0}</td>
+      <td><b>${rub(c.real_spent)}</b></td>
       <td>${rub(c.match_spent)}</td>
       <td>${fmtDate(c.last_match)}</td>
       <td class="muted" style="font-size:12px">${(c.masters||'').split(',').slice(0,3).join(', ')}</td>
-    </tr>`).join('') || '<tr><td colspan="7" class="empty">Ничего не найдено под эти условия</td></tr>';
-}
-function exportCSV(){
-  if(!segResults.length) return;
-  const head=['Клиент','Телефон','Совпадений','Всего визитов','Сумма','Последний визит','Мастера'];
-  const rows=segResults.map(c=>[c.name,`'`+(c.phone||''),c.match_visits,c.total_visits,c.match_spent,fmtDate(c.last_match),(c.masters||'').replace(/,/g,'; ')]);
-  const esc=v=>`"${String(v==null?'':v).replace(/"/g,'""')}"`;
-  const csv='﻿'+[head,...rows].map(r=>r.map(esc).join(';')).join('\r\n');
-  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-  a.download=`vyborka_${new Date().toISOString().slice(0,10)}.csv`;a.click();URL.revokeObjectURL(a.href);
-  toast(`Выгружено ${segResults.length} клиентов`);
+    </tr>`;
+  }).join('') || '<tr><td colspan="8" class="empty">Ничего не найдено под эти условия</td></tr>';
 }
 async function deepSync(months){
   if(!confirm(`Загрузить историю за ${months} мес.? Это может занять несколько минут.`)) return;
@@ -1132,14 +1289,21 @@ async function createListFromFilter(){
   }catch(e){toast('Не удалось создать список');}
 }
 $('#segRun').onclick=runSegment;
-$('#segExport').onclick=exportCSV;
 $('#segToList').onclick=createListFromFilter;
+// NEW — готовый пресет первичек для NPS-обзвона. Остальные фильтры продолжают работать
+// поверх него (можно сузить филиалом, услугой или периодом первого визита).
+$('#segNew').onclick=()=>{
+  segPresetNew=!segPresetNew;
+  $('#segNew').classList.toggle('on',segPresetNew);
+  $('#segNewHint').classList.toggle('on',segPresetNew);
+  clearTimeout(segTimer); runSegment();
+};
 // Автопоиск при вводе любого критерия (с задержкой), чтобы список появлялся сразу
 let segTimer;
 const segAuto=()=>{clearTimeout(segTimer);segTimer=setTimeout(runSegment,350);};
-['segService','segStaff','segFrom','segTo','segMinVisits','segMinSpent','segComment'].forEach(id=>$('#'+id).addEventListener('input',segAuto));
+['segService','segStaff','segFrom','segTo','segMinVisits','segSpentFrom','segSpentTo','segComment'].forEach(id=>$('#'+id).addEventListener('input',segAuto));
 ['segFrom','segTo','segDnc','segDeposit'].forEach(id=>$('#'+id).addEventListener('change',segAuto));
-$('#segReset').onclick=()=>{clearTimeout(segTimer);['segService','segStaff','segFrom','segTo','segComment','segDnc','segDeposit'].forEach(id=>$('#'+id).value='');$('#segMinVisits').value='1';$('#segMinSpent').value='0';$('#segSummary').textContent='';$('#segTable tbody').innerHTML='';$('#segExport').disabled=true;$('#segToList').disabled=true;segResults=[];};
+$('#segReset').onclick=()=>{clearTimeout(segTimer);['segService','segStaff','segFrom','segTo','segComment','segDnc','segDeposit','segSpentFrom','segSpentTo'].forEach(id=>$('#'+id).value='');$('#segMinVisits').value='1';segPresetNew=false;$('#segNew').classList.remove('on');$('#segNewHint').classList.remove('on');$('#segSummary').textContent='';$('#segTable tbody').innerHTML='';$('#segToList').disabled=true;segResults=[];};
 
 // --- Синхронизация ---
 $('#syncBtn').onclick = async ()=>{
@@ -1170,6 +1334,7 @@ $('#adminNewName').onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); add
 // Старт
 loadAdmins();
 loadBranches();
+loadVip();   // нужен vipIds, чтобы кнопка ★ в карточке клиента знала своё состояние
 loadTasks();
 </script>
 </body>

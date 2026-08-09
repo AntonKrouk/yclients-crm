@@ -8,6 +8,7 @@ const { db } = require('./src/db');
 const sync = require('./src/sync');
 const telegram = require('./src/telegram');
 const yc = require('./src/yclients');
+const people = require('./src/people');
 
 const app = express();
 app.use(express.json());
@@ -228,6 +229,96 @@ app.get('/api/services-list', (req, res) => {
   res.json(list);
 });
 
+// --- VIP-клиенты ---------------------------------------------------------------
+// Ручной постоянный список: клиент лежит здесь, пока админ сам его не удалит.
+// Такие клиенты ведутся персонально, поэтому из конструктора выборок исключаются —
+// вместе со «вторыми» карточками того же человека в другом филиале.
+
+const vipRows = () => db.prepare(`
+  SELECT v.client_id, v.note, v.added_by, v.added_at, c.name, c.phone, c.last_visit, c.visits_count
+  FROM vip_clients v JOIN clients c ON c.id = v.client_id
+`).all();
+
+// Ключи людей (по телефону), которые в VIP — чтобы отсечь и дубли по филиалам
+function vipPersonKeys() {
+  return new Set(vipRows().map(r => people.personKey({ id: r.client_id, phone: r.phone })));
+}
+
+app.get('/api/vip', (req, res) => {
+  const rows = vipRows();
+  // ближайшая будущая запись — по всем карточкам человека
+  const nextVisit = (ids) => db.prepare(`SELECT date, service, staff, branch FROM visits
+    WHERE client_id IN (${ids.map(() => '?').join(',')}) AND status='upcoming' AND date >= datetime('now')
+    ORDER BY date ASC LIMIT 1`).get(...ids);
+  const items = rows.map(r => {
+    const p = loadPerson(r.client_id);
+    if (!p) return null;
+    const s = computeClientStats(p.client.id, p.client, p.ids);
+    return {
+      client_id: r.client_id,
+      name: p.client.name, phone: p.client.phone,
+      branches: p.client.branches, cards: p.ids.length,
+      note: r.note || '', added_by: r.added_by || '', added_at: r.added_at,
+      do_not_call: p.client.do_not_call,
+      deposit_balance: p.client.yc_balance || 0,
+      visits: s.total_visits,
+      spent: p.client.yc_spent != null ? p.client.yc_spent : s.total_spent,
+      avg_check: s.avg_check,
+      last_visit: s.last_visit,
+      since_last_days: s.since_last_days,
+      status: s.status, status_label: s.status_label,
+      top_master: s.masters[0] && s.masters[0].name !== '—' ? s.masters[0].name : '',
+      next_visit: nextVisit(p.ids) || null,
+    };
+  }).filter(Boolean);
+  items.sort((a, b) => (b.spent || 0) - (a.spent || 0));
+  res.json({ count: items.length, total_spent: items.reduce((s, i) => s + (i.spent || 0), 0), items });
+});
+
+app.post('/api/vip', (req, res) => {
+  const clientId = Number(req.body?.client_id);
+  const client = db.prepare('SELECT id FROM clients WHERE id=?').get(clientId);
+  if (!client) return res.status(404).json({ error: 'Клиент не найден' });
+  db.prepare(`INSERT INTO vip_clients(client_id, note, added_by, added_at) VALUES(?,?,?,?)
+              ON CONFLICT(client_id) DO UPDATE SET note=excluded.note`)
+    .run(clientId, (req.body?.note || '').trim(), (req.body?.admin || '').trim() || null, new Date().toISOString());
+  res.json({ ok: true });
+});
+
+app.patch('/api/vip/:clientId', (req, res) => {
+  db.prepare('UPDATE vip_clients SET note=? WHERE client_id=?')
+    .run((req.body?.note || '').trim(), Number(req.params.clientId));
+  res.json({ ok: true });
+});
+
+app.delete('/api/vip/:clientId', (req, res) => {
+  const n = db.prepare('DELETE FROM vip_clients WHERE client_id=?').run(Number(req.params.clientId)).changes;
+  res.json({ ok: true, removed: n });
+});
+
+// Поиск кандидатов в VIP: имя/телефон, один человек — одна строка, уже добавленные помечены
+app.get('/api/vip/search', (req, res) => {
+  const q = `%${(req.query.q || '').toLowerCase().trim()}%`;
+  if (q === '%%') return res.json([]);
+  const rows = db.prepare(`
+    SELECT id, name, phone, branch, visits_count, last_visit, COALESCE(yc_spent, spent, 0) AS real_spent
+    FROM clients WHERE lower_u(name) LIKE ? OR phone LIKE ?
+    ORDER BY visits_count DESC LIMIT 200`).all(q, q);
+  const inVip = new Set(vipRows().map(r => r.client_id));
+  const out = people.groupByPerson(rows).map(cards => ({
+    id: cards[0].id,
+    name: cards[0].name,
+    phone: cards[0].phone,
+    branches: [...new Set(cards.map(c => c.branch).filter(Boolean))],
+    visits: cards.reduce((s, c) => s + (c.visits_count || 0), 0),
+    spent: cards.reduce((s, c) => s + (c.real_spent || 0), 0),
+    last_visit: cards.map(c => c.last_visit).filter(Boolean).sort().pop() || null,
+    added: cards.some(c => inVip.has(c.id)),
+  }));
+  out.sort((a, b) => (b.spent - a.spent) || (b.visits - a.visits));
+  res.json(out.slice(0, 30));
+});
+
 // Общий запрос выборки клиентов по фильтрам — используется и в /api/segments, и при создании списков
 function querySegment(f = {}) {
   const service = (f.service || '').toLowerCase().trim();
@@ -235,7 +326,12 @@ function querySegment(f = {}) {
   const from = (f.from || '').trim();
   const to = (f.to || '').trim();
   const minVisits = Math.max(1, Number(f.min_visits) || 1);
-  const minSpent = Math.max(0, Number(f.min_spent) || 0);
+  // Диапазон «сколько человек потратил всего» — как фильтр по пробегу у авто.
+  // Считается по ПОЛНОЙ сумме человека (все карточки, все филиалы), а не по сумме
+  // попавших в выборку визитов: иначе «клиенты от 300 тыс.» отсекались бы фильтром услуги.
+  // min_spent оставлен для совместимости со списками, созданными до появления диапазона.
+  const spentFrom = Math.max(0, Number(f.spent_from) || Number(f.min_spent) || 0);
+  const spentTo = Number(f.spent_to) > 0 ? Number(f.spent_to) : Infinity;
   const branch = (f.branch || '').trim();
   const comment = (f.comment || '').toLowerCase().trim();
   const dnc = (f.dnc || '').trim(); // '' = исключить «не беспокоить» (по умолч.) | 'all' = включая | 'only' = только они
@@ -255,9 +351,18 @@ function querySegment(f = {}) {
   if (dnc === 'only') conds.push('COALESCE(c.do_not_call,0) = 1');
   else if (dnc !== 'all') conds.push('COALESCE(c.do_not_call,0) = 0');
 
+  // VIP ведут персонально — в выборки конструктора они не попадают вовсе
+  conds.push('c.id NOT IN (SELECT client_id FROM vip_clients)');
+
+  // Пресет NEW: первички для NPS-обзвана. Человек считается «новым», пока у него ровно один
+  // визит И его ещё не обработал админ. Статус снимается сам — вторым визитом или любой
+  // отметкой звонка из дашборда (она же уходит комментарием в карточку YClients).
+  const isNew = (f.preset || '').trim() === 'new';
+
   const sql = `
     SELECT c.id, c.name, c.phone, c.branch, c.comment, COALESCE(c.do_not_call,0) AS do_not_call,
-           c.visits_count AS total_visits, COALESCE(c.yc_spent, c.spent) AS real_spent, COALESCE(c.yc_balance,0) AS deposit_balance,
+           c.visits_count AS total_visits, c.last_visit,
+           COALESCE(c.yc_spent, c.spent, 0) AS real_spent, COALESCE(c.yc_balance,0) AS deposit_balance,
            COUNT(v.id) AS match_visits,
            MAX(v.date) AS last_match,
            ROUND(SUM(v.cost)) AS match_spent,
@@ -265,20 +370,54 @@ function querySegment(f = {}) {
     FROM clients c JOIN visits v ON v.client_id = c.id
     WHERE ${conds.join(' AND ')}
     GROUP BY c.id
-    HAVING match_visits >= ? AND match_spent >= ?
-    ORDER BY match_visits DESC, match_spent DESC
-    LIMIT 5000`;
-  params.push(minVisits, minSpent);
-  return db.prepare(sql).all(...params);
+    LIMIT 20000`;
+  const rows = db.prepare(sql).all(...params);
+
+  // Склейка карточек одного человека + отсев тех, у кого VIP-карточка в другом филиале
+  const vipKeys = vipPersonKeys();
+  // «уже обработан админом» — есть хоть одна отметка звонка в ленте клиента
+  const handled = isNew
+    ? new Set(db.prepare('SELECT DISTINCT client_id FROM task_actions').all().map(r => r.client_id))
+    : null;
+  const merged = [];
+  for (const cards of people.groupByPerson(rows)) {
+    if (vipKeys.has(people.personKey(cards[0]))) continue;
+    if (isNew && cards.some(c => handled.has(c.id))) continue;
+    const base = { ...cards[0] };
+    if (cards.length > 1) {
+      base.cards = cards.length;
+      base.branches = [...new Set(cards.map(c => c.branch).filter(Boolean))];
+      base.match_visits = cards.reduce((s, c) => s + c.match_visits, 0);
+      base.match_spent = cards.reduce((s, c) => s + (c.match_spent || 0), 0);
+      base.total_visits = cards.reduce((s, c) => s + (c.total_visits || 0), 0);
+      base.real_spent = cards.reduce((s, c) => s + (c.real_spent || 0), 0);
+      base.deposit_balance = cards.reduce((s, c) => s + (c.deposit_balance || 0), 0);
+      base.last_match = cards.map(c => c.last_match).sort().pop();
+      base.masters = [...new Set(cards.flatMap(c => (c.masters || '').split(',')).filter(Boolean))].join(',');
+      base.do_not_call = cards.some(c => c.do_not_call) ? 1 : 0;
+    }
+    if (base.match_visits < minVisits) continue;
+    if (base.real_spent < spentFrom || base.real_spent > spentTo) continue;
+    // NEW: ровно один визит за всю историю человека (по обеим карточкам)
+    if (isNew && (base.total_visits || 0) !== 1) continue;
+    merged.push(base);
+  }
+  // первички сортируем от самых свежих — по ним обратная связь ценнее всего
+  if (isNew) merged.sort((a, b) => String(b.last_match || '').localeCompare(String(a.last_match || '')));
+  else merged.sort((a, b) => (b.real_spent - a.real_spent) || (b.match_visits - a.match_visits));
+  return merged.slice(0, 5000);
 }
 
-// Выборка клиентов по фильтрам (услуга / период / мастер / число визитов)
+// Выборка клиентов по фильтрам (услуга / период / мастер / визиты / сумма трат)
 app.get('/api/segments', (req, res) => {
   const clients = querySegment(req.query);
+  const noSums = clients.filter(c => !c.real_spent).length;
   res.json({
     count: clients.length,
     total_visits_matched: clients.reduce((s, r) => s + r.match_visits, 0),
     total_spent_matched: clients.reduce((s, r) => s + (r.match_spent || 0), 0),
+    total_spent_lifetime: clients.reduce((s, r) => s + (r.real_spent || 0), 0),
+    without_sums: noSums,
     clients,
   });
 });
@@ -621,16 +760,41 @@ app.get('/api/clients', (req, res) => {
   res.json(rows);
 });
 
-// Подробная статистика по одному клиенту (из его визитов и звонков)
-function computeClientStats(id, client) {
-  const visits = db.prepare('SELECT date, service, staff, cost, status FROM visits WHERE client_id = ?').all(id);
+// --- Человек = все его карточки ------------------------------------------------
+// В YClients у клиента отдельная карточка в каждом филиале (разный id, один телефон).
+// Карточка в дашборде должна показывать человека целиком, иначе визиты и деньги
+// оказываются вдвое меньше, чем в YClients.
+function personCards(client) {
+  const d = people.normPhone(client.phone);
+  if (!people.isRealPhone(d)) return [client];
+  const rows = db.prepare(`SELECT * FROM clients WHERE replace(replace(replace(replace(phone,' ',''),'-',''),'(',''),')','') LIKE ?`)
+    .all('%' + d.slice(-10));
+  const same = rows.filter(r => people.personKey(r) === people.personKey(client));
+  return same.length ? same : [client];
+}
+
+// Подробная статистика по клиенту. ids — все карточки человека (обычно одна, у «двухфилиальных» две)
+function computeClientStats(id, client, ids = [id]) {
+  const ph = ids.map(() => '?').join(',');
+  const visits = db.prepare(`SELECT date, service, staff, cost, status FROM visits WHERE client_id IN (${ph})`).all(...ids);
   const completed = visits.filter(v => v.status === 'completed');
-  const noShow = visits.filter(v => v.status === 'no_show').length;
   const cancelled = visits.filter(v => v.status === 'cancelled').length;
-  const upcoming = visits.filter(v => v.status === 'upcoming').length;
+  // «Записан» — ТОЛЬКО будущая запись. Записи с прошедшей датой, которым в YClients так и не
+  // проставили посещаемость (attendance 0/2), навсегда остаются в статусе upcoming: карточка
+  // из-за них показывала «Записан», а движок задач (он смотрит date >= now) справедливо
+  // ставил «пора записать». Отсюда и расхождение — считаем их отдельно, как «не отмечены».
+  const nowMs = Date.now();
+  const isFuture = v => new Date(v.date).getTime() >= nowMs;
+  const upcoming = visits.filter(v => v.status === 'upcoming' && isFuture(v)).length;
+  const unmarked = visits.filter(v => v.status === 'upcoming' && !isFuture(v)).length;
+
+  // Визит = поход в салон (календарный день): за один поход клиент берёт несколько услуг
+  // у разных мастеров, и каждая приезжает из YClients отдельной записью.
+  const trips = sync.toTrips(completed);
+  const noShowTrips = sync.toTrips(visits.filter(v => v.status === 'no_show')).length;
 
   const totalSpent = completed.reduce((s, v) => s + (v.cost || 0), 0);
-  const avgCheck = completed.length ? Math.round(totalSpent / completed.length) : 0;
+  const avgCheck = trips.length ? Math.round(totalSpent / trips.length) : 0;
 
   // разбивка по услугам и мастерам: полный список с долей от всех визитов (в %)
   const group = (key) => {
@@ -653,33 +817,45 @@ function computeClientStats(id, client) {
     months.push({ key, label: d.toLocaleDateString('ru-RU', { month: 'short' }), count: 0 });
   }
   const mMap = new Map(months.map(m => [m.key, m]));
-  completed.forEach(v => {
-    const dt = new Date(v.date);
-    const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+  trips.forEach(t => {                       // по походам, а не по строкам-услугам
+    const key = t.day.slice(0, 7);
     if (mMap.has(key)) mMap.get(key).count++;
   });
 
+  // Периодичность и прогноз считаем по СЛИТОЙ истории человека, а не по одной карточке:
+  // иначе у «двухфилиального» клиента интервал получается из трёх визитов одного филиала.
+  const freq = sync.computeFrequency(visits) || {};
+  const lastVisit = freq.last_visit || client.last_visit;
+  const avgInterval = freq.avg_interval_days ?? client.avg_interval_days;
+  const predictedNext = freq.predicted_next || client.predicted_next;
+
   // статус клиента по той же логике, что и правила
   const DAY = 86400000;
-  const sinceLast = client.last_visit ? Math.round((Date.now() - new Date(client.last_visit)) / DAY) : null;
+  const sinceLast = lastVisit ? Math.round((Date.now() - new Date(lastVisit)) / DAY) : null;
   let status = 'new', statusLabel = 'Новый';
-  if (client.avg_interval_days && sinceLast != null) {
+  if (avgInterval && sinceLast != null) {
     if (upcoming > 0) { status = 'booked'; statusLabel = 'Записан'; }
-    else if (sinceLast > client.avg_interval_days * 2) { status = 'churn'; statusLabel = 'Уходит'; }
-    else if (client.predicted_next && Date.now() > new Date(client.predicted_next).getTime() + 3 * DAY) { status = 'due'; statusLabel = 'Пора записать'; }
+    else if (sinceLast > avgInterval * 2) { status = 'churn'; statusLabel = 'Уходит'; }
+    else if (predictedNext && Date.now() > new Date(predictedNext).getTime() + 3 * DAY) { status = 'due'; statusLabel = 'Пора записать'; }
     else { status = 'active'; statusLabel = 'Активен'; }
   } else if (upcoming > 0) { status = 'booked'; statusLabel = 'Записан'; }
 
-  const attended = completed.length + noShow;
+  const attended = trips.length + noShowTrips;
   return {
-    total_visits: completed.length,
-    no_show: noShow,
+    total_visits: trips.length,          // походов в салон
+    services_done: completed.length,     // оказанных услуг (строк-записей)
+    no_show: noShowTrips,
     cancelled,
     upcoming,
-    completion_rate: attended ? Math.round((completed.length / attended) * 100) : null,
+    unmarked,
+    cards: ids.length,
+    completion_rate: attended ? Math.round((trips.length / attended) * 100) : null,
     total_spent: totalSpent,
     avg_check: avgCheck,
     since_last_days: sinceLast,
+    last_visit: lastVisit || null,
+    avg_interval_days: avgInterval ?? null,
+    predicted_next: predictedNext || null,
     services: group('service'),
     masters: group('staff'),
     months,
@@ -688,33 +864,60 @@ function computeClientStats(id, client) {
   };
 }
 
+// Карточка человека целиком: сам клиент + сводка по всем его карточкам (филиалам)
+function loadPerson(id) {
+  const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(Number(id));
+  if (!client) return null;
+  const cards = personCards(client);
+  const ids = cards.map(c => c.id);
+  // деньги и депозит из YClients суммируем по всем карточкам человека
+  const ycSpent = cards.reduce((s, c) => s + (c.yc_spent ?? 0), 0);
+  const hasYcSpent = cards.some(c => c.yc_spent != null);
+  const merged = {
+    ...client,
+    yc_spent: hasYcSpent ? ycSpent : null,
+    yc_balance: cards.reduce((s, c) => s + (c.yc_balance || 0), 0),
+    branches: cards.map(c => c.branch).filter(Boolean),
+    // комментарии админов бывают в обеих карточках — показываем оба
+    comment: [...new Set(cards.map(c => c.comment).filter(Boolean))].join('\n'),
+    do_not_call: cards.some(c => c.do_not_call) ? 1 : 0,
+  };
+  return { client: merged, ids, cards };
+}
+
 app.get('/api/clients/:id/stats', (req, res) => {
-  const id = Number(req.params.id);
-  const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(id);
-  if (!client) return res.status(404).json({ error: 'client not found' });
-  res.json({ client, stats: computeClientStats(id, client) });
+  const p = loadPerson(req.params.id);
+  if (!p) return res.status(404).json({ error: 'client not found' });
+  res.json({ client: p.client, stats: computeClientStats(p.client.id, p.client, p.ids) });
 });
 
-// Единая лента событий клиента: визиты + звонки/заметки + статистика
+// Единая лента событий клиента: визиты + звонки/заметки + статистика.
+// Собирается по ВСЕМ карточкам человека, чтобы визиты из второго филиала не терялись.
 app.get('/api/clients/:id/timeline', (req, res) => {
-  const id = Number(req.params.id);
-  const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(id);
-  if (!client) return res.status(404).json({ error: 'client not found' });
+  const p = loadPerson(req.params.id);
+  if (!p) return res.status(404).json({ error: 'client not found' });
+  const ph = p.ids.map(() => '?').join(',');
+  const nowMs = Date.now();
 
-  const visits = db.prepare('SELECT date, service, staff, cost, status FROM visits WHERE client_id = ?').all(id)
-    .map(v => ({ kind: 'visit', date: v.date, status: v.status, title: v.service || 'Визит', staff: v.staff, cost: v.cost }));
+  const visits = db.prepare(`SELECT date, service, staff, cost, status, branch FROM visits WHERE client_id IN (${ph})`).all(...p.ids)
+    .map(v => ({
+      kind: 'visit', date: v.date,
+      // прошедшая запись, которой не проставили посещаемость в YClients — не «предстоит»
+      status: (v.status === 'upcoming' && new Date(v.date).getTime() < nowMs) ? 'unmarked' : v.status,
+      title: v.service || 'Визит', staff: v.staff, cost: v.cost, branch: v.branch,
+    }));
 
   const actions = db.prepare(`
     SELECT a.created_at AS date, a.admin, a.result, a.note, t.type
     FROM task_actions a LEFT JOIN tasks t ON t.id = a.task_id
-    WHERE a.client_id = ?
-  `).all(id).map(a => ({ kind: 'call', date: a.date, admin: a.admin, result: a.result, note: a.note, task_type: a.type }));
+    WHERE a.client_id IN (${ph})
+  `).all(...p.ids).map(a => ({ kind: 'call', date: a.date, admin: a.admin, result: a.result, note: a.note, task_type: a.type }));
 
-  const tasks = db.prepare(`SELECT id, type, status, reason, created_at AS date FROM tasks WHERE client_id = ?`).all(id)
+  const tasks = db.prepare(`SELECT id, type, status, reason, created_at AS date FROM tasks WHERE client_id IN (${ph})`).all(...p.ids)
     .map(t => ({ kind: 'task', date: t.date, type: t.type, type_label: TYPE_LABEL[t.type] || t.type, status: t.status, reason: t.reason }));
 
   const timeline = [...visits, ...actions, ...tasks].sort((a, b) => new Date(b.date) - new Date(a.date));
-  res.json({ client, stats: computeClientStats(id, client), timeline });
+  res.json({ client: p.client, stats: computeClientStats(p.client.id, p.client, p.ids), timeline });
 });
 
 // --- Дашборд владельца -------------------------------------------------------
@@ -811,6 +1014,16 @@ async function bootstrap() {
   }
   db.prepare('INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
     .run('mode', mode);
+
+  // Разовая починка агрегатов, испорченных прежней логикой «считаем по окну синка»:
+  // у 600+ клиентов visits_count/spent были занижены (а у не заходивших год — обнулены),
+  // хотя вся история лежит в visits. Пересчитываем по локальной истории один раз.
+  // v2 — заодно переводит visits_count на «походы в салон» (календарные дни) вместо строк-услуг
+  if (!db.prepare("SELECT value FROM meta WHERE key='aggregates_rebuilt_v2'").get()) {
+    const fixed = sync.rebuildAggregates();
+    db.prepare("INSERT INTO meta(key,value) VALUES('aggregates_rebuilt_v2',?)").run(String(fixed));
+    console.log(`[bootstrap] агрегаты пересчитаны по полной истории: клиентов ${fixed}`);
+  }
 
   const n = db.prepare('SELECT COUNT(*) n FROM clients').get().n;
   if (n === 0) {

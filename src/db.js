@@ -116,6 +116,16 @@ db.exec(`
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_services_uniq ON services(company_id, yc_id);
 
+  -- VIP-клиенты: постоянный ручной список. Живёт, пока админ сам не удалит запись.
+  -- Такие клиенты не должны попадать в выборки конструктора — их ведут персонально.
+  CREATE TABLE IF NOT EXISTS vip_clients (
+    id         INTEGER PRIMARY KEY,
+    client_id  INTEGER UNIQUE REFERENCES clients(id),
+    note       TEXT,
+    added_by   TEXT,
+    added_at   TEXT
+  );
+
   -- Администраторы (редактируемый список) — для выбора «кто звонил» при фиксации звонка
   CREATE TABLE IF NOT EXISTS admins (
     id     INTEGER PRIMARY KEY,
@@ -149,6 +159,9 @@ ensureColumn('clients', 'dnc_manual', 'INTEGER');
 // Настоящие деньги из карточки YClients (с учётом депозитов) + остаток депозита
 ensureColumn('clients', 'yc_spent', 'REAL');
 ensureColumn('clients', 'yc_balance', 'REAL');
+// Сколько строк-услуг стоит за визитами: visits_count теперь = походы в салон (календарные дни),
+// а за один поход клиент берёт несколько услуг у разных мастеров — держим оба числа.
+ensureColumn('clients', 'services_count', 'INTEGER');
 
 // Одноразовый сброс под режим «не больше 10 открытых задач на филиал»:
 // старый движок навалил сотни открытых задач — снимаем их, дальше держим по лимиту
