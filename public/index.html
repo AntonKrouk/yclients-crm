@@ -1419,7 +1419,7 @@ async function openClient(id){
     ['Филиал', (c.branches&&c.branches.length?c.branches.join(', '):c.branch)||'—'],
     ['Последний визит', daysAgoTxt(s.last_visit)],
     ['Прогноз следующего', fmtDate(s.predicted_next)],
-    ['Персональная скидка', c.yc_discount ? `−${c.yc_discount}%` : '—'],
+    ['Персональная скидка', c.discount_pct ? `−${c.discount_pct}%` : '—'],
   ].map(([k,v])=>`<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
 
   const STAT={completed:'выполнен',upcoming:'предстоит',no_show:'не пришёл',cancelled:'отменён',unmarked:'не отмечен в YClients'};

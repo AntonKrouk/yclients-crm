@@ -290,6 +290,28 @@ function clientsFromRecords(records) {
 // Инкрементально: непроверенные + активные клиенты не чаще раза в 3 дня.
 
 const DNC_RE = /(не\s*звон|не\s*беспоко|нельзя\s*звон|не\s*тревож|не\s*писать|do\s*not\s*call)/i;
+
+// Персональные скидки в этом салоне админы пишут ТЕКСТОМ В ИМЕНИ клиента
+// («Ия Устинова -15%», «Смирнова Елена-20%»), а штатное поле discount карточки
+// YClients почти всегда пустое: из 12 проверенных «процентных» клиентов оно
+// заполнено у одного. Поэтому эффективную скидку собираем из трёх источников —
+// поле карточки, имя, комментарий — и берём максимум.
+// {1,2} намеренно: трёхзначные проценты это не скидка. По боевой базе шаблон даёт
+// 116 клиентов и ровно четыре значения (10/15/20/30) без ложных срабатываний.
+const DISCOUNT_RE = /(\d{1,2})\s*%/;
+function parseDiscount(text) {
+  const m = String(text || '').match(DISCOUNT_RE);
+  const n = m ? Number(m[1]) : 0;
+  return n > 0 && n <= 99 ? n : 0;
+}
+// Эффективная скидка клиента = max(поле YClients, скидка из имени, из комментария)
+function effectiveDiscount(row) {
+  return Math.max(
+    Number(row.yc_discount) || 0,
+    parseDiscount(row.name),
+    parseDiscount(originalComment(row.comment)),
+  );
+}
 const THROTTLE_MS = 350;
 let commentSync = { running: false, done: 0, total: 0 };
 
@@ -347,7 +369,8 @@ async function syncComments({ full = false } = {}) {
                            AND last_visit >= datetime('now','-120 days')))`}
   `).all();
   commentSync = { running: true, done: 0, total: rows.length };
-  const upd = db.prepare('UPDATE clients SET comment=?, do_not_call=?, yc_spent=?, yc_balance=?, yc_discount=?, comment_checked_at=? WHERE id=?');
+  const upd = db.prepare(`UPDATE clients SET comment=?, do_not_call=?, yc_spent=?, yc_balance=?,
+    yc_discount=?, discount_pct=?, comment_checked_at=? WHERE id=?`);
   let dnc = 0;
   try {
     for (const r of rows) {
@@ -356,8 +379,11 @@ async function syncComments({ full = false } = {}) {
         const comment = String(card?.comment || '').trim();
         const derived = (DNC_RE.test(originalComment(comment)) || DNC_RE.test(r.name || '')) ? 1 : 0;
         const flag = r.dnc_manual != null ? r.dnc_manual : derived; // ручная отметка из дашборда важнее
+        const ycDisc = Number(card?.discount) || 0;
+        // скидка из карточки, из имени и из комментария — берём максимум
+        const pct = Math.max(ycDisc, parseDiscount(r.name), parseDiscount(originalComment(comment)));
         upd.run(comment || null, flag, card?.spent ?? null, card?.balance ?? null,
-          Number(card?.discount) || 0, iso(Date.now()), r.id);
+          ycDisc, pct || null, iso(Date.now()), r.id);
         if (flag) dnc++;
       } catch { /* сетевая ошибка или клиент удалён — не трогаем, попробуем в следующий проход */ }
       commentSync.done++;
@@ -378,6 +404,25 @@ async function syncComments({ full = false } = {}) {
 }
 
 function commentSyncStatus() { return { ...commentSync }; }
+
+// «Не беспокоить» и персональную скидку админы пишут прямо в имя клиента, а имя
+// обновляется каждым синком — поэтому оба признака пересчитываем по всей базе.
+// Идемпотентно и дёшево (одна выборка + точечные UPDATE только на изменившихся).
+function recomputeFlags() {
+  const rows = db.prepare(`SELECT id, name, comment, dnc_manual, yc_discount,
+    COALESCE(do_not_call,0) AS f, COALESCE(discount_pct,0) AS d FROM clients`).all();
+  const updFlag = db.prepare('UPDATE clients SET do_not_call=? WHERE id=?');
+  const updDisc = db.prepare('UPDATE clients SET discount_pct=? WHERE id=?');
+  let dnc = 0, disc = 0;
+  for (const r of rows) {
+    const derived = (DNC_RE.test(r.name || '') || DNC_RE.test(originalComment(r.comment))) ? 1 : 0;
+    const flag = r.dnc_manual != null ? r.dnc_manual : derived; // ручная отметка из дашборда важнее
+    if (flag !== r.f) { updFlag.run(flag, r.id); dnc++; }
+    const pct = effectiveDiscount(r);
+    if (pct !== r.d) { updDisc.run(pct || null, r.id); disc++; }
+  }
+  return { clients: rows.length, dnc_changed: dnc, discount_changed: disc };
+}
 
 async function run(opts = {}) {
   const now = iso(Date.now());
@@ -423,13 +468,7 @@ async function run(opts = {}) {
 
   // «Не беспокоить» ловим и в имени клиента: в этом салоне админы пишут заметки прямо в имя
   // («писать в WA», «не звонить» и т.п.). Имя обновляется каждым синком — пересчитываем флаг.
-  const flagRows = db.prepare(`SELECT id, name, comment, dnc_manual, COALESCE(do_not_call,0) AS f FROM clients`).all();
-  const updFlag = db.prepare('UPDATE clients SET do_not_call=? WHERE id=?');
-  for (const r of flagRows) {
-    const derived = (DNC_RE.test(r.name || '') || DNC_RE.test(originalComment(r.comment))) ? 1 : 0;
-    const flag = r.dnc_manual != null ? r.dnc_manual : derived; // ручная отметка из дашборда важнее
-    if (flag !== r.f) updFlag.run(flag, r.id);
-  }
+  recomputeFlags();
 
   const tasksN = rules.generate();
 
@@ -444,5 +483,6 @@ async function run(opts = {}) {
 
 module.exports = {
   run, syncUpcoming, computeFrequency, toTrips, recomputeClient, rebuildAggregates, importRecord,
-  syncComments, commentSyncStatus, writeCallToYclients, CRM_MARK, originalComment, DNC_RE,
+  syncComments, commentSyncStatus, recomputeFlags, parseDiscount, writeCallToYclients,
+  CRM_MARK, originalComment, DNC_RE,
 };

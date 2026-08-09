@@ -354,9 +354,9 @@ function querySegment(f = {}) {
   else if (deposit === 'nonzero') conds.push('COALESCE(c.yc_balance,0) <> 0');
   if (dnc === 'only') conds.push('COALESCE(c.do_not_call,0) = 1');
   else if (dnc !== 'all') conds.push('COALESCE(c.do_not_call,0) = 0');
-  if (discount === 'any') conds.push('COALESCE(c.yc_discount,0) > 0');
-  else if (discount === 'none') conds.push('COALESCE(c.yc_discount,0) = 0');
-  if (discountFrom) { conds.push('COALESCE(c.yc_discount,0) >= ?'); params.push(discountFrom); }
+  if (discount === 'any') conds.push('COALESCE(c.discount_pct,0) > 0');
+  else if (discount === 'none') conds.push('COALESCE(c.discount_pct,0) = 0');
+  if (discountFrom) { conds.push('COALESCE(c.discount_pct,0) >= ?'); params.push(discountFrom); }
 
   // VIP ведут персонально — в выборки конструктора они не попадают вовсе
   conds.push('c.id NOT IN (SELECT client_id FROM vip_clients)');
@@ -370,7 +370,7 @@ function querySegment(f = {}) {
     SELECT c.id, c.name, c.phone, c.branch, c.comment, COALESCE(c.do_not_call,0) AS do_not_call,
            c.visits_count AS total_visits, c.last_visit,
            COALESCE(c.yc_spent, c.spent, 0) AS real_spent, COALESCE(c.yc_balance,0) AS deposit_balance,
-           COALESCE(c.yc_discount,0) AS discount,
+           COALESCE(c.discount_pct,0) AS discount,
            COUNT(v.id) AS match_visits,
            MAX(v.date) AS last_match,
            ROUND(SUM(v.cost)) AS match_spent,
@@ -886,7 +886,7 @@ function loadPerson(id) {
     ...client,
     yc_spent: hasYcSpent ? ycSpent : null,
     yc_balance: cards.reduce((s, c) => s + (c.yc_balance || 0), 0),
-    yc_discount: Math.max(...cards.map(c => c.yc_discount || 0)),
+    discount_pct: Math.max(...cards.map(c => c.discount_pct || 0)),
     branches: cards.map(c => c.branch).filter(Boolean),
     // комментарии админов бывают в обеих карточках — показываем оба
     comment: [...new Set(cards.map(c => c.comment).filter(Boolean))].join('\n'),
@@ -1033,6 +1033,13 @@ async function bootstrap() {
     const fixed = sync.rebuildAggregates();
     db.prepare("INSERT INTO meta(key,value) VALUES('aggregates_rebuilt_v2',?)").run(String(fixed));
     console.log(`[bootstrap] агрегаты пересчитаны по полной истории: клиентов ${fixed}`);
+  }
+
+  // «Не беспокоить» и скидки живут в имени клиента — пересчитываем при старте,
+  // чтобы после выката они появились сразу, не дожидаясь ночного синка.
+  const f = sync.recomputeFlags();
+  if (f.discount_changed || f.dnc_changed) {
+    console.log(`[bootstrap] признаки из имён: скидок обновлено ${f.discount_changed}, «не беспокоить» ${f.dnc_changed}`);
   }
 
   const n = db.prepare('SELECT COUNT(*) n FROM clients').get().n;
