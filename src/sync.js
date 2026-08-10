@@ -523,9 +523,16 @@ async function run(opts = {}) {
     // этого предстоящие записи к нам не попадали вовсе. А без них движок задач считал
     // записанных клиентов незаписанными и звал их записываться повторно.
     const futureDays = Number(opts.futureDays) || Number(process.env.YCLIENTS_SYNC_FUTURE_DAYS) || 180;
-    const end = new Date(); end.setDate(end.getDate() + futureDays);
-    const start = new Date(); start.setMonth(start.getMonth() - months);
+    // Явное окно {from, to} — для догрузки истории кусками. Все записи филиала синк держит
+    // в памяти одним массивом, и 7 лет разом (83 тыс. записей Баскова) кладут процесс на
+    // VPS с 2 ГБ. Год за раз — это максимум 18 тыс. записей, влезает с запасом.
+    const explicit = Boolean(opts.from || opts.to);
+    const end = opts.to ? new Date(opts.to) : new Date();
+    if (!opts.to) end.setDate(end.getDate() + futureDays);
+    const start = opts.from ? new Date(opts.from) : new Date();
+    if (!opts.from) start.setMonth(start.getMonth() - months);
     const fmt = (d) => d.toISOString().slice(0, 10);
+    if (explicit) console.log(`[sync] окно задано явно: ${fmt(start)} → ${fmt(end)}`);
 
     // имена филиалов: из конфига, недостающие — из API
     const comps = yc.companies();
@@ -543,8 +550,9 @@ async function run(opts = {}) {
       // товарных строк обработано (одна продажа, привязанная к нескольким записям
       // параллельных мастеров, приходит несколько раз — в базе схлопнётся по yc_id)
       console.log(`[sync] ${name}: клиентов ${res.clients}, визитов ${res.visits}, товарных строк ${res.goods}`
-        + ` (окно ${months} мес. назад + ${futureDays} дн. вперёд)`
+        + (explicit ? ` (окно ${fmt(start)} → ${fmt(end)})` : ` (окно ${months} мес. назад + ${futureDays} дн. вперёд)`)
         + (cancelled ? `, отменено записей: ${cancelled}` : ''));
+      records.length = 0; // отпускаем память до следующего филиала: на историческом окне это сотни МБ
       try {
         const svcN = await syncServices({ id: comp.id, name }, now);
         console.log(`[sync] ${name}: услуг в прайсе ${svcN}`);

@@ -72,7 +72,12 @@ app.get('/api/health', (req, res) => res.json({ ok: true, mode: yc.isDemo() ? 'd
 app.post('/api/sync', async (req, res) => {
   try {
     const months = Number(req.body?.months) || Number(req.query.months) || undefined;
-    const result = await sync.run({ months });
+    // Явное окно дат — для догрузки истории кусками (на 2 ГБ памяти 7 лет разом не влезают).
+    // skip_comments=1 нужен там же: гонять проход по карточкам после каждого куска незачем.
+    const from = req.body?.from || req.query.from || undefined;
+    const to = req.body?.to || req.query.to || undefined;
+    const skipComments = req.query.skip_comments === '1' || Boolean(req.body?.skip_comments);
+    const result = await sync.run({ months, from, to, skipComments });
     const counts = taskCounts();
     const tg = await telegram.notifyDailySummary(counts);
     res.json({ ...result, telegram: tg });
