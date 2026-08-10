@@ -205,6 +205,39 @@ async function fetchRecords(cid, startDate, endDate, onProgress) {
   return all;
 }
 
+// Финансовые транзакции филиала за период. Нужны ради покупок товаров БЕЗ записи
+// (зашёл и купил на кассе): в /records такой продажи нет вовсе. Товарная транзакция —
+// sold_item_type: 'goods_transaction'; названия товара в ней НЕТ, только document_id,
+// состав документа добирается через fetchSaleDocument().
+// Проверено на боевом: start_date/end_date работают (date_from/date_to игнорируются),
+// meta пустая — total_count не приходит, поэтому идём страницами до неполной.
+async function fetchTransactions(cid, startDate, endDate, onProgress) {
+  const all = [];
+  const pageSize = 200;
+  let page = 1;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const res = await fetch(BASE + `/transactions/${cid}?start_date=${startDate}&end_date=${endDate}&count=${pageSize}&page=${page}`, { headers: headers() });
+    const json = await res.json().catch(() => null);
+    if (!res.ok || json?.success === false) {
+      throw new Error(`YClients /transactions → ${res.status}: ${json?.meta?.message || ''}`);
+    }
+    const rows = Array.isArray(json.data) ? json.data : [];
+    all.push(...rows);
+    if (onProgress) onProgress(all.length);
+    if (rows.length < pageSize) break;
+    page += 1;
+    if (page > 2000) break; // предохранитель: 7 лет истории — это сотни страниц
+  }
+  return all;
+}
+
+// Состав документа продажи: state.items[] с title/good_id/amount/cost_to_pay_total.
+// Единственный способ узнать, ЧТО именно купили в продаже без записи.
+async function fetchSaleDocument(cid, documentId) {
+  return api(`/company/${cid}/sale/${documentId}`);
+}
+
 // --- Онлайн-запись: справочники, свободные слоты, создание записи -------------
 // Цепочка (проверено на боевом): book_staff → book_services?staff_id → book_dates → book_times.
 // Эти эндпоинты отдают ровно то, что видит виджет онлайн-записи: только реально свободное время
@@ -339,6 +372,8 @@ module.exports = {
   fetchClientCard,
   updateClient,
   fetchRecords,
+  fetchTransactions,
+  fetchSaleDocument,
   fetchBookStaff,
   fetchBookServices,
   fetchBookDates,

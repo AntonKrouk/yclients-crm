@@ -44,6 +44,29 @@ function normalizeRecord(r) {
   };
 }
 
+// Товары, проданные В РАМКАХ записи: YClients кладёт их прямо в /records полем
+// goods_transactions, отдельных запросов не нужно. amount приходит со знаком минус —
+// это списание со склада, нам нужно количество. Сертификаты продаются как товар и
+// попадают сюда же (тип видно по названию, отдельного флага в API нет).
+function purchasesFromRecord(r) {
+  const goods = Array.isArray(r.goods_transactions) ? r.goods_transactions : [];
+  if (!goods.length || r.deleted) return [];
+  const staff = (r.staff && r.staff.name) || r.staff_name || '';
+  const date = iso(r.datetime || r.date || r.create_date);
+  return goods.map(g => ({
+    yc_id: g.id,
+    record_id: r.id || null,
+    date,
+    title: g.title || '',
+    good_id: g.good_id || null,
+    qty: Math.abs(Number(g.amount) || 1),
+    cost: Number(g.cost_to_pay ?? g.cost ?? g.price) || 0,
+    discount: Number(g.discount) || 0,
+    staff,
+    source: 'record',
+  }));
+}
+
 // --- Визит = один поход в салон, а не одна строка записи -----------------------
 // В этом салоне клиент за одно посещение берёт несколько услуг у РАЗНЫХ мастеров
 // (услуга «*Параллельная работа мастеров»), и каждая приезжает из YClients отдельной
@@ -116,6 +139,15 @@ const upsertVisit = db.prepare(`
     client_id=excluded.client_id, company_id=excluded.company_id, branch=excluded.branch,
     date=excluded.date, service=excluded.service, staff=excluded.staff, cost=excluded.cost, status=excluded.status
 `);
+const upsertPurchase = db.prepare(`
+  INSERT INTO purchases (yc_id, client_id, company_id, branch, record_id, date, title, good_id, qty, cost, discount, staff, source, updated_at)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  ON CONFLICT(yc_id) DO UPDATE SET
+    client_id=excluded.client_id, company_id=excluded.company_id, branch=excluded.branch,
+    record_id=excluded.record_id, date=excluded.date, title=excluded.title, good_id=excluded.good_id,
+    qty=excluded.qty, cost=excluded.cost, discount=excluded.discount, staff=excluded.staff,
+    source=excluded.source, updated_at=excluded.updated_at
+`);
 const getClientLocalId = db.prepare('SELECT id FROM clients WHERE yclients_id = ?');
 
 // --- Агрегаты клиента: ВСЕГДА по всей локальной истории визитов ---------------
@@ -152,14 +184,20 @@ function rebuildAggregates() {
 // Записывает клиентов и визиты одного филиала в базу с пометкой company_id/branch
 function syncBranch(clients, records, company, now) {
   const byClient = new Map();
+  const goodsByClient = new Map();
   for (const r of records) {
     const v = normalizeRecord(r);
     if (!v.client_id) continue;
     if (!byClient.has(v.client_id)) byClient.set(v.client_id, []);
     byClient.get(v.client_id).push(v);
+    const goods = purchasesFromRecord(r);
+    if (goods.length) {
+      if (!goodsByClient.has(v.client_id)) goodsByClient.set(v.client_id, []);
+      goodsByClient.get(v.client_id).push(...goods);
+    }
   }
   const cid = Number(company.id) || null;
-  let clientsN = 0, visitsN = 0;
+  let clientsN = 0, visitsN = 0, goodsN = 0;
   for (const c of clients) {
     const visits = byClient.get(c.id) || [];
     upsertClient.run(c.id, cid, company.name, c.name || '', c.phone || '', now);
@@ -168,10 +206,15 @@ function syncBranch(clients, records, company, now) {
       upsertVisit.run(v.yclients_record_id, local.id, cid, company.name, v.date, v.service, v.staff, v.cost, v.status);
       visitsN++;
     }
+    for (const g of goodsByClient.get(c.id) || []) {
+      upsertPurchase.run(g.yc_id, local.id, cid, company.name, g.record_id, g.date, g.title,
+        g.good_id, g.qty, g.cost, g.discount, g.staff, g.source, now);
+      goodsN++;
+    }
     recomputeClient(local.id, now); // после записи визитов — по всей истории, а не по окну
     clientsN++;
   }
-  return { clients: clientsN, visits: visitsN };
+  return { clients: clientsN, visits: visitsN, goods: goodsN };
 }
 
 // Отменённые и удалённые записи YClients из выдачи /records просто пропадают, а не приходят
@@ -239,6 +282,47 @@ async function syncUpcoming(opts = {}) {
   const tasks = rules.generate();
   console.log(`[upcoming] визитов ${visits}, отменено ${cancelled}, новых клиентов пропущено ${unknown}, задач создано ${tasks}`);
   return { visits, cancelled, unknown, tasks, at: iso(Date.now()) };
+}
+
+// Покупки БЕЗ визита (пришёл на кассу и купил шампунь или сертификат). В /records таких продаж
+// нет вовсе, поэтому идём через /transactions: там товарная строка помечена sold_item_type
+// 'goods_transaction' и несёт клиента, но НЕ несёт названия товара — его добираем из состава
+// документа (/company/{id}/sale/{doc}), по одному запросу на документ.
+// Транзакции с record_id пропускаем: эти товары уже приехали вместе с записью.
+async function syncStandalonePurchases(company, startDate, endDate, now) {
+  const cid = Number(company.id) || null;
+  const tx = await yc.fetchTransactions(company.id, startDate, endDate,
+    (n) => { if (n % 2000 === 0) console.log(`[goods] ${company.name}: транзакций ${n}`); });
+  const standalone = tx.filter(t => t.sold_item_type === 'goods_transaction'
+    && !t.record_id && t.client && t.client.id);
+  // документы, разобранные прошлым синком, повторно не дёргаем — иначе каждый ночной проход
+  // по 7 годам заново тянул бы тысячи документов
+  const known = new Set(db.prepare('SELECT yc_id FROM purchases').all().map(r => Number(r.yc_id)));
+  const byDoc = new Map();
+  for (const t of standalone) {
+    if (known.has(Number(t.sold_item_id))) continue;
+    if (!byDoc.has(t.document_id)) byDoc.set(t.document_id, []);
+    byDoc.get(t.document_id).push(t);
+  }
+  let saved = 0, skipped = 0;
+  for (const [docId, items] of byDoc) {
+    let doc = null;
+    try { doc = await yc.fetchSaleDocument(company.id, docId); }
+    catch { skipped += items.length; continue; }  // документ удалён или недоступен
+    const state = (doc && doc.state && doc.state.items) || [];
+    for (const t of items) {
+      const local = getClientLocalId.get(t.client.id);
+      if (!local) { skipped++; continue; }         // клиента ещё нет в базе — подхватит следующий синк
+      const item = state.find(i => Number(i.id) === Number(t.sold_item_id)) || {};
+      upsertPurchase.run(t.sold_item_id, local.id, cid, company.name, null, iso(t.date),
+        item.title || 'Товар', item.good_id || null, Math.abs(Number(item.amount) || 1),
+        Number(item.cost_to_pay_total ?? t.amount) || 0, Number(item.client_discount_percent) || 0,
+        '', 'sale', now);
+      saved++;
+    }
+    await new Promise(rs => setTimeout(rs, THROTTLE_MS));
+  }
+  return { transactions: tx.length, standalone: standalone.length, saved, skipped };
 }
 
 // Прайс-лист услуг филиала → таблица services (полная замена по филиалу)
@@ -426,12 +510,12 @@ function recomputeFlags() {
 
 async function run(opts = {}) {
   const now = iso(Date.now());
-  let totalC = 0, totalV = 0;
+  let totalC = 0, totalV = 0, totalG = 0;
 
   if (yc.isDemo()) {
     const raw = yc.demoData();
     const res = syncBranch(raw.clients, raw.records, { id: 0, name: 'Демо' }, now);
-    totalC += res.clients; totalV += res.visits;
+    totalC += res.clients; totalV += res.visits; totalG += res.goods;
   } else {
     await yc.ensureAuth(); // если токена нет, но есть логин/пароль в .env — получим токен
     const months = Number(opts.months) || Number(process.env.YCLIENTS_SYNC_MONTHS) || 12;
@@ -454,15 +538,26 @@ async function run(opts = {}) {
         (loaded, total) => { if (loaded % 1000 === 0 || loaded === total) console.log(`[sync] ${name}: записей ${loaded}/${total}`); });
       const clients = clientsFromRecords(records);
       const res = syncBranch(clients, records, { id: comp.id, name }, now);
-      totalC += res.clients; totalV += res.visits;
+      totalC += res.clients; totalV += res.visits; totalG += res.goods;
       const cancelled = reconcileFuture(records, { id: comp.id, name }, iso(end));
-      console.log(`[sync] ${name}: клиентов ${res.clients}, визитов ${res.visits}`
+      // товарных строк обработано (одна продажа, привязанная к нескольким записям
+      // параллельных мастеров, приходит несколько раз — в базе схлопнётся по yc_id)
+      console.log(`[sync] ${name}: клиентов ${res.clients}, визитов ${res.visits}, товарных строк ${res.goods}`
         + ` (окно ${months} мес. назад + ${futureDays} дн. вперёд)`
         + (cancelled ? `, отменено записей: ${cancelled}` : ''));
       try {
         const svcN = await syncServices({ id: comp.id, name }, now);
         console.log(`[sync] ${name}: услуг в прайсе ${svcN}`);
       } catch (e) { console.error(`[sync] ${name}: прайс-лист не загружен:`, e.message); }
+      // покупки без визита — отдельным проходом по кассовым транзакциям того же окна
+      if (!opts.skipStandaloneGoods) {
+        try {
+          const g = await syncStandalonePurchases({ id: comp.id, name }, fmt(start), fmt(end), now);
+          totalG += g.saved;
+          console.log(`[sync] ${name}: покупок без визита ${g.saved}`
+            + (g.skipped ? ` (пропущено ${g.skipped})` : '') + `, транзакций просмотрено ${g.transactions}`);
+        } catch (e) { console.error(`[sync] ${name}: покупки без визита не загружены:`, e.message); }
+      }
     }
   }
 
@@ -478,11 +573,12 @@ async function run(opts = {}) {
     setImmediate(() => syncComments().catch(e => console.error('[comments]', e.message)));
   }
 
-  return { mode: yc.isDemo() ? 'demo' : 'live', clients: totalC, visits: totalV, tasks: tasksN, at: now };
+  return { mode: yc.isDemo() ? 'demo' : 'live', clients: totalC, visits: totalV, goods: totalG, tasks: tasksN, at: now };
 }
 
 module.exports = {
   run, syncUpcoming, computeFrequency, toTrips, recomputeClient, rebuildAggregates, importRecord,
+  syncStandalonePurchases, purchasesFromRecord,
   syncComments, commentSyncStatus, recomputeFlags, parseDiscount, writeCallToYclients,
   CRM_MARK, originalComment, DNC_RE,
 };

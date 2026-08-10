@@ -116,6 +116,30 @@ db.exec(`
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_services_uniq ON services(company_id, yc_id);
 
+  -- Покупки товаров. Приходят двумя путями: внутри записи (goods_transactions в /records —
+  -- клиент купил шампунь на визите) и отдельной продажей на кассе без записи (/transactions
+  -- + состав документа из /company/{id}/sale/{doc}). Сертификаты YClients продаёт как товар,
+  -- поэтому они тоже здесь.
+  CREATE TABLE IF NOT EXISTS purchases (
+    id          INTEGER PRIMARY KEY,
+    yc_id       INTEGER UNIQUE,         -- id товарной строки в YClients
+    client_id   INTEGER REFERENCES clients(id),
+    company_id  INTEGER,
+    branch      TEXT,
+    record_id   INTEGER,                -- запись-визит; NULL = покупка без визита
+    date        TEXT,
+    title       TEXT,
+    good_id     INTEGER,
+    qty         REAL DEFAULT 1,
+    cost        REAL,                   -- сумма к оплате за строку
+    discount    REAL DEFAULT 0,
+    staff       TEXT,
+    source      TEXT,                   -- record | sale
+    updated_at  TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_purchases_client ON purchases(client_id);
+  CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(date);
+
   -- VIP-клиенты: постоянный ручной список. Живёт, пока админ сам не удалит запись.
   -- Такие клиенты не должны попадать в выборки конструктора — их ведут персонально.
   CREATE TABLE IF NOT EXISTS vip_clients (

@@ -817,6 +817,23 @@ function computeClientStats(id, client, ids = [id]) {
       .map(x => ({ ...x, pct: completed.length ? Math.round(x.count / completed.length * 100) : 0 }));
   };
 
+  // Покупки товаров: и те, что сделаны на визите, и отдельные продажи на кассе.
+  // Считаются по всем карточкам человека, как визиты и деньги.
+  const purchases = db.prepare(
+    `SELECT date, title, qty, cost, staff, record_id, source, branch
+     FROM purchases WHERE client_id IN (${ph}) ORDER BY date DESC`).all(...ids);
+  const goodsSpent = purchases.reduce((s, p) => s + (p.cost || 0), 0);
+  const goodsMap = {};
+  purchases.forEach(p => {
+    const k = p.title || '—';
+    if (!goodsMap[k]) goodsMap[k] = { name: k, count: 0, sum: 0, last: null };
+    goodsMap[k].count += p.qty || 1;
+    goodsMap[k].sum += p.cost || 0;
+    if (!goodsMap[k].last || p.date > goodsMap[k].last) goodsMap[k].last = p.date;
+  });
+  const goods = Object.values(goodsMap).sort((a, b) => b.sum - a.sum)
+    .map(x => ({ ...x, pct: goodsSpent ? Math.round(x.sum / goodsSpent * 100) : 0 }));
+
   // активность по месяцам за последние 12 мес.
   const months = [];
   const base = new Date(); base.setDate(1);
@@ -867,6 +884,9 @@ function computeClientStats(id, client, ids = [id]) {
     predicted_next: predictedNext || null,
     services: group('service'),
     masters: group('staff'),
+    goods,                               // разбивка по товарам (сумма, штук, доля, последняя покупка)
+    goods_spent: goodsSpent,             // сколько человек оставил на товарах за всё время
+    goods_items: purchases.length,       // строк-покупок
     months,
     status,
     status_label: statusLabel,

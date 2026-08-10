@@ -263,6 +263,7 @@
   .collap>summary:hover{background:var(--panel2)}
   .collap .cnt{margin-left:6px;color:var(--ink-2);text-transform:none;letter-spacing:0;font-weight:400}
   .collap .cbody{padding:2px 16px 16px}
+  .brk .gdate{font-size:11px;color:var(--muted);margin-top:5px;letter-spacing:.02em}
   .brk{padding:9px 0;border-bottom:1px solid var(--line)}
   .brk:last-child{border-bottom:none}
   .brk .row1{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:13px;margin-bottom:6px}
@@ -726,6 +727,10 @@
         <summary>Услуги <span class="cnt" id="cntServices"></span></summary>
         <div class="cbody" id="statServices"></div>
       </details>
+      <details class="collap">
+        <summary>Товары <span class="cnt" id="cntGoods"></span></summary>
+        <div class="cbody" id="statGoods"></div>
+      </details>
     </div>
     <div class="dpane" id="pane-about">
       <div class="cinfo" id="drawerInfo"></div>
@@ -846,6 +851,33 @@ function reloadCurrentView(){
   else if(v==='segments'){ segLoaded=false; loadSegments(); }
   else loadTasks();
 }
+// --- Тихое обновление ---------------------------------------------------------
+// Две точки (Басков и Мытнинская) работают в одной базе, но страница сама не
+// перерисовывалась: закрытая соседом задача висела до F5, а его звонок не появлялся
+// в журнале обзора. Раз в 45 сек тихо перезагружаем активную вкладку — только «живые»
+// (задачи и обзор). Конструктор и VIP не трогаем: там выборка строится долго и
+// перерисовка сбила бы работу.
+// Обновление отменяется, если админ занят: открыта карточка клиента или модалка,
+// курсор стоит в поле, или в заметке уже что-то набрано, но не отправлено.
+const SILENT_REFRESH_MS = 45000;
+function silentBusy(){
+  if(document.hidden) return true;
+  if($('#drawer').classList.contains('open')) return true;
+  if(document.querySelector('.modal-overlay.open')) return true;
+  const el = document.activeElement;
+  if(el && ['INPUT','TEXTAREA','SELECT'].includes(el.tagName)) return true;
+  return [...document.querySelectorAll('#view-tasks input, #view-tasks textarea')].some(i=>i.value.trim());
+}
+function silentRefresh(){
+  if(silentBusy()) return;
+  const v = document.querySelector('.tab.active')?.dataset.view;
+  if(v==='tasks') loadTasks();            // списки обзвона не трогаем: свернуло бы раскрытый блок
+  else if(v==='overview') loadOverview(); // внутри сам обновит журнал звонков
+}
+setInterval(silentRefresh, SILENT_REFRESH_MS);
+// вернулись на вкладку браузера — показываем свежее, не дожидаясь тика
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) silentRefresh(); });
+
 const rub = n => Math.round(n||0).toLocaleString('ru-RU') + ' ₽';
 // «1 клиент / 2 клиента / 5 клиентов»
 const plural = (n,one,few,many) => { const a=Math.abs(n)%100, b=a%10;
@@ -1386,6 +1418,7 @@ async function openClient(id){
     ['Не пришёл', s.no_show + (s.completion_rate!=null?` · ${s.completion_rate}% доходит`:'')],
     ['Не был', s.since_last_days!=null?s.since_last_days+' дн.':'—'],
   ];
+  if(s.goods_spent) tiles.push(['На товары' + (s.goods_items?` · ${plural(s.goods_items,'покупка','покупки','покупок')}`:''), rub(s.goods_spent)]);
   if(c.yc_balance>0) tiles.push(['Остаток депозита', `<span style="color:var(--green)">${rub(c.yc_balance)}</span>`]);
   else if(c.yc_balance<0) tiles.push(['Долг (депозит в минусе)', `<span style="color:var(--red)">${rub(c.yc_balance)}</span>`]);
   $('#statTiles').innerHTML = tiles.map(([l,n])=>`<div class="stile"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
@@ -1411,6 +1444,18 @@ async function openClient(id){
   $('#statMasters').innerHTML = brk(s.masters,false,true);
   $('#cntServices').textContent = s.services.length||'';
   $('#cntMasters').textContent = s.masters.length? `${s.masters.length}${s.masters[0]&&s.masters[0].name!=='—'?' · '+s.masters[0].name:''}` : '';
+
+  // товары: доля считается от денег, а не от числа покупок — админу важнее «на чём он тратит».
+  // Дата последней покупки нужна, чтобы предложить расходник вовремя (шампунь кончился).
+  const goods = s.goods||[];
+  $('#statGoods').innerHTML = goods.length? goods.map(x=>`
+    <div class="brk">
+      <div class="row1"><span class="nm">${x.name}</span><span class="v">${x.count}× · <b>${rub(x.sum)}</b></span></div>
+      <div class="bar"><div style="width:${x.pct}%"></div></div>
+      <div class="gdate">последняя покупка: ${fmtDate(x.last)}</div>
+    </div>`).join('')
+    : '<div class="muted" style="font-size:13px">Товаров не покупал</div>';
+  $('#cntGoods').textContent = goods.length? `${goods.length} · ${rub(s.goods_spent)}` : '';
 
   const topMaster = s.masters[0] && s.masters[0].name!=='—' ? `${s.masters[0].name} · ${s.masters[0].pct}%` : (c.favorite_staff||'—');
   $('#drawerInfo').innerHTML = [
