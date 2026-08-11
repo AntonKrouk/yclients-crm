@@ -326,9 +326,11 @@ async function syncUpcoming(opts = {}) {
     }
     cancelled += reconcileFuture(records, { id: comp.id, name }, iso(end));
   }
-  const tasks = rules.generate();
-  console.log(`[upcoming] визитов ${visits}, отменено ${cancelled}, новых клиентов пропущено ${unknown}, задач создано ${tasks}`);
-  return { visits, cancelled, unknown, tasks, at: iso(Date.now()) };
+  // Только обслуживание: снять задачи по записавшимся и уже обзвоненным. Новые задачи
+  // добирает утренний полный синк — иначе разобранный список тут же наполнялся бы снова.
+  rules.generate({ fill: false });
+  console.log(`[upcoming] визитов ${visits}, отменено ${cancelled}, новых клиентов пропущено ${unknown}`);
+  return { visits, cancelled, unknown, tasks: 0, at: iso(Date.now()) };
 }
 
 // Покупки БЕЗ визита (пришёл на кассу и купил шампунь или сертификат). В /records таких продаж

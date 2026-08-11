@@ -118,6 +118,11 @@
   /* участник списка: срок перезвона наступил — красным, назначен на потом — приглушённо */
   .member.callback-today{background:var(--red-soft);box-shadow:inset 3px 0 0 var(--red)}
   .member.later{opacity:.7}
+  /* «изменить» — правка результата уже сделанного звонка (журнал и обработанные строки) */
+  .jr-fix{display:inline-block;margin-top:6px;border:none;background:none;padding:0;cursor:pointer;
+    font:inherit;font-size:11px;color:var(--muted);border-bottom:1px solid var(--line-strong)}
+  .jr-fix:hover{color:var(--ink)}
+  .fix-row{margin:4px 0 18px}
   .tname{font-family:var(--serif);font-weight:400;font-size:18px;cursor:pointer;color:var(--ink);
     letter-spacing:.01em;line-height:1.3}
   .tname:hover{text-decoration:underline;text-underline-offset:3px}
@@ -605,6 +610,21 @@
     </div>
     <div class="modal-note">Клиент просит вообще не звонить?
       <a href="#" id="snoozeNoCalls">Не перезванивать — пауза 60 дней</a></div>
+  </div>
+</div>
+
+<!-- Исправление результата звонка: клиент передумал, а в журнале стоит «отказ» -->
+<div class="modal-overlay" id="fixModal">
+  <div class="modal">
+    <div class="modal-title">Изменить результат звонка</div>
+    <p class="modal-sub" id="fixWho"></p>
+    <label class="fld">Заметка<input type="text" id="fixNote" placeholder="Что сказал клиент"></label>
+    <div class="res-row fix-row" id="fixButtons"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeFix()">Отмена</button>
+    </div>
+    <div class="modal-note">Кнопки те же, что в задачах: «Записать» создаст настоящую запись в YClients,
+      «Перезвонить» и «Не ответил» спросят время. Прежняя история в карточке клиента сохранится.</div>
   </div>
 </div>
 
@@ -1240,12 +1260,14 @@ async function submitBooking(){
         client_id:ctx.client_id, staff_id:Number(staff), service_ids:[Number(svc)],
         datetime:dt, seance_length:Number(len)||undefined,
         comment:$('#bookComment').value.trim(), send_sms:$('#bookSms').checked,
-        task_id:ctx.task_id||null, member_id:ctx.member_id||null,
+        task_id:ctx.task_id||null, member_id:ctx.member_id||null, action_id:ctx.action_id||null,
         note:ctx.noteEl?($(ctx.noteEl)?.value||''):'', admin:currentAdmin(),
       })});
     closeBooking();
     toast(`Записан. ${r.when}${r.staff?' · '+r.staff:''}`);
-    if(ctx.list_id) await reloadListBlock(ctx.list_id); else loadTasks();
+    // из правки результата вернёмся туда, откуда пришли: блок списка или текущая вкладка
+    if(ctx.action_id){ closeFix(); if(ctx.listId) await reloadListBlock(ctx.listId); else reloadCurrentView(); }
+    else if(ctx.list_id) await reloadListBlock(ctx.list_id); else loadTasks();
   }catch(e){ bookErr(e.message||'Не удалось создать запись'); btn.disabled=false; btn.textContent='Записать в YClients'; }
 }
 // «запись уже создана в YClients» — просто фиксируем звонок как раньше, без создания записи
@@ -1254,7 +1276,10 @@ async function bookJustMark(){
   const note = ctx.noteEl ? ($(ctx.noteEl)?.value||'') : '';
   const admin = currentAdmin();
   closeBooking();
-  if(ctx.task_id){
+  if(ctx.action_id){            // пришли из исправления результата — правим тот же звонок
+    closeFix();
+    await sendFix(ctx.action_id,'booked',note,ctx.listId,null);
+  }else if(ctx.task_id){
     await api(`/api/tasks/${ctx.task_id}/action`,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({result:'booked',note,admin})});
     toast('Отмечено'); loadTasks();
@@ -1319,7 +1344,7 @@ function openSnooze(ctx){
   snoozeCtx=ctx;
   const {result,btn}=ctx;
   // берём только имя, без бейджа филиала, который лежит в том же .tname
-  const name=(btn?.closest('.task,.member')?.querySelector('.tname')?.firstChild?.textContent||'').trim();
+  const name=ctx.name||(btn?.closest('.task,.member')?.querySelector('.tname')?.firstChild?.textContent||'').trim();
   $('#snoozeTitle').textContent = result==='no_answer'?'Когда набрать снова?':'Когда перезвонить?';
   $('#snoozeWho').textContent = (name?`${name}. `:'')
     + (result==='no_answer'?'Не дозвонились — задача вернётся в список к выбранному времени.'
@@ -1363,7 +1388,8 @@ $('#snoozeModal').onclick=e=>{ if(e.target.id==='snoozeModal') closeSnooze(); };
 // одна отправка для задач и для участников списков — разница только в эндпоинте
 async function submitSnooze(result,until){
   const ctx=snoozeCtx; closeSnooze();
-  if(ctx.kind==='member') await sendMemAct(ctx.listId,ctx.memberId,result,ctx.btn,until);
+  if(ctx.kind==='fix') await sendFix(ctx.actionId,result,$('#fixNote').value,ctx.listId,until);
+  else if(ctx.kind==='member') await sendMemAct(ctx.listId,ctx.memberId,result,ctx.btn,until);
   else await sendAct(ctx.taskId,result,ctx.btn,until);
 }
 $('#snoozeSubmit').onclick=async()=>{
@@ -1428,7 +1454,10 @@ function renderMember(listId,m){
       ${later?`<span class="cb-badge later">${ICON.clock}${m.result==='no_calls'?'не звонить до':'перезвонить'} ${fmtDate(m.callback_at)}</span>`:''}
       <div class="tname" onclick="openClient(${m.client_id})">${m.name||'Без имени'}</div>
       <div class="tmeta"><span class="phone">${m.phone||'—'}</span> · совпадений: ${m.match_visits} · ${rub(m.match_spent)}${m.favorite_staff?' · '+m.favorite_staff:''}</div>
-      ${done?`<div class="treason">✓ ${R[m.result]||'обработан'}${m.note?' — «'+m.note+'»':''} · ${m.admin||''}</div>`:''}
+      ${done?`<div class="treason">✓ ${R[m.result]||'обработан'}${m.note?' — «'+m.note+'»':''} · ${m.admin||''}
+        ${m.action_id?`<button class="jr-fix" title="Изменить результат — клиент передумал"
+          onclick="openFix(${m.action_id},'${q1(m.name)}','${m.result||''}','${q1(m.note||'')}',${m.client_id},${listId})">изменить</button>`:''}
+      </div>`:''}
     </div>
     ${done?'':`<div class="actions">
       <div class="res-row">${RES_LIST.map(r=>`<button class="res ${r.cls}" onclick="${r.k==='booked'
@@ -1536,12 +1565,60 @@ async function renderJournal(base,days,result,box){
         ${it.note?`<div class="jr-note">«${it.note}»</div>`:''}
         ${booking}
       </div>
-      <div class="jr-when">${fmtDT(it.created_at)}</div>
+      <div class="jr-when">${fmtDT(it.created_at)}
+        <button class="jr-fix" title="Изменить результат — клиент передумал"
+          onclick="openFix(${it.id},'${q1(it.name)}','${it.result||''}','${q1(it.note||'')}',${it.client_id},null)">изменить</button>
+      </div>
     </div>`;
   }).join('');
 }
 $('#jrDays').onchange=loadJournal;
 $('#jrResult').onchange=loadJournal;
+
+// --- ИСПРАВЛЕНИЕ РЕЗУЛЬТАТА ЗВОНКА ---
+// Звонок уже зафиксирован, но жизнь поменялась: «отказался» → перезвонил и записался.
+// Правим саму запись, а не добавляем новую, иначе в статистике будет два звонка вместо одного.
+let fixCtx=null;
+function openFix(actionId,name,result,note,clientId,listId){
+  fixCtx={actionId,name,listId,clientId};
+  $('#fixWho').textContent=(name?name+'. ':'')+'Сейчас записано: '+(JR_RES[result]||'звонок').toLowerCase()+'.';
+  $('#fixNote').value=note||'';
+  // те же кнопки, что в задачах и списках: «Записать» ведёт в форму записи YClients,
+  // «Перезвонить»/«Не ответил» — в календарь, остальное фиксируется сразу
+  $('#fixButtons').innerHTML=RES_LIST.map(r=>
+    `<button class="res ${r.cls}" data-k="${r.k}">${r.t}</button>`).join('');
+  $('#fixButtons').querySelectorAll('button').forEach(b=>{ b.onclick=()=>fixPick(b.dataset.k); });
+  $('#fixModal').classList.add('open');
+}
+function closeFix(){ $('#fixModal').classList.remove('open'); fixCtx=null; }
+$('#fixModal').onclick=e=>{ if(e.target.id==='fixModal') closeFix(); };
+
+function fixPick(result){
+  const ctx=fixCtx;
+  if(result==='booked'){        // настоящая запись в YClients, звонок исправится после неё
+    closeFix();
+    openBooking({client_id:ctx.clientId,name:ctx.name,action_id:ctx.actionId,
+      listId:ctx.listId,noteEl:'#fixNote'});
+    fixCtx=ctx;                 // контекст нужен после возврата из формы записи
+    return;
+  }
+  if(result==='callback'||result==='no_answer'){
+    $('#fixModal').classList.remove('open');
+    openSnooze({kind:'fix',actionId:ctx.actionId,listId:ctx.listId,result,name:ctx.name});
+    return;
+  }
+  closeFix();
+  sendFix(ctx.actionId,result,$('#fixNote').value,ctx.listId,null);
+}
+async function sendFix(actionId,result,note,listId,until){
+  const r=await api(`/api/actions/${actionId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({result,note,admin:currentAdmin(),snooze_until:until})});
+  if(r.error){toast(r.error);return;}
+  toast('Результат изменён: '+(JR_RES[result]||result).toLowerCase()
+    + (until?` · ${whenLabel(until)}`:''));
+  // правили строку списка — обновляем только её блок, чтобы не схлопнуть раскрытый список
+  if(listId) await reloadListBlock(listId); else reloadCurrentView();
+}
 
 // --- ОБЗВОНЫ (списки из конструктора) ---
 // Отдельная вкладка: у ручных списков своя воронка и свой прогресс, в «Обзоре» они

@@ -603,6 +603,8 @@ app.get('/api/lists/:id/members', (req, res) => {
   const rows = db.prepare(`
     SELECT m.id AS member_id, m.status, m.result, m.note, m.draft_note, m.admin, m.callback_at,
            m.match_visits, m.match_spent,
+           (SELECT a.id FROM task_actions a WHERE a.member_id = m.id
+             ORDER BY a.created_at DESC, a.id DESC LIMIT 1) AS action_id,
            c.id AS client_id, c.name, c.phone, c.visits_count, c.favorite_staff, c.last_visit
     FROM list_members m JOIN clients c ON c.id = m.client_id
     WHERE m.list_id = ?
@@ -632,8 +634,8 @@ function applyMemberAction(memberId, { result, note, admin, snooze_until } = {})
   db.prepare(`UPDATE list_members SET status=?, result=?, note=?, admin=?, updated_at=?,
               draft_note=NULL, callback_at=? WHERE id=?`)
     .run(status, result || null, text, admin || 'admin', new Date().toISOString(), until, m.id);
-  db.prepare('INSERT INTO task_actions(task_id,client_id,admin,result,note,created_at) VALUES(NULL,?,?,?,?,?)')
-    .run(m.client_id, admin || 'admin', result || null, text, new Date().toISOString());
+  db.prepare('INSERT INTO task_actions(task_id,member_id,client_id,admin,result,note,created_at) VALUES(NULL,?,?,?,?,?,?)')
+    .run(m.id, m.client_id, admin || 'admin', result || null, text, new Date().toISOString());
 
   // Пишем результат звонка обратно в карточку клиента YClients (фоном)
   setImmediate(() => sync.writeCallToYclients(m.client_id, { result, note: text, admin })
@@ -776,6 +778,47 @@ function applyTaskAction(rawTaskId, { result, note, admin, snooze_days, snooze_u
   return { status: newStatus, client_id: task.client_id, due_date: due };
 }
 
+// Исправить результат уже зафиксированного звонка: клиент отказался, а через час перезвонил
+// и записался — раньше это было не поправить, в журнале навсегда оставался «отказ».
+// Меняем запись в ленте И статус источника (задачи или строки списка), в YClients дописываем
+// уточняющую строку — затирать историю в карточке клиента нельзя.
+function fixAction(rawId, { result, note, admin, snooze_until } = {}) {
+  const id = Number(rawId);
+  const a = db.prepare('SELECT * FROM task_actions WHERE id=?').get(id);
+  if (!a) return null;
+
+  const text = note != null ? String(note) : (a.note || '');
+  db.prepare('UPDATE task_actions SET result=?, note=?, admin=COALESCE(?,admin) WHERE id=?')
+    .run(result, text, (admin || '').trim() || null, id);
+
+  const snoozed = SNOOZE_RESULTS.has(result);
+  // срок для отложенных: из календаря, иначе «просил не звонить» — два месяца, остальное — завтра
+  const until = snoozed ? (normSnooze(snooze_until) || todayPlus(result === 'no_calls' ? 60 : 1)) : null;
+
+  if (a.task_id) {
+    db.prepare(`UPDATE tasks SET status=?, due_date=COALESCE(?,due_date), closed_at=? WHERE id=?`)
+      .run(snoozed ? 'snoozed' : 'done', until, snoozed ? null : new Date().toISOString(), a.task_id);
+  }
+  if (a.member_id) {
+    db.prepare(`UPDATE list_members SET status=?, result=?, note=?, callback_at=?, updated_at=? WHERE id=?`)
+      .run(snoozed ? 'snoozed' : 'done', result, text, until, new Date().toISOString(), a.member_id);
+  }
+
+  setImmediate(() => sync.writeCallToYclients(a.client_id,
+    { result, note: `исправлено${text ? ': ' + text : ''}`, admin: admin || a.admin })
+    .catch(e => console.error('[yc-writeback fix]', e.message)));
+
+  return { ok: true, result, status: snoozed ? 'snoozed' : 'done', due_date: until };
+}
+
+app.patch('/api/actions/:id', (req, res) => {
+  const { result, note, admin, snooze_until } = req.body || {};
+  if (!result) return res.status(400).json({ error: 'Укажите результат' });
+  const r = fixAction(req.params.id, { result, note, admin, snooze_until });
+  if (!r) return res.status(404).json({ error: 'action not found' });
+  res.json(r);
+});
+
 // Черновик заметки: сохраняется, пока админ печатает. Без этого набранный текст пропадал
 // при уходе на другую вкладку или перезагрузке — а звонок уже состоялся, и записать его
 // содержание было не с чего.
@@ -887,7 +930,7 @@ app.post('/api/booking/create', async (req, res) => {
   if (yc.isDemo()) return res.status(400).json({ error: 'Демо-режим: запись в YClients недоступна' });
   const {
     client_id, staff_id, service_ids, datetime, seance_length,
-    comment, send_sms, task_id, member_id, note, admin,
+    comment, send_sms, task_id, member_id, action_id, note, admin,
   } = req.body || {};
 
   const client = getClient(client_id);
@@ -930,9 +973,11 @@ app.post('/api/booking/create', async (req, res) => {
   const booking = `Запись: ${when}, ${svcTitles}${staffName ? ' — ' + staffName : ''}`;
   const fullNote = [note && note.trim(), booking].filter(Boolean).join('. ');
 
-  // Фиксируем звонок как «Записал»: задача/участник списка + лента клиента + карточка YClients
+  // Фиксируем звонок как «Записал»: задача/участник списка + лента клиента + карточка YClients.
+  // action_id — запись пришла из исправления результата: правим прежний звонок, а не добавляем новый.
   let action = null;
-  if (task_id) action = applyTaskAction(task_id, { result: 'booked', note: fullNote, admin });
+  if (action_id) action = fixAction(action_id, { result: 'booked', note: fullNote, admin });
+  else if (task_id) action = applyTaskAction(task_id, { result: 'booked', note: fullNote, admin });
   else if (member_id) action = applyMemberAction(member_id, { result: 'booked', note: fullNote, admin });
   else {
     db.prepare('INSERT INTO task_actions(task_id,client_id,admin,result,note,created_at) VALUES(NULL,?,?,?,?,?)')
