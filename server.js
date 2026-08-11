@@ -287,7 +287,11 @@ app.post('/api/vip', (req, res) => {
   db.prepare(`INSERT INTO vip_clients(client_id, note, added_by, added_at) VALUES(?,?,?,?)
               ON CONFLICT(client_id) DO UPDATE SET note=excluded.note`)
     .run(clientId, (req.body?.note || '').trim(), (req.body?.admin || '').trim() || null, new Date().toISOString());
-  res.json({ ok: true });
+  // VIP ведут персонально — автоматические задачи по нему снимаем сразу, не дожидаясь синка
+  const dropped = db.prepare(`UPDATE tasks SET status='dismissed', closed_at=?
+                              WHERE client_id=? AND status IN ('open','snoozed')`)
+    .run(new Date().toISOString(), clientId).changes;
+  res.json({ ok: true, tasks_dismissed: dropped });
 });
 
 app.patch('/api/vip/:clientId', (req, res) => {
@@ -593,7 +597,9 @@ app.get('/api/lists', (req, res) => {
   const lists = db.prepare("SELECT id,name,assignee,created_at FROM lists WHERE status='active' ORDER BY created_at DESC").all();
   res.json(lists.map(l => {
     const total = db.prepare('SELECT COUNT(*) n FROM list_members WHERE list_id=?').get(l.id).n;
-    const done = db.prepare("SELECT COUNT(*) n FROM list_members WHERE list_id=? AND status='done'").get(l.id).n;
+    // обработан = по человеку звонили, независимо от исхода: «не ответил» и «перезвонить»
+    // это тоже работа админа, и в прогрессе она должна быть видна
+    const done = db.prepare("SELECT COUNT(*) n FROM list_members WHERE list_id=? AND status IN ('done','snoozed')").get(l.id).n;
     return { ...l, total, done };
   }));
 });
@@ -627,6 +633,10 @@ app.get('/api/lists/:id/members', (req, res) => {
 function applyMemberAction(memberId, { result, note, admin, snooze_until } = {}) {
   const m = db.prepare('SELECT * FROM list_members WHERE id=?').get(Number(memberId));
   if (!m) return null;
+  // имя звонившего не пришло — подписываем ответственным за список, а не безликим «admin»
+  if (!(admin || '').trim()) {
+    admin = db.prepare('SELECT assignee FROM lists WHERE id=?').get(m.list_id)?.assignee || admin;
+  }
   const status = SNOOZE_RESULTS.has(result) ? 'snoozed' : 'done';
   const text = (note && note.trim()) ? note : (m.draft_note || '');   // пустая заметка → черновик
   // срок перезвона: как у задач — сегодня со временем, дата или пауза «не звонить»
@@ -869,6 +879,29 @@ function bookingCompany(req) {
 }
 const svcIds = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
 
+// Клиент захотел записаться в ДРУГОЙ салон, не тот, из которого пришла задача.
+// В YClients человек — отдельная карточка в каждом филиале, поэтому ищем его карточку
+// в выбранном салоне по телефону (последние 10 цифр). Не нашли — записываем «новым»:
+// YClients заведёт карточку сам по телефону и имени, ночной синк её подтянет.
+function cardInCompany(client, companyId) {
+  const cid = Number(companyId);
+  if (!cid || cid === Number(client.company_id)) return client;
+  const digits = people.normPhone(client.phone);
+  if (!people.isRealPhone(digits)) return null;
+  return db.prepare(`SELECT ${CLIENT_FIELDS} FROM clients
+    WHERE company_id = ? AND substr(replace(replace(replace(replace(phone,' ',''),'-',''),'(',''),')',''), -10) = ?
+    ORDER BY visits_count DESC LIMIT 1`).get(cid, digits.slice(-10)) || null;
+}
+
+// Что показать в форме записи до обращения к YClients: филиалы сети и тот, где числится
+// клиент (он подставляется по умолчанию, но админ волен выбрать другой салон).
+app.get('/api/booking/context', (req, res) => {
+  const c = req.query.client_id ? getClient(req.query.client_id) : null;
+  const branches = db.prepare(`SELECT branch, company_id FROM clients
+    WHERE branch IS NOT NULL AND branch <> '' GROUP BY branch ORDER BY branch`).all();
+  res.json({ branches, company_id: c?.company_id || null, branch: c?.branch || null });
+});
+
 app.get('/api/booking/staff', async (req, res) => {
   const cid = bookingCompany(req);
   if (!cid) return res.status(400).json({ error: 'Не определён филиал' });
@@ -930,7 +963,7 @@ app.post('/api/booking/create', async (req, res) => {
   if (yc.isDemo()) return res.status(400).json({ error: 'Демо-режим: запись в YClients недоступна' });
   const {
     client_id, staff_id, service_ids, datetime, seance_length,
-    comment, send_sms, task_id, member_id, action_id, note, admin,
+    comment, send_sms, task_id, member_id, action_id, note, admin, company_id,
   } = req.body || {};
 
   const client = getClient(client_id);
@@ -940,12 +973,23 @@ app.post('/api/booking/create', async (req, res) => {
     return res.status(400).json({ error: 'Нужны мастер, услуга и время' });
   }
 
+  // салон выбирает админ прямо в форме: клиент мог захотеть в соседний
+  const targetCid = Number(company_id) || Number(client.company_id);
+  const card = cardInCompany(client, targetCid);
+  const branchName = db.prepare('SELECT branch FROM clients WHERE company_id=? AND branch IS NOT NULL LIMIT 1')
+    .get(targetCid)?.branch || client.branch;
+
   let record;
   try {
-    const created = await yc.createRecord(client.company_id, {
+    const created = await yc.createRecord(targetCid, {
       staff_id: Number(staff_id),
       services: service_ids.map(id => ({ id: Number(id) })),
-      client: { id: client.yclients_id, phone: String(client.phone || '').replace(/\D/g, ''), name: client.name || '' },
+      // карточки в этом салоне может не быть — тогда YClients заведёт её по телефону и имени
+      client: {
+        ...(card?.yclients_id ? { id: card.yclients_id } : {}),
+        phone: String(client.phone || '').replace(/\D/g, ''),
+        name: client.name || '',
+      },
       datetime,
       seance_length: Number(seance_length) || undefined,
       save_if_busy: false,
@@ -963,7 +1007,7 @@ app.post('/api/booking/create', async (req, res) => {
   // Подтягиваем созданную запись к себе, чтобы она сразу была видна в ленте и в журнале
   let imported = null;
   try {
-    imported = await sync.importRecord(client.company_id, client.branch, record.id);
+    imported = await sync.importRecord(targetCid, branchName, record.id);
   } catch (e) { console.error('[booking/import]', e.message); }
 
   const staffName = record.staff?.name || '';
@@ -1238,8 +1282,11 @@ app.get('/api/stats', (req, res) => {
     GROUP BY a.admin ORDER BY total DESC
   `).all(...bArgs);
 
-  const doneToday = db.prepare(`SELECT COUNT(*) n FROM tasks t JOIN clients c ON c.id = t.client_id
-    WHERE t.status='done' AND date(t.closed_at)=date('now') ${bw}`).get(...bArgs).n;
+  // «Обработано сегодня» = по скольким задачам админ отчитался, включая «перезвонить»
+  // и «не ответил»: раньше считались только закрытые, и половина работы пропадала.
+  const doneToday = db.prepare(`SELECT COUNT(DISTINCT a.task_id) n FROM task_actions a
+    JOIN clients c ON c.id = a.client_id
+    WHERE a.task_id IS NOT NULL AND date(a.created_at)=date('now','localtime') ${bw}`).get(...bArgs).n;
   const booked = resultMap.booked || 0;
   const contacted = (resultMap.booked || 0) + (resultMap.refused || 0) + (resultMap.callback || 0);
   const conversion = contacted ? Math.round((booked / contacted) * 100) : 0;
@@ -1309,7 +1356,7 @@ app.get('/api/calls/stats', (req, res) => {
 
   const progress = db.prepare(`
     SELECT COUNT(DISTINCT l.id) lists, COUNT(m.id) members,
-           SUM(CASE WHEN m.status='done' THEN 1 ELSE 0 END) done,
+           SUM(CASE WHEN m.status IN ('done','snoozed') THEN 1 ELSE 0 END) done,
            SUM(CASE WHEN m.status='snoozed' THEN 1 ELSE 0 END) snoozed
     FROM lists l JOIN list_members m ON m.list_id = l.id
     JOIN clients c ON c.id = m.client_id

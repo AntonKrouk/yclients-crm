@@ -66,6 +66,10 @@ function generate(opts = {}) {
   db.prepare(`UPDATE tasks SET status='open'
               WHERE status='snoozed' AND date(due_date) < date('now','localtime')`).run();
 
+  // VIP ведут персонально — в автоматический обзвон они не попадают. Исключаем и вторую
+  // карточку того же человека (в соседнем филиале), иначе он вернулся бы оттуда.
+  const vipIds = new Set(db.prepare('SELECT client_id FROM vip_clients').all().map(r => r.client_id));
+
   const clients = db.prepare(`
     SELECT id, name, phone, branch, last_visit, avg_interval_days, predicted_next, visits_count
     FROM clients WHERE COALESCE(do_not_call,0) = 0
@@ -96,6 +100,7 @@ function generate(opts = {}) {
   const suppressed = new Set();      // id неприоритетных дублей — задачи не ставим
   const personBooked = new Set();    // id приоритетного, если человек записан в каком-то филиале
   const personCall = new Map();      // id карточки → последний звонок ЧЕЛОВЕКУ (по всем филиалам)
+  const vipPerson = new Set();       // все карточки человека, отмеченного VIP хотя бы в одной
   for (const arr of people.groupByPerson(clients)) {
     let call = null;
     for (const c of arr) {
@@ -103,6 +108,7 @@ function generate(opts = {}) {
       if (own && (!call || own.at > call.at)) call = own;
     }
     if (call) for (const c of arr) personCall.set(c.id, call);
+    if (arr.some(c => vipIds.has(c.id))) for (const c of arr) vipPerson.add(c.id);
 
     if (arr.length < 2) continue;
     for (let i = 1; i < arr.length; i++) suppressed.add(arr[i].id);
@@ -136,6 +142,12 @@ function generate(opts = {}) {
   // Снимаем ранее созданные задачи по неприоритетным дублям (чтобы не висели после включения дедупа)
   if (suppressed.size) dismissFor([...suppressed]);
 
+  // Клиента отметили VIP — его задачи снимаем сразу, не дожидаясь звонка
+  if (vipPerson.size) {
+    const n = dismissFor([...vipPerson]);
+    if (n) console.log(`[rules] снято задач по VIP-клиентам: ${n}`);
+  }
+
   // Клиент записался (сам, через админа или из дашборда) — снимаем висящие задачи «позвонить
   // и записать». Создание новых мы и так пропускаем ниже, но уже открытые надо закрыть, иначе
   // админ звонит человеку, который сидит в журнале на следующей неделе.
@@ -155,6 +167,7 @@ function generate(opts = {}) {
 
   for (const c of clients) {
     if (suppressed.has(c.id)) continue;                 // дубль в неприоритетном филиале
+    if (vipPerson.has(c.id)) continue;                  // VIP ведут вручную
     if (upMap.get(c.id) || personBooked.has(c.id)) continue; // записан в этом или другом филиале
 
     const frequent = c.avg_interval_days != null && c.avg_interval_days <= FREQUENT_DAYS ? 1 : 0;
