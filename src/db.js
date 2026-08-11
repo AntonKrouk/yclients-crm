@@ -209,6 +209,28 @@ ensureColumn('list_members', 'callback_at', 'TEXT');
 // в ленте. У звонков по задачам эту роль играет task_id.
 ensureColumn('task_actions', 'member_id', 'INTEGER');
 
+// Разовая уборка: клиент уже дал окончательный ответ (записался, придёт, отказался,
+// просил не звонить), а строки списков висели «в работе» — раньше звонок не всегда был
+// привязан к строке, да и один человек попадает сразу в несколько списков.
+if (!db.prepare("SELECT value FROM meta WHERE key='lists_close_answered_v1'").get()) {
+  const n = db.prepare(`
+    UPDATE list_members SET
+      status = 'done',
+      result = COALESCE(result, (SELECT a.result FROM task_actions a
+        WHERE a.client_id = list_members.client_id
+          AND a.result IN ('booked','coming','refused','no_calls')
+        ORDER BY a.created_at DESC LIMIT 1)),
+      note = COALESCE(NULLIF(note,''), 'ответил ранее'),
+      callback_at = NULL
+    WHERE status IN ('pending','snoozed')
+      AND EXISTS (SELECT 1 FROM task_actions a
+        WHERE a.client_id = list_members.client_id
+          AND a.result IN ('booked','coming','refused','no_calls')
+          AND a.created_at > list_members.updated_at)`).run().changes;
+  if (n) console.log(`[migrate] закрыто строк списков по уже ответившим клиентам: ${n}`);
+  db.prepare("INSERT INTO meta(key,value) VALUES('lists_close_answered_v1','1')").run();
+}
+
 // Одноразовый сброс под режим «не больше 10 открытых задач на филиал»:
 // старый движок навалил сотни открытых задач — снимаем их, дальше держим по лимиту
 if (!db.prepare("SELECT value FROM meta WHERE key='daily_cap_reset'").get()) {

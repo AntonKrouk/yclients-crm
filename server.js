@@ -630,6 +630,33 @@ app.get('/api/lists/:id/members', (req, res) => {
 
 // Фиксация звонка по участнику списка: обновляет статус, пишет в ленту клиента и в YClients.
 // Вынесено в функцию, чтобы этим же путём отмечался звонок при создании записи из формы.
+// Человек нередко попадает сразу в несколько списков (и ещё двумя карточками — по одной
+// на филиал). Ответил один раз — значит ответил всем: закрываем его строки во всех
+// активных списках, иначе ему позвонят ещё столько раз, в скольких списках он состоит.
+// Касается только окончательных ответов: «перезвонить» и «не ответил» — это не ответ.
+const FINAL_RESULTS = new Set(['booked', 'coming', 'refused', 'no_calls']);
+function closeSameClientRows(clientId, { result, note, admin, exceptMemberId = null }) {
+  const me = db.prepare('SELECT id, phone FROM clients WHERE id=?').get(Number(clientId));
+  if (!me) return 0;
+  const digits = people.normPhone(me.phone);
+  const ids = people.isRealPhone(digits)
+    ? db.prepare(`SELECT id FROM clients
+        WHERE substr(replace(replace(replace(replace(phone,' ',''),'-',''),'(',''),')',''), -10) = ?`)
+      .all(digits.slice(-10)).map(r => r.id)
+    : [me.id];
+  const ph = ids.map(() => '?').join(',');
+  const rows = db.prepare(`SELECT m.id FROM list_members m JOIN lists l ON l.id = m.list_id
+    WHERE l.status='active' AND m.status IN ('pending','snoozed') AND m.client_id IN (${ph})`).all(...ids)
+    .filter(r => r.id !== Number(exceptMemberId));
+  if (!rows.length) return 0;
+  const upd = db.prepare(`UPDATE list_members SET status='done', result=?, note=?, admin=?,
+                          updated_at=?, callback_at=NULL WHERE id=?`);
+  const now = new Date().toISOString();
+  const mark = note ? note : 'ответил в другом списке';
+  for (const r of rows) upd.run(result, mark, admin || 'admin', now, r.id);
+  return rows.length;
+}
+
 function applyMemberAction(memberId, { result, note, admin, snooze_until } = {}) {
   const m = db.prepare('SELECT * FROM list_members WHERE id=?').get(Number(memberId));
   if (!m) return null;
@@ -645,6 +672,10 @@ function applyMemberAction(memberId, { result, note, admin, snooze_until } = {})
               draft_note=NULL, callback_at=? WHERE id=?`)
     .run(status, result || null, text, admin || 'admin', new Date().toISOString(), until, m.id);
   recordAction({ memberId: m.id, clientId: m.client_id, admin: admin || 'admin', result: result || null, note: text });
+  if (FINAL_RESULTS.has(result)) {
+    const n = closeSameClientRows(m.client_id, { result, note: text, admin, exceptMemberId: m.id });
+    if (n) console.log(`[lists] закрыто строк этого же человека в других списках: ${n}`);
+  }
 
   // Пишем результат звонка обратно в карточку клиента YClients (фоном)
   setImmediate(() => sync.writeCallToYclients(m.client_id, { result, note: text, admin })
@@ -780,6 +811,8 @@ function applyTaskAction(rawTaskId, { result, note, admin, snooze_days, snooze_u
   const text = (note && note.trim()) ? note : (task.draft_note || '');
   recordAction({ taskId, clientId: task.client_id, admin: admin || 'admin', result: result || null, note: text });
   db.prepare('UPDATE tasks SET draft_note=NULL WHERE id=?').run(taskId);
+  // человек ответил по задаче — в списках обзвона он тоже больше не ждёт звонка
+  if (FINAL_RESULTS.has(result)) closeSameClientRows(task.client_id, { result, note: text, admin });
 
   // Логика статуса: перезвонить → откладываем; иначе закрываем
   let newStatus = 'done';
@@ -829,6 +862,11 @@ function fixAction(rawId, { result, note, admin, snooze_until } = {}) {
   if (a.member_id) {
     db.prepare(`UPDATE list_members SET status=?, result=?, note=?, callback_at=?, updated_at=? WHERE id=?`)
       .run(snoozed ? 'snoozed' : 'done', result, text, until, new Date().toISOString(), a.member_id);
+  }
+  // Звонок мог быть записан без привязки к строке (старые записи) — тогда строки списков
+  // висели бы «в работе» уже после ответа клиента. Закрываем их по клиенту.
+  if (FINAL_RESULTS.has(result)) {
+    closeSameClientRows(a.client_id, { result, note: text, admin: admin || a.admin, exceptMemberId: a.member_id });
   }
 
   setImmediate(() => sync.writeCallToYclients(a.client_id,
