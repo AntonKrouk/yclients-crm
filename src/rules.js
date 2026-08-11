@@ -17,6 +17,17 @@ const NO_SHOW_RECENT_DAYS = 30;   // неявку зовём перезапис�
 const CHURN_MAX_DAYS = 180;       // не был дольше — считаем потерянным, задачу не создаём (не заваливаем список)
 const REACTIVATION_MIN_VISITS = 2; // реактивируем только тех, кто ходил не разово
 
+// Пауза после звонка. Без неё обработанный клиент возвращался в список на СЛЕДУЮЩЕМ ЖЕ
+// прогоне генерации (кнопка «Обновить», крон каждые 30 мин): задача уходит в статус done,
+// а причина — неявка или просрочка записи — никуда не девается, и человек снова первый
+// в очереди. Админы видели, как разобранный список тут же наполняется теми же людьми.
+// Теперь звонок «закрывает» клиента на срок ниже — и по ВСЕМ его карточкам (Басков +
+// Мытнинская), чтобы второй филиал не звонил следом.
+const CALL_COOLDOWN_DAYS = { no_show: 14, rebook: 14, reactivation: 60 };
+const REFUSAL_COOLDOWN_DAYS = 90; // «Отказ» — разговор состоялся, повторять его скоро незачем
+const NO_CALLS_COOLDOWN_DAYS = 60; // «Просил не звонить» — пауза, но не навсегда
+const DEFAULT_COOLDOWN_DAYS = 14;
+
 // Не создаём дубль: если по клиенту уже есть открытая/отложенная задача такого типа
 const hasOpen = db.prepare(
   `SELECT 1 FROM tasks WHERE client_id = ? AND type = ? AND status IN ('open','snoozed') LIMIT 1`
@@ -45,8 +56,11 @@ function generate() {
                 AND client_id IN (SELECT id FROM clients WHERE COALESCE(do_not_call,0)=1)`)
     .run(nowIso);
 
-  // Отложенные «перезвонить завтра», чей срок настал, возвращаем в открытые ДО подсчёта слотов
-  db.prepare(`UPDATE tasks SET status='open' WHERE status='snoozed' AND due_date <= date('now')`).run();
+  // Отложенные «перезвонить», чей срок ПРОШЁЛ, возвращаем в открытые ДО подсчёта слотов.
+  // Отложенные на сегодня не трогаем: дашборд и так показывает их в списке задач
+  // отдельной красной карточкой («перезвонить в 18:00»).
+  db.prepare(`UPDATE tasks SET status='open'
+              WHERE status='snoozed' AND date(due_date) < date('now','localtime')`).run();
 
   const clients = db.prepare(`
     SELECT id, name, phone, branch, last_visit, avg_interval_days, predicted_next, visits_count
@@ -64,13 +78,44 @@ function generate() {
   // yclients_id, один телефон). Приоритетный филиал = где больше визитов; задачу ставим
   // только там, дубль в другом филиале подавляем. «Записан» считаем по ЛЮБОМУ филиалу.
   // Группировка общая с конструктором и карточкой клиента — см. src/people.js.
+  // Последний звонок по каждой карточке. Сюда пишутся и задачи, и списки обзвона
+  // (у списков task_id = NULL) — для паузы это одинаково «мы уже говорили с человеком».
+  const lastCall = new Map();
+  for (const r of db.prepare(`
+    SELECT a.client_id, a.created_at, a.result FROM task_actions a
+    WHERE a.created_at = (SELECT MAX(b.created_at) FROM task_actions b WHERE b.client_id = a.client_id)
+  `).all()) {
+    const prev = lastCall.get(r.client_id);
+    if (!prev || r.created_at > prev.at) lastCall.set(r.client_id, { at: r.created_at, result: r.result });
+  }
+
   const suppressed = new Set();      // id неприоритетных дублей — задачи не ставим
   const personBooked = new Set();    // id приоритетного, если человек записан в каком-то филиале
+  const personCall = new Map();      // id карточки → последний звонок ЧЕЛОВЕКУ (по всем филиалам)
   for (const arr of people.groupByPerson(clients)) {
+    let call = null;
+    for (const c of arr) {
+      const own = lastCall.get(c.id);
+      if (own && (!call || own.at > call.at)) call = own;
+    }
+    if (call) for (const c of arr) personCall.set(c.id, call);
+
     if (arr.length < 2) continue;
     for (let i = 1; i < arr.length; i++) suppressed.add(arr[i].id);
     if (arr.some(c => upMap.has(c.id))) personBooked.add(arr[0].id);
   }
+
+  // Сколько дней паузы после звонка ещё не вышло (0 = можно звать снова).
+  // Визит после звонка обнуляет паузу: человек в салоне побывал, дальше работаем как обычно.
+  const cooldownLeft = (client, type) => {
+    const call = personCall.get(client.id);
+    if (!call) return 0;
+    if (client.last_visit && new Date(client.last_visit) > new Date(call.at)) return 0;
+    const need = call.result === 'refused' ? REFUSAL_COOLDOWN_DAYS
+      : call.result === 'no_calls' ? NO_CALLS_COOLDOWN_DAYS   // «просил не звонить» — пауза
+      : (CALL_COOLDOWN_DAYS[type] || DEFAULT_COOLDOWN_DAYS);
+    return Math.max(0, need - daysBetween(call.at.slice(0, 10), today()));
+  };
 
   const dismissFor = (ids) => {
     const CH = 400;
@@ -114,8 +159,12 @@ function generate() {
     // 1) Свежая неявка без последующей записи → перезаписать (старые неявки не трогаем — это шум)
     const ns = noShowMap.get(c.id);
     if (ns && daysBetween(ns, now) <= NO_SHOW_RECENT_DAYS) {
-      candidates.push({ ...base, type: 'no_show', priority: 1,
-        reason: `Не пришёл ${new Date(ns).toLocaleDateString('ru-RU')}. Позвонить, перезаписать.` });
+      // continue в любом случае: если по неявке пауза — не подсовываем этого же человека
+      // под другим предлогом (реактивация/пора записать), это тот же звонок.
+      if (!cooldownLeft(c, 'no_show')) {
+        candidates.push({ ...base, type: 'no_show', priority: 1,
+          reason: `Не пришёл ${new Date(ns).toLocaleDateString('ru-RU')}. Позвонить, перезаписать.` });
+      }
       continue;
     }
 
@@ -128,13 +177,16 @@ function generate() {
     if (sinceLast > c.avg_interval_days * CHURN_MULTIPLIER
         && sinceLast <= CHURN_MAX_DAYS
         && c.visits_count >= REACTIVATION_MIN_VISITS) {
-      candidates.push({ ...base, type: 'reactivation', priority: 2,
-        reason: `Не был ${sinceLast} дн. при норме ~${Math.round(c.avg_interval_days)} дн. Реактивация: узнать, всё ли ок, вернуть.` });
+      if (!cooldownLeft(c, 'reactivation')) {
+        candidates.push({ ...base, type: 'reactivation', priority: 2,
+          reason: `Не был ${sinceLast} дн. при норме ~${Math.round(c.avg_interval_days)} дн. Реактивация: узнать, всё ли ок, вернуть.` });
+      }
       continue;
     }
 
     // 3) Пора записаться (прошёл прогноз next + grace, но ещё не «ушёл»)
-    if (overdue !== null && overdue >= REBOOK_GRACE_DAYS && overdue <= REBOOK_MAX_OVERDUE) {
+    if (overdue !== null && overdue >= REBOOK_GRACE_DAYS && overdue <= REBOOK_MAX_OVERDUE
+        && !cooldownLeft(c, 'rebook')) {
       candidates.push({ ...base, type: 'rebook', priority: 2,
         reason: `Обычно ходит раз в ~${Math.round(c.avg_interval_days)} дн., пора уже ${overdue} дн. назад. Позвонить, записать.` });
     }
@@ -146,6 +198,23 @@ function generate() {
   for (const cand of candidates) {
     if (!byBranch.has(cand.branch)) byBranch.set(cand.branch, new Map(TYPE_ORDER.map(t => [t, []])));
     byBranch.get(cand.branch).get(cand.type).push(cand);
+  }
+
+  // Уборка последствий: задачи, СОЗДАННЫЕ ПОСЛЕ звонка, — это и есть вернувшиеся клиенты.
+  // Снимаем их, пока пауза не вышла. Задачу, по которой звонок и был сделан (создана раньше
+  // звонка), не трогаем, «перезвонить/не ответил» (snoozed) — тоже: там пауза задана админом.
+  const clientById = new Map(clients.map(c => [c.id, c]));
+  const stale = db.prepare(`SELECT id, client_id, type, created_at FROM tasks WHERE status='open'`)
+    .all()
+    .filter(t => {
+      const call = personCall.get(t.client_id);
+      const c = clientById.get(t.client_id);
+      return call && c && t.created_at > call.at && cooldownLeft(c, t.type) > 0;
+    });
+  if (stale.length) {
+    const upd = db.prepare(`UPDATE tasks SET status='dismissed', closed_at=? WHERE id=?`);
+    for (const t of stale) upd.run(nowIso, t.id);
+    console.log(`[rules] снято вернувшихся задач по недавно обзвоненным: ${stale.length}`);
   }
 
   // Свободные слоты по филиалам: цель — DAILY_OPEN_TARGET открытых задач на филиал

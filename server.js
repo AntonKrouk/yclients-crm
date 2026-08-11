@@ -570,11 +570,14 @@ function manualMembers(ids) {
 
 // Создать список из фильтра: снимок подходящих клиентов фиксируется в list_members
 app.post('/api/lists', (req, res) => {
-  const { name, filter, assignee, client_ids } = req.body || {};
+  const { name, filter, assignee, client_ids, exclude_ids } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'Укажите название списка' });
   // Два способа набрать список: фильтром конструктора или поштучно выбранными клиентами.
   const manual = Array.isArray(client_ids) && client_ids.length > 0;
-  const rows = manual ? manualMembers(client_ids) : querySegment(filter || {});
+  // Строки, вычеркнутые админом прямо в таблице выборки, в список не берём
+  const excluded = new Set((Array.isArray(exclude_ids) ? exclude_ids : []).map(Number).filter(Boolean));
+  const rows = (manual ? manualMembers(client_ids) : querySegment(filter || {}))
+    .filter(r => !excluded.has(Number(r.id)));
   if (rows.length === 0) return res.status(400).json({ error: manual ? 'Не выбрано ни одного клиента' : 'Под эти условия никто не подходит' });
   const now = new Date().toISOString();
   const info = db.prepare('INSERT INTO lists(name,filter_json,assignee,status,created_at) VALUES(?,?,?,?,?)')
@@ -598,27 +601,42 @@ app.get('/api/lists', (req, res) => {
 // Участники списка (клиенты) со статусом обработки
 app.get('/api/lists/:id/members', (req, res) => {
   const rows = db.prepare(`
-    SELECT m.id AS member_id, m.status, m.result, m.note, m.admin, m.match_visits, m.match_spent,
+    SELECT m.id AS member_id, m.status, m.result, m.note, m.draft_note, m.admin, m.callback_at,
+           m.match_visits, m.match_spent,
            c.id AS client_id, c.name, c.phone, c.visits_count, c.favorite_staff, c.last_visit
     FROM list_members m JOIN clients c ON c.id = m.client_id
     WHERE m.list_id = ?
-    ORDER BY (m.status='done') ASC, m.match_visits DESC`).all(req.params.id);
-  res.json(rows);
+    -- порядок работы: сперва «перезвонить сегодня», затем ещё не обзвоненные,
+    -- затем отложенные на потом, обработанные — в конце
+    ORDER BY (m.status='done') ASC,
+             (m.status='snoozed' AND date(m.callback_at) <= date('now','localtime')) DESC,
+             (m.status='snoozed') ASC,
+             m.match_visits DESC`).all(req.params.id);
+  // отложенный на сегодня (или просроченный) участник — как красная задача на дашборде
+  const today = new Date().toISOString().slice(0, 10);
+  res.json(rows.map(r => ({
+    ...r,
+    callback_today: !!(r.status === 'snoozed' && r.callback_at && r.callback_at.slice(0, 10) <= today),
+  })));
 });
 
 // Фиксация звонка по участнику списка: обновляет статус, пишет в ленту клиента и в YClients.
 // Вынесено в функцию, чтобы этим же путём отмечался звонок при создании записи из формы.
-function applyMemberAction(memberId, { result, note, admin } = {}) {
+function applyMemberAction(memberId, { result, note, admin, snooze_until } = {}) {
   const m = db.prepare('SELECT * FROM list_members WHERE id=?').get(Number(memberId));
   if (!m) return null;
-  const status = (result === 'callback' || result === 'no_answer') ? 'snoozed' : 'done';
-  db.prepare('UPDATE list_members SET status=?, result=?, note=?, admin=?, updated_at=? WHERE id=?')
-    .run(status, result || null, note || '', admin || 'admin', new Date().toISOString(), m.id);
+  const status = SNOOZE_RESULTS.has(result) ? 'snoozed' : 'done';
+  const text = (note && note.trim()) ? note : (m.draft_note || '');   // пустая заметка → черновик
+  // срок перезвона: как у задач — сегодня со временем, дата или пауза «не звонить»
+  const until = status === 'snoozed' ? (normSnooze(snooze_until) || todayPlus(1)) : null;
+  db.prepare(`UPDATE list_members SET status=?, result=?, note=?, admin=?, updated_at=?,
+              draft_note=NULL, callback_at=? WHERE id=?`)
+    .run(status, result || null, text, admin || 'admin', new Date().toISOString(), until, m.id);
   db.prepare('INSERT INTO task_actions(task_id,client_id,admin,result,note,created_at) VALUES(NULL,?,?,?,?,?)')
-    .run(m.client_id, admin || 'admin', result || null, note || '', new Date().toISOString());
+    .run(m.client_id, admin || 'admin', result || null, text, new Date().toISOString());
 
   // Пишем результат звонка обратно в карточку клиента YClients (фоном)
-  setImmediate(() => sync.writeCallToYclients(m.client_id, { result, note, admin })
+  setImmediate(() => sync.writeCallToYclients(m.client_id, { result, note: text, admin })
     .catch(e => console.error('[yc-writeback list]', e.message)));
 
   return { status, client_id: m.client_id };
@@ -626,10 +644,19 @@ function applyMemberAction(memberId, { result, note, admin } = {}) {
 
 // Отметить результат звонка по участнику списка + записать в ленту клиента
 app.post('/api/lists/:id/members/:memberId/action', (req, res) => {
-  const { result, note, admin } = req.body || {};
-  const r = applyMemberAction(req.params.memberId, { result, note, admin });
+  const { result, note, admin, snooze_until } = req.body || {};
+  const r = applyMemberAction(req.params.memberId, { result, note, admin, snooze_until });
   if (!r) return res.status(404).json({ error: 'member not found' });
   res.json({ ok: true, status: r.status });
+});
+
+// Убрать клиента из списка обзвона (передумали звонить, попал по ошибке).
+// История звонков в task_actions остаётся — она привязана к клиенту, а не к строке списка.
+app.delete('/api/lists/:id/members/:memberId', (req, res) => {
+  const n = db.prepare('DELETE FROM list_members WHERE id=? AND list_id=?')
+    .run(Number(req.params.memberId), Number(req.params.id)).changes;
+  if (!n) return res.status(404).json({ error: 'member not found' });
+  res.json({ ok: true });
 });
 
 // Сменить ответственного админа у списка
@@ -675,59 +702,110 @@ function taskCounts(branch) {
 app.get('/api/tasks', (req, res) => {
   const status = req.query.status || 'open';
   const branch = (req.query.branch || '').trim();
+  // К открытым задачам добавляем отложенные НА СЕГОДНЯ: админ договорился перезвонить
+  // «после обеда» — такая карточка должна висеть перед глазами весь день, а не всплывать
+  // в 18:00, когда о ней уже забыли. Помечаем их callback_today, фронт красит красным.
+  const todayCallback = status === 'open'
+    ? `OR (t.status='snoozed' AND date(t.due_date) = date('now','localtime'))` : '';
   const rows = db.prepare(`
-    SELECT t.id, t.type, t.due_date, t.priority, t.status, t.reason, t.created_at, t.assigned_to,
+    SELECT t.id, t.type, t.due_date, t.priority, t.status, t.reason, t.created_at, t.assigned_to, t.draft_note,
            c.id AS client_id, c.name, c.phone, c.last_visit, c.avg_interval_days,
            c.favorite_staff, c.favorite_service, c.visits_count, c.branch
     FROM tasks t JOIN clients c ON c.id = t.client_id
-    WHERE t.status = ? ${branch ? 'AND c.branch = ?' : ''}
-    ORDER BY t.priority ASC, t.created_at ASC
+    WHERE (t.status = ? ${todayCallback}) ${branch ? 'AND c.branch = ?' : ''}
+    ORDER BY (t.status='snoozed') DESC, t.priority ASC, t.created_at ASC
   `).all(...(branch ? [status, branch] : [status]));
-  res.json(rows.map(r => ({ ...r, type_label: TYPE_LABEL[r.type] || r.type })));
+  res.json(rows.map(r => ({
+    ...r,
+    type_label: TYPE_LABEL[r.type] || r.type,
+    // время перезвона показываем только у отложенных на сегодня
+    callback_at: r.status === 'snoozed' ? r.due_date : null,
+  })));
 });
 
 // Фиксация звонка по задаче: статус задачи + запись в ленту клиента + обратная запись в YClients.
 // Вынесено в функцию — тем же путём отмечается звонок при создании записи из формы.
-function applyTaskAction(rawTaskId, { result, note, admin, snooze_days } = {}) {
+// Срок «перезвонить»: админ выбирает его в календаре — либо конкретная дата (YYYY-MM-DD),
+// либо «позже сегодня» с временем (YYYY-MM-DD HH:MM). Время в часовом поясе салона (МСК),
+// сравнивается с datetime('now','localtime') — сервер живёт в Europe/Moscow.
+const SNOOZE_RE = /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?$/;
+const normSnooze = (v) => (typeof v === 'string' && SNOOZE_RE.test(v.trim()) ? v.trim() : null);
+// Результаты, после которых задача не закрывается, а ждёт своего срока.
+// no_calls — «просил пока не звонить»: та же отложенная задача, только надолго (60 дней).
+const SNOOZE_RESULTS = new Set(['callback', 'no_answer', 'no_calls']);
+const todayPlus = (days) => {
+  const d = new Date(); d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+
+function applyTaskAction(rawTaskId, { result, note, admin, snooze_days, snooze_until } = {}) {
   const taskId = Number(rawTaskId);
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
   if (!task) return null;
 
+  // Заметку берём из запроса, но если она пуста — из черновика (админ мог печатать
+  // в другой вкладке или нажать кнопку до того, как черновик долетел обратно в поле)
+  const text = (note && note.trim()) ? note : (task.draft_note || '');
   db.prepare(`
     INSERT INTO task_actions (task_id, client_id, admin, result, note, created_at)
     VALUES (?,?,?,?,?,?)
-  `).run(taskId, task.client_id, admin || 'admin', result || null, note || '', new Date().toISOString());
+  `).run(taskId, task.client_id, admin || 'admin', result || null, text, new Date().toISOString());
+  db.prepare('UPDATE tasks SET draft_note=NULL WHERE id=?').run(taskId);
 
   // Логика статуса: перезвонить → откладываем; иначе закрываем
   let newStatus = 'done';
   let due = task.due_date;
-  if (result === 'callback' || result === 'no_answer') {
+  if (SNOOZE_RESULTS.has(result)) {
     newStatus = 'snoozed';
-    const d = new Date();
-    d.setDate(d.getDate() + (Number(snooze_days) || 1));
-    due = d.toISOString().slice(0, 10);
+    const until = normSnooze(snooze_until);
+    if (until) {
+      due = until;
+    } else {
+      const d = new Date();
+      d.setDate(d.getDate() + (Number(snooze_days) || 1));
+      due = d.toISOString().slice(0, 10);
+    }
   }
   db.prepare(`UPDATE tasks SET status=?, due_date=?, assigned_to=?, closed_at=? WHERE id=?`)
     .run(newStatus, due, admin || task.assigned_to, newStatus === 'done' ? new Date().toISOString() : null, taskId);
 
   // Пишем результат звонка обратно в карточку клиента YClients (фоном, чтобы ответ был мгновенным)
-  setImmediate(() => sync.writeCallToYclients(task.client_id, { result, note, admin })
+  setImmediate(() => sync.writeCallToYclients(task.client_id, { result, note: text, admin })
     .catch(e => console.error('[yc-writeback task]', e.message)));
 
-  return { status: newStatus, client_id: task.client_id };
+  return { status: newStatus, client_id: task.client_id, due_date: due };
 }
+
+// Черновик заметки: сохраняется, пока админ печатает. Без этого набранный текст пропадал
+// при уходе на другую вкладку или перезагрузке — а звонок уже состоялся, и записать его
+// содержание было не с чего.
+app.patch('/api/tasks/:id/note', (req, res) => {
+  const note = String((req.body || {}).note ?? '');
+  db.prepare('UPDATE tasks SET draft_note=? WHERE id=?').run(note, Number(req.params.id));
+  res.json({ ok: true });
+});
+
+app.patch('/api/lists/:id/members/:memberId/note', (req, res) => {
+  const note = String((req.body || {}).note ?? '');
+  db.prepare('UPDATE list_members SET draft_note=? WHERE id=? AND list_id=?')
+    .run(note, Number(req.params.memberId), Number(req.params.id));
+  res.json({ ok: true });
+});
 
 // Зафиксировать результат звонка + заметку. Меняет статус задачи.
 app.post('/api/tasks/:id/action', (req, res) => {
-  const { result, note, admin, snooze_days } = req.body || {};
-  const r = applyTaskAction(req.params.id, { result, note, admin, snooze_days });
+  const { result, note, admin, snooze_days, snooze_until } = req.body || {};
+  const r = applyTaskAction(req.params.id, { result, note, admin, snooze_days, snooze_until });
   if (!r) return res.status(404).json({ error: 'task not found' });
-  res.json({ ok: true, status: r.status });
+  res.json({ ok: true, status: r.status, due_date: r.due_date });
 });
 
-// Вернуть отложенную задачу в работу (для «снуз» на сегодня)
+// Вернуть отложенную задачу в работу. Возвращаем те, чей срок УЖЕ ПРОШЁЛ по дате:
+// отложенные на сегодня и так показываются в списке (красной карточкой со временем),
+// поэтому переводить их в open посреди дня незачем — иначе они потеряли бы пометку.
 app.post('/api/tasks/reopen-due', (req, res) => {
-  const n = db.prepare(`UPDATE tasks SET status='open' WHERE status='snoozed' AND due_date <= date('now')`).run();
+  const n = db.prepare(`UPDATE tasks SET status='open'
+    WHERE status='snoozed' AND date(due_date) < date('now','localtime')`).run();
   res.json({ reopened: n.changes });
 });
 
@@ -1097,9 +1175,11 @@ app.get('/api/stats', (req, res) => {
   const open = taskCounts(branch);
   const openTotal = Object.values(open).reduce((a, b) => a + b, 0);
 
+  // Обзор — про АВТОЗАДАЧИ. Звонки по спискам конструктора (task_id IS NULL) считаются
+  // отдельно, на вкладке «Обзвоны», иначе одна работа размывала бы показатели другой.
   const todayActions = db.prepare(`
     SELECT a.result, COUNT(*) n FROM task_actions a JOIN clients c ON c.id = a.client_id
-    WHERE date(a.created_at) = date('now') ${bw} GROUP BY a.result
+    WHERE a.task_id IS NOT NULL AND date(a.created_at) = date('now') ${bw} GROUP BY a.result
   `).all(...bArgs);
   const resultMap = {};
   for (const r of todayActions) resultMap[r.result] = r.n;
@@ -1109,7 +1189,7 @@ app.get('/api/stats', (req, res) => {
            COUNT(*) total,
            SUM(CASE WHEN a.result='booked' THEN 1 ELSE 0 END) booked
     FROM task_actions a JOIN clients c ON c.id = a.client_id
-    WHERE date(a.created_at) = date('now') ${bw}
+    WHERE a.task_id IS NOT NULL AND date(a.created_at) = date('now') ${bw}
     GROUP BY a.admin ORDER BY total DESC
   `).all(...bArgs);
 
@@ -1134,13 +1214,17 @@ app.get('/api/stats', (req, res) => {
 
 // Детальный журнал обзвона для владельца: кто звонил, кому, результат, заметка,
 // и если записал — ближайшая запись клиента (услуга/мастер/время из YClients-визитов).
-app.get('/api/overview/journal', (req, res) => {
+// scope: 'tasks' — звонки по автозадачам (вкладка «Обзор»), 'lists' — по спискам
+// конструктора (вкладка «Обзвоны»). У звонков из списков task_id = NULL.
+function journalHandler(scope) {
+  return (req, res) => {
   const branch = (req.query.branch || '').trim();
   const days = Math.min(90, Math.max(1, Number(req.query.days) || 7));
   const filterAdmin = (req.query.admin || '').trim();
   const filterResult = (req.query.result || '').trim();
 
-  const conds = [`a.created_at >= datetime('now', ?)`];
+  const conds = [`a.created_at >= datetime('now', ?)`,
+    scope === 'lists' ? 'a.task_id IS NULL' : 'a.task_id IS NOT NULL'];
   const args = [`-${days} days`];
   if (branch) { conds.push('c.branch = ?'); args.push(branch); }
   if (filterAdmin) { conds.push('a.admin = ?'); args.push(filterAdmin); }
@@ -1166,6 +1250,58 @@ app.get('/api/overview/journal', (req, res) => {
     return { ...r, booking: booking || null };
   });
   res.json({ days, count: items.length, items });
+  };
+}
+app.get('/api/overview/journal', journalHandler('tasks'));
+app.get('/api/calls/journal', journalHandler('lists'));
+
+// Статистика вкладки «Обзвоны»: прогресс по спискам конструктора и результаты звонков
+// именно по ним. Списки — ручная работа админов «позвать вот этих», у неё своя воронка.
+app.get('/api/calls/stats', (req, res) => {
+  const branch = (req.query.branch || '').trim();
+  const bw = branch ? 'AND c.branch = ?' : '';
+  const bArgs = branch ? [branch] : [];
+
+  const progress = db.prepare(`
+    SELECT COUNT(DISTINCT l.id) lists, COUNT(m.id) members,
+           SUM(CASE WHEN m.status='done' THEN 1 ELSE 0 END) done,
+           SUM(CASE WHEN m.status='snoozed' THEN 1 ELSE 0 END) snoozed
+    FROM lists l JOIN list_members m ON m.list_id = l.id
+    JOIN clients c ON c.id = m.client_id
+    WHERE l.status='active' ${bw}
+  `).get(...bArgs);
+
+  const results = {};
+  for (const r of db.prepare(`
+    SELECT a.result, COUNT(*) n FROM task_actions a JOIN clients c ON c.id = a.client_id
+    WHERE a.task_id IS NULL AND date(a.created_at) = date('now') ${bw} GROUP BY a.result
+  `).all(...bArgs)) results[r.result] = r.n;
+
+  const byAdmin = db.prepare(`
+    SELECT COALESCE(a.admin,'—') admin, COUNT(*) total,
+           SUM(CASE WHEN a.result IN ('booked','coming') THEN 1 ELSE 0 END) booked
+    FROM task_actions a JOIN clients c ON c.id = a.client_id
+    WHERE a.task_id IS NULL AND date(a.created_at) = date('now') ${bw}
+    GROUP BY a.admin ORDER BY total DESC
+  `).all(...bArgs);
+
+  // «Придёт» — согласие прийти на мероприятие/показ, записи в YClients при этом нет,
+  // но для списков это такой же успешный итог звонка, как запись.
+  const booked = results.booked || 0;
+  const coming = results.coming || 0;
+  const contacted = booked + coming + (results.refused || 0) + (results.callback || 0) + (results.no_calls || 0);
+  res.json({
+    lists: progress.lists || 0,
+    members: progress.members || 0,
+    done: progress.done || 0,
+    left: (progress.members || 0) - (progress.done || 0),
+    called_today: Object.values(results).reduce((a, b) => a + b, 0),
+    booked_today: booked,
+    coming_today: coming,
+    conversion_pct: contacted ? Math.round(((booked + coming) / contacted) * 100) : 0,
+    results_today: results,
+    by_admin: byAdmin,
+  });
 });
 
 // Первичное наполнение + автологин + очистка демо-данных при переходе на боевой режим
