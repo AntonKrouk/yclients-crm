@@ -324,13 +324,94 @@ app.get('/api/vip/search', (req, res) => {
   res.json(out.slice(0, 30));
 });
 
+// Группы услуг (категории прайс-листа YClients) с числом услуг и фактических визитов.
+// Вложенности у категорий нет — в YClients этого салона все они одного уровня.
+app.get('/api/service-categories', (req, res) => {
+  const branch = (req.query.branch || '').trim();
+  const args = branch ? [branch] : [];
+  const rows = db.prepare(`SELECT category, COUNT(*) AS services FROM services
+    WHERE active = 1 AND COALESCE(category,'') <> '' ${branch ? 'AND branch = ?' : ''}
+    GROUP BY category`).all(...args);
+  // сколько визитов пришлось на каждую группу — по денормализованной колонке
+  const vrows = db.prepare(`SELECT service_category FROM visits
+    WHERE status='completed' AND COALESCE(service_category,'') <> '' ${branch ? 'AND branch = ?' : ''}`)
+    .all(...args);
+  const visits = new Map();
+  for (const r of vrows) {
+    for (const part of String(r.service_category).split(', ')) {
+      const s = part.trim();
+      if (s) visits.set(s, (visits.get(s) || 0) + 1);
+    }
+  }
+  const list = rows.map(r => ({ name: r.category, services: r.services, visits: visits.get(r.category) || 0 }))
+    .sort((a, b) => (b.visits - a.visits) || a.name.localeCompare(b.name, 'ru'));
+  res.json(list);
+});
+
+// Список товаров для фильтра «покупал товар» — строится по фактическим покупкам,
+// а не по справочнику YClients: /goods отдаёт только складские остатки (25 позиций),
+// тогда как в purchases лежит вся история продаж.
+app.get('/api/goods-list', (req, res) => {
+  const branch = (req.query.branch || '').trim();
+  const rows = db.prepare(`SELECT title, COUNT(*) AS purchases, COUNT(DISTINCT client_id) AS clients,
+      COALESCE(ROUND(SUM(cost)),0) AS sum, MAX(date) AS last_date
+    FROM purchases WHERE COALESCE(title,'') <> '' ${branch ? 'AND branch = ?' : ''}
+    GROUP BY lower_u(title)
+    ORDER BY purchases DESC, sum DESC
+    LIMIT 1000`).all(...(branch ? [branch] : []));
+  res.json(rows);
+});
+
+// Поиск клиента для ручной сборки списка (то же, что в VIP, но с пометкой «уже выбран»
+// решает фронт). Возвращает человека целиком — карточки филиалов склеены.
+app.get('/api/client-search', (req, res) => {
+  const q = `%${(req.query.q || '').toLowerCase().trim()}%`;
+  if (q === '%%') return res.json([]);
+  const rows = db.prepare(`
+    SELECT id, name, phone, branch, visits_count, last_visit, COALESCE(do_not_call,0) AS do_not_call,
+           COALESCE(yc_spent, spent, 0) AS real_spent, COALESCE(discount_pct,0) AS discount
+    FROM clients WHERE lower_u(name) LIKE ? OR phone LIKE ?
+    ORDER BY visits_count DESC LIMIT 200`).all(q, q);
+  const out = people.groupByPerson(rows).map(cards => ({
+    id: cards[0].id,
+    ids: cards.map(c => c.id),
+    name: cards[0].name,
+    phone: cards[0].phone,
+    branches: [...new Set(cards.map(c => c.branch).filter(Boolean))],
+    visits: cards.reduce((s, c) => s + (c.visits_count || 0), 0),
+    spent: cards.reduce((s, c) => s + (c.real_spent || 0), 0),
+    discount: Math.max(...cards.map(c => c.discount || 0)),
+    do_not_call: cards.some(c => c.do_not_call) ? 1 : 0,
+    last_visit: cards.map(c => c.last_visit).filter(Boolean).sort().pop() || null,
+  }));
+  out.sort((a, b) => (b.spent - a.spent) || (b.visits - a.visits));
+  res.json(out.slice(0, 30));
+});
+
 // Общий запрос выборки клиентов по фильтрам — используется и в /api/segments, и при создании списков
 function querySegment(f = {}) {
   const service = (f.service || '').toLowerCase().trim();
+  // Группа услуг из прайс-листа YClients («Маникюр/Педикюр», «Общие массажи» и т.п.).
+  // Категория лежит готовой в visits.service_category — денормализация из services.
+  const category = (f.category || '').toLowerCase().trim();
+  // Товар из покупок (таблица purchases): и купленные вместе с визитом, и отдельные продажи.
+  const good = (f.good || '').toLowerCase().trim();
+  // Что человек вообще брал в салоне:
+  //   'both'     — и услуги, и товары
+  //   'goods'    — только товары, ни одной услуги
+  //   'services' — только услуги, без единой покупки
+  // Считается по человеку целиком (обе карточки филиалов) — уже после склейки.
+  const goods = (f.goods || '').trim();
   const staff = (f.staff || '').toLowerCase().trim();
   const from = (f.from || '').trim();
   const to = (f.to || '').trim();
-  const minVisits = Math.max(1, Number(f.min_visits) || 1);
+  // Фильтр по товару должен находить и тех, кто НИ РАЗУ не был на услуге (купил и ушёл),
+  // поэтому при чистом товарном запросе порог визитов опускаем до нуля.
+  const hasVisitFilter = !!(service || category || (f.staff || '').trim() || (f.from || '').trim() || (f.to || '').trim());
+  const wantsGoods = !!(good || goods);
+  const minVisits = Number(f.min_visits) > 0
+    ? Number(f.min_visits)
+    : (wantsGoods && !hasVisitFilter ? 0 : 1);
   // Диапазон «сколько человек потратил всего» — как фильтр по пробегу у авто.
   // Считается по ПОЛНОЙ сумме человека (все карточки, все филиалы), а не по сумме
   // попавших в выборку визитов: иначе «клиенты от 300 тыс.» отсекались бы фильтром услуги.
@@ -346,13 +427,26 @@ function querySegment(f = {}) {
   const discount = (f.discount || '').trim();
   const discountFrom = Math.max(0, Number(f.discount_from) || 0);
 
-  const conds = ["v.status = 'completed'"];
+  // Условия делятся на два набора: по ВИЗИТУ они уходят в ON (иначе LEFT JOIN
+  // выродился бы в INNER и товарный фильтр терял бы покупателей без визитов),
+  // по КЛИЕНТУ — в WHERE.
+  const vConds = ["v.status = 'completed'"];
+  const vParams = [];
+  if (service) { vConds.push('lower_u(v.service) LIKE ?'); vParams.push('%' + service + '%'); }
+  if (category) { vConds.push("lower_u(COALESCE(v.service_category,'')) LIKE ?"); vParams.push('%' + category + '%'); }
+  if (staff) { vConds.push('lower_u(v.staff) LIKE ?'); vParams.push('%' + staff + '%'); }
+  if (from) { vConds.push('v.date >= ?'); vParams.push(from); }
+  if (to) { vConds.push('v.date <= ?'); vParams.push(to + 'T23:59:59'); }
+
+  const conds = [];
   const params = [];
   if (branch) { conds.push('c.branch = ?'); params.push(branch); }
-  if (service) { conds.push('lower_u(v.service) LIKE ?'); params.push('%' + service + '%'); }
-  if (staff) { conds.push('lower_u(v.staff) LIKE ?'); params.push('%' + staff + '%'); }
-  if (from) { conds.push('v.date >= ?'); params.push(from); }
-  if (to) { conds.push('v.date <= ?'); params.push(to + 'T23:59:59'); }
+  if (good) {
+    conds.push('EXISTS (SELECT 1 FROM purchases p WHERE p.client_id = c.id AND lower_u(p.title) LIKE ?)');
+    params.push('%' + good + '%');
+  } else if (goods === 'both' || goods === 'goods') {
+    conds.push('EXISTS (SELECT 1 FROM purchases p WHERE p.client_id = c.id)');
+  }
   if (comment) { conds.push('lower_u(COALESCE(c.comment,\'\')) LIKE ?'); params.push('%' + comment + '%'); }
   if (deposit === 'positive' || deposit === 'only') conds.push('COALESCE(c.yc_balance,0) > 0');
   else if (deposit === 'debt') conds.push('COALESCE(c.yc_balance,0) < 0');
@@ -371,20 +465,26 @@ function querySegment(f = {}) {
   // отметкой звонка из дашборда (она же уходит комментарием в карточку YClients).
   const isNew = (f.preset || '').trim() === 'new';
 
+  // Покупки клиента: при выбранном товаре — только по нему, иначе все (колонка «Товары»)
+  const goodSql = good ? ' AND lower_u(p.title) LIKE ?' : '';
+  const goodParams = good ? ['%' + good + '%', '%' + good + '%'] : [];
   const sql = `
     SELECT c.id, c.name, c.phone, c.branch, c.comment, COALESCE(c.do_not_call,0) AS do_not_call,
            c.visits_count AS total_visits, c.last_visit,
            COALESCE(c.yc_spent, c.spent, 0) AS real_spent, COALESCE(c.yc_balance,0) AS deposit_balance,
            COALESCE(c.discount_pct,0) AS discount,
+           (SELECT COUNT(*) FROM purchases p WHERE p.client_id = c.id${goodSql}) AS goods_count,
+           (SELECT COALESCE(ROUND(SUM(p.cost)),0) FROM purchases p WHERE p.client_id = c.id${goodSql}) AS goods_spent,
            COUNT(v.id) AS match_visits,
            MAX(v.date) AS last_match,
            ROUND(SUM(v.cost)) AS match_spent,
            GROUP_CONCAT(DISTINCT v.staff) AS masters
-    FROM clients c JOIN visits v ON v.client_id = c.id
+    FROM clients c LEFT JOIN visits v ON v.client_id = c.id AND ${vConds.join(' AND ')}
     WHERE ${conds.join(' AND ')}
     GROUP BY c.id
     LIMIT 20000`;
-  const rows = db.prepare(sql).all(...params);
+  // порядок параметров: подзапросы SELECT → условия ON → условия WHERE
+  const rows = db.prepare(sql).all(...goodParams, ...vParams, ...params);
 
   // Склейка карточек одного человека + отсев тех, у кого VIP-карточка в другом филиале
   const vipKeys = vipPersonKeys();
@@ -404,6 +504,8 @@ function querySegment(f = {}) {
       base.match_spent = cards.reduce((s, c) => s + (c.match_spent || 0), 0);
       base.total_visits = cards.reduce((s, c) => s + (c.total_visits || 0), 0);
       base.real_spent = cards.reduce((s, c) => s + (c.real_spent || 0), 0);
+      base.goods_count = cards.reduce((s, c) => s + (c.goods_count || 0), 0);
+      base.goods_spent = cards.reduce((s, c) => s + (c.goods_spent || 0), 0);
       base.deposit_balance = cards.reduce((s, c) => s + (c.deposit_balance || 0), 0);
       base.discount = Math.max(...cards.map(c => c.discount || 0)); // скидка бывает только в одной карточке
       base.last_match = cards.map(c => c.last_match).sort().pop();
@@ -411,6 +513,14 @@ function querySegment(f = {}) {
       base.do_not_call = cards.some(c => c.do_not_call) ? 1 : 0;
     }
     if (base.match_visits < minVisits) continue;
+    // Что человек брал: визиты считаем по всей его истории, покупки — по обеим карточкам
+    if (goods) {
+      const hasVisits = (base.total_visits || 0) > 0;
+      const hasGoods = (base.goods_count || 0) > 0;
+      if (goods === 'both' && !(hasVisits && hasGoods)) continue;
+      if (goods === 'goods' && (hasVisits || !hasGoods)) continue;
+      if (goods === 'services' && (hasGoods || !hasVisits)) continue;
+    }
     if (base.real_spent < spentFrom || base.real_spent > spentTo) continue;
     // NEW: ровно один визит за всю историю человека (по обеим карточкам)
     if (isNew && (base.total_visits || 0) !== 1) continue;
@@ -438,12 +548,34 @@ app.get('/api/segments', (req, res) => {
 
 // --- Списки-кампании обзвона -------------------------------------------------
 
+// Участники списка, собранного вручную: берём выбранные карточки как есть.
+// Никаких фильтров конструктора (VIP, «не беспокоить») — админ выбрал человека осознанно.
+function manualMembers(ids) {
+  const uniq = [...new Set(ids.map(Number).filter(Boolean))];
+  if (!uniq.length) return [];
+  const ph = uniq.map(() => '?').join(',');
+  const rows = db.prepare(`SELECT id, name, phone, branch, visits_count, COALESCE(yc_spent, spent, 0) AS spent
+    FROM clients WHERE id IN (${ph})`).all(...uniq);
+  // Один человек = карточка в КАЖДОМ филиале. Если выбраны обе — в списке он должен
+  // быть один раз, иначе админ дважды позвонит одному и тому же.
+  return people.groupByPerson(rows).map(cards => {
+    const main = cards.slice().sort((a, b) => (b.visits_count || 0) - (a.visits_count || 0))[0];
+    return {
+      id: main.id,
+      match_visits: cards.reduce((s, c) => s + (c.visits_count || 0), 0),
+      match_spent: cards.reduce((s, c) => s + (c.spent || 0), 0),
+    };
+  });
+}
+
 // Создать список из фильтра: снимок подходящих клиентов фиксируется в list_members
 app.post('/api/lists', (req, res) => {
-  const { name, filter, assignee } = req.body || {};
+  const { name, filter, assignee, client_ids } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'Укажите название списка' });
-  const rows = querySegment(filter || {});
-  if (rows.length === 0) return res.status(400).json({ error: 'Под эти условия никто не подходит' });
+  // Два способа набрать список: фильтром конструктора или поштучно выбранными клиентами.
+  const manual = Array.isArray(client_ids) && client_ids.length > 0;
+  const rows = manual ? manualMembers(client_ids) : querySegment(filter || {});
+  if (rows.length === 0) return res.status(400).json({ error: manual ? 'Не выбрано ни одного клиента' : 'Под эти условия никто не подходит' });
   const now = new Date().toISOString();
   const info = db.prepare('INSERT INTO lists(name,filter_json,assignee,status,created_at) VALUES(?,?,?,?,?)')
     .run(name.trim(), JSON.stringify(filter || {}), (assignee || '').trim() || null, 'active', now);
@@ -1066,6 +1198,11 @@ async function bootstrap() {
   if (f.discount_changed || f.dnc_changed) {
     console.log(`[bootstrap] признаки из имён: скидок обновлено ${f.discount_changed}, «не беспокоить» ${f.dnc_changed}`);
   }
+
+  // Группировка конструктора по услугам работает по visits.service_category —
+  // вся ранее загруженная история приехала до появления колонки, проставляем разово.
+  const cats = sync.backfillVisitCategories();
+  if (cats) console.log(`[bootstrap] категории услуг проставлены визитам: ${cats}`);
 
   const n = db.prepare('SELECT COUNT(*) n FROM clients').get().n;
   if (n === 0) {

@@ -132,13 +132,60 @@ const upsertClient = db.prepare(`
     company_id=excluded.company_id, branch=excluded.branch,
     name=excluded.name, phone=excluded.phone, updated_at=excluded.updated_at
 `);
-const upsertVisit = db.prepare(`
-  INSERT INTO visits (yclients_record_id, client_id, company_id, branch, date, service, staff, cost, status)
-  VALUES (?,?,?,?,?,?,?,?,?)
+const upsertVisitStmt = db.prepare(`
+  INSERT INTO visits (yclients_record_id, client_id, company_id, branch, date, service, staff, cost, status, service_category)
+  VALUES (?,?,?,?,?,?,?,?,?,?)
   ON CONFLICT(yclients_record_id) DO UPDATE SET
     client_id=excluded.client_id, company_id=excluded.company_id, branch=excluded.branch,
-    date=excluded.date, service=excluded.service, staff=excluded.staff, cost=excluded.cost, status=excluded.status
+    date=excluded.date, service=excluded.service, staff=excluded.staff, cost=excluded.cost,
+    status=excluded.status, service_category=excluded.service_category
 `);
+// Обёртка: категорию услуги считаем сами по прайс-листу, вызывающим об этом знать не нужно.
+const upsertVisit = {
+  run(recId, clientId, cid, branch, date, service, staff, cost, status) {
+    return upsertVisitStmt.run(recId, clientId, cid, branch, date, service, staff, cost, status,
+      categoriesOf(service));
+  },
+};
+
+// --- Категории услуг визита (денормализация прайс-листа) ---------------------
+// visits.service хранит названия услуг склеенными через ', '. Чтобы конструктор мог
+// фильтровать по ГРУППЕ услуг, держим рядом готовые названия категорий: иначе каждый
+// запрос сверял бы 108 тыс. визитов с 750 строками прайса.
+let svcCatCache = null;
+function serviceCatMap() {
+  if (svcCatCache) return svcCatCache;
+  const m = new Map();
+  const rows = db.prepare("SELECT title, category FROM services WHERE title <> '' AND COALESCE(category,'') <> ''").all();
+  for (const s of rows) m.set(String(s.title).toLowerCase().trim(), s.category);
+  svcCatCache = m;
+  return m;
+}
+// '' (а не NULL) для визитов без узнаваемой услуги — чтобы бэкфилл не перебирал их каждый раз
+function categoriesOf(serviceText) {
+  const m = serviceCatMap();
+  if (!m.size) return null;
+  const out = new Set();
+  for (const part of String(serviceText || '').split(', ')) {
+    const c = m.get(part.trim().toLowerCase());
+    if (c) out.add(c);
+  }
+  return out.size ? [...out].join(', ') : '';
+}
+// Проставляет категории визитам, у которых их ещё нет (после первой загрузки прайса
+// и для всей истории, приехавшей до появления этой колонки).
+function backfillVisitCategories() {
+  if (!serviceCatMap().size) return 0;
+  const rows = db.prepare("SELECT id, service FROM visits WHERE service_category IS NULL AND service <> ''").all();
+  if (!rows.length) return 0;
+  const upd = db.prepare('UPDATE visits SET service_category=? WHERE id=?');
+  db.exec('BEGIN');
+  try {
+    for (const r of rows) upd.run(categoriesOf(r.service), r.id);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  return rows.length;
+}
 const upsertPurchase = db.prepare(`
   INSERT INTO purchases (yc_id, client_id, company_id, branch, record_id, date, title, good_id, qty, cost, discount, staff, source, updated_at)
   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -350,6 +397,7 @@ async function syncServices(comp, now) {
     upsertService.run(s.id, cid, comp.name, s.title || '', cats[s.category_id] || '',
       s.price_min ?? null, s.price_max ?? null, s.active ? 1 : 0, now);
   }
+  svcCatCache = null; // прайс изменился — карта «услуга → категория» пересоберётся
   return rows.length;
 }
 
@@ -377,24 +425,22 @@ const DNC_RE = /(не\s*звон|не\s*беспоко|нельзя\s*звон|�
 
 // Персональные скидки в этом салоне админы пишут ТЕКСТОМ В ИМЕНИ клиента
 // («Ия Устинова -15%», «Смирнова Елена-20%»), а штатное поле discount карточки
-// YClients почти всегда пустое: из 12 проверенных «процентных» клиентов оно
-// заполнено у одного. Поэтому эффективную скидку собираем из трёх источников —
-// поле карточки, имя, комментарий — и берём максимум.
-// {1,2} намеренно: трёхзначные проценты это не скидка. По боевой базе шаблон даёт
-// 116 клиентов и ровно четыре значения (10/15/20/30) без ложных срабатываний.
+// YClients салон не заполняет вовсе (проверено на боевом: у всех «процентных»
+// клиентов card.discount = 0).
+// ИСТОЧНИК ТОЛЬКО ИМЯ (+ штатное поле, если его когда-нибудь начнут заполнять).
+// Комментарий НЕ используем намеренно: туда админы пишут про разовые скидки на
+// продажах («отдали шампунь -20%»), и такие клиенты ложно попадали в держатели
+// постоянной скидки. Постоянная скидка = та, что приписана к имени.
+// {1,2} намеренно: трёхзначные проценты это не скидка.
 const DISCOUNT_RE = /(\d{1,2})\s*%/;
 function parseDiscount(text) {
   const m = String(text || '').match(DISCOUNT_RE);
   const n = m ? Number(m[1]) : 0;
   return n > 0 && n <= 99 ? n : 0;
 }
-// Эффективная скидка клиента = max(поле YClients, скидка из имени, из комментария)
+// Эффективная скидка клиента = max(поле карточки YClients, скидка из имени)
 function effectiveDiscount(row) {
-  return Math.max(
-    Number(row.yc_discount) || 0,
-    parseDiscount(row.name),
-    parseDiscount(originalComment(row.comment)),
-  );
+  return Math.max(Number(row.yc_discount) || 0, parseDiscount(row.name));
 }
 const THROTTLE_MS = 350;
 let commentSync = { running: false, done: 0, total: 0 };
@@ -464,8 +510,8 @@ async function syncComments({ full = false } = {}) {
         const derived = (DNC_RE.test(originalComment(comment)) || DNC_RE.test(r.name || '')) ? 1 : 0;
         const flag = r.dnc_manual != null ? r.dnc_manual : derived; // ручная отметка из дашборда важнее
         const ycDisc = Number(card?.discount) || 0;
-        // скидка из карточки, из имени и из комментария — берём максимум
-        const pct = Math.max(ycDisc, parseDiscount(r.name), parseDiscount(originalComment(comment)));
+        // только карточка и имя — см. комментарий у effectiveDiscount()
+        const pct = Math.max(ycDisc, parseDiscount(r.name));
         upd.run(comment || null, flag, card?.spent ?? null, card?.balance ?? null,
           ycDisc, pct || null, iso(Date.now()), r.id);
         if (flag) dnc++;
@@ -573,6 +619,11 @@ async function run(opts = {}) {
   // («писать в WA», «не звонить» и т.п.). Имя обновляется каждым синком — пересчитываем флаг.
   recomputeFlags();
 
+  // Категории визитов: при первом синке прайс приезжает уже ПОСЛЕ визитов, а вся
+  // историческая догрузка легла в базу до появления колонки — доставляем здесь.
+  const catN = backfillVisitCategories();
+  if (catN) console.log(`[sync] категории услуг проставлены визитам: ${catN}`);
+
   const tasksN = rules.generate();
 
   // Комментарии тянем фоном ПОСЛЕ ответа: первый проход долгий (~350 мс на клиента),
@@ -586,7 +637,7 @@ async function run(opts = {}) {
 
 module.exports = {
   run, syncUpcoming, computeFrequency, toTrips, recomputeClient, rebuildAggregates, importRecord,
-  syncStandalonePurchases, purchasesFromRecord,
+  syncStandalonePurchases, purchasesFromRecord, backfillVisitCategories,
   syncComments, commentSyncStatus, recomputeFlags, parseDiscount, writeCallToYclients,
   CRM_MARK, originalComment, DNC_RE,
 };

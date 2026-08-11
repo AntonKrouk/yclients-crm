@@ -323,6 +323,18 @@
   .member.done{opacity:.45}
   .member .left{flex:1;min-width:0}
 
+  /* ── Ручная сборка списка в конструкторе ───────────────────────────────── */
+  .man-card{margin-top:14px}
+  .man-head{font-size:13px;color:var(--ink);margin-bottom:12px}
+  .man-head .muted{font-size:12px}
+  .man-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .man-chip{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;background:var(--panel2);
+    border:1px solid var(--line-strong);font-size:12.5px;color:var(--ink)}
+  .man-chip .x{cursor:pointer;color:var(--muted);font-size:14px;line-height:1}
+  .man-chip .x:hover{color:var(--red,#b3261e)}
+  .man-chip .sub{color:var(--muted);font-size:11px}
+  .man-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}
+
   /* ── VIP ───────────────────────────────────────────────────────────────── */
   .vip-add{position:relative}
   .vip-suggest{position:absolute;left:0;right:0;top:calc(100% + 8px);background:var(--panel);
@@ -596,9 +608,11 @@
   <section id="view-segments" style="display:none">
     <div class="card seg-filters">
       <div class="seg-grid">
-        <label class="segfld">Услуга содержит
-          <input id="segService" list="servicesList" placeholder="напр. массаж">
-          <datalist id="servicesList"></datalist>
+        <label class="segfld">Группа услуг
+          <select id="segCategory"><option value="">Все группы</option></select>
+        </label>
+        <label class="segfld">Услуга
+          <select id="segService"><option value="">Все услуги</option></select>
         </label>
         <label class="segfld">Мастер содержит
           <input id="segStaff" placeholder="напр. Полина">
@@ -646,6 +660,17 @@
             <option value="debt">Только с долгом</option>
           </select>
         </label>
+        <label class="segfld">Товар
+          <select id="segGood"><option value="">Все товары</option></select>
+        </label>
+        <label class="segfld">Что брал в салоне
+          <select id="segGoods">
+            <option value="">Не важно</option>
+            <option value="both">Услуги + товары</option>
+            <option value="goods">Только товары</option>
+            <option value="services">Только услуги</option>
+          </select>
+        </label>
       </div>
       <div class="seg-actions">
         <button class="btn primary" id="segRun">Показать</button>
@@ -658,8 +683,26 @@
       </div>
       <div class="seg-coverage"><a onclick="syncComments()">Обновить комментарии, суммы и скидки из YClients</a></div>
     </div>
+
+    <!-- Точечная сборка: список из конкретных людей, без фильтров -->
+    <div class="card man-card">
+      <div class="man-head">Собрать список вручную
+        <span class="muted">— найдите клиентов по одному и выведите их на дашборд отдельным списком</span>
+      </div>
+      <div class="vip-add">
+        <input class="search" id="manSearch" style="max-width:none" placeholder="Найти клиента по имени или телефону…">
+        <div id="manSuggest" class="vip-suggest"></div>
+      </div>
+      <div id="manChips" class="man-chips"></div>
+      <div class="man-acts" id="manActs" style="display:none">
+        <button class="btn primary" id="manToList">Вывести на дашборд</button>
+        <button class="btn" id="manClear">Очистить</button>
+        <span class="seg-summary muted" id="manSummary"></span>
+      </div>
+    </div>
+
     <div class="card" style="margin-top:14px;padding:0">
-      <table id="segTable"><thead><tr><th>Клиент</th><th>Телефон</th><th title="Услуг, попавших под условия выборки">Совпало услуг</th><th title="Походов в салон за всю историю (несколько услуг в один день = один визит)">Всего визитов</th><th>Потратил всего</th><th>Сумма по выборке</th><th>Последний</th><th>Мастера</th></tr></thead><tbody></tbody></table>
+      <table id="segTable"><thead><tr><th>Клиент</th><th>Телефон</th><th title="Услуг, попавших под условия выборки">Совпало услуг</th><th title="Походов в салон за всю историю (несколько услуг в один день = один визит)">Всего визитов</th><th>Потратил всего</th><th>Сумма по выборке</th><th title="Покупки товаров: количество и сумма">Товары</th><th>Последний</th><th>Мастера</th></tr></thead><tbody></tbody></table>
     </div>
   </section>
 
@@ -1514,15 +1557,38 @@ function closeDrawer(){$('#overlay').classList.remove('open');$('#drawer').class
 $('#overlay').onclick=closeDrawer;
 
 // --- ВЫБОРКИ ---
-let segLoaded=false, segResults=[], segFilter={};
+let segLoaded=false, segResults=[], segFilter={}, segServices=[];
 async function loadSegments(){
   if(segLoaded) return; segLoaded=true;
-  const svcs = await api(bp('/api/services-list'));
-  $('#servicesList').innerHTML = svcs.map(s=>{
-    const hint = s.count?`${s.count}×`:(s.in_price?'из прайса':'');
-    return `<option value="${s.name.replace(/"/g,'&quot;')}">${hint}</option>`;
-  }).join('');
+  const [svcs,cats,goods] = await Promise.all([
+    api(bp('/api/services-list')), api(bp('/api/service-categories')), api(bp('/api/goods-list')),
+  ]);
+  segServices = svcs;
+  // Группы услуг = категории прайса YClients. Вложенности в YClients нет — список плоский.
+  $('#segCategory').innerHTML = '<option value="">Все группы</option>' + cats.map(c=>
+    `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
+  renderServiceOptions();
+  $('#segGood').innerHTML = '<option value="">Все товары</option>' + goods.map(g=>
+    `<option value="${esc(g.title)}">${esc(g.title)}</option>`).join('');
 }
+// Услуги в выпадающем списке разложены по категориям прайса YClients — как в самом
+// YClients. Выбранная группа сужает список до своих услуг, «Прочее» — то, чего в прайсе нет.
+function renderServiceOptions(){
+  const cat = $('#segCategory')?.value || '';
+  const list = cat ? segServices.filter(s=>(s.category||'')===cat) : segServices;
+  const byCat = new Map();
+  for(const s of list){
+    const k = s.category || 'Прочее (нет в прайсе)';
+    if(!byCat.has(k)) byCat.set(k,[]);
+    byCat.get(k).push(s.name);
+  }
+  const groups=[...byCat.entries()].sort((a,b)=>a[0].localeCompare(b[0],'ru'));
+  $('#segService').innerHTML = '<option value="">Все услуги</option>' + groups.map(([g,names])=>
+    `<optgroup label="${esc(g)}">` +
+    names.sort((a,b)=>a.localeCompare(b,'ru')).map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('') +
+    '</optgroup>').join('');
+}
+const esc = s => String(s??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
 // Ручной полный проход по карточкам YClients. Инкрементальный идёт сам после каждого
 // ночного синка — эта кнопка нужна, чтобы обновить разом всех, включая давно не заходивших.
 async function syncComments(){
@@ -1536,7 +1602,10 @@ let segPresetNew=false;
 function currentFilter(){
   const f={};
   if(segPresetNew) f.preset='new';
+  const cat=$('#segCategory').value.trim(); if(cat)f.category=cat;
   const service=$('#segService').value.trim(); if(service)f.service=service;
+  const good=$('#segGood').value.trim(); if(good)f.good=good;
+  const goods=$('#segGoods').value; if(goods)f.goods=goods;
   const staff=$('#segStaff').value.trim(); if(staff)f.staff=staff;
   const from=$('#segFrom').value; if(from)f.from=from;
   const to=$('#segTo').value; if(to)f.to=to;
@@ -1554,7 +1623,12 @@ function currentFilter(){
 function filterLabel(f){
   if(f.preset==='new') return 'NEW — первички (NPS)';
   const parts=[];
+  if(f.category)parts.push('группа «'+f.category+'»');
   if(f.service)parts.push('«'+f.service+'»');
+  if(f.good)parts.push('товар «'+f.good+'»');
+  if(f.goods==='both')parts.push('услуги + товары');
+  else if(f.goods==='goods')parts.push('только товары');
+  else if(f.goods==='services')parts.push('только услуги');
   if(f.staff)parts.push('мастер '+f.staff);
   if(f.from||f.to)parts.push(`${f.from||'…'}–${f.to||'…'}`);
   if(f.min_visits)parts.push('визитов≥'+f.min_visits);
@@ -1593,10 +1667,11 @@ async function runSegment(){
       <td>${c.total_visits||0}</td>
       <td><b>${rub(c.real_spent)}</b></td>
       <td>${rub(c.match_spent)}</td>
+      <td title="Покупки товаров${segFilter.good?' по фильтру «'+segFilter.good+'»':''}">${c.goods_count?`${c.goods_count}× · ${rub(c.goods_spent)}`:'—'}</td>
       <td>${fmtDate(c.last_match)}</td>
       <td class="muted" style="font-size:12px">${(c.masters||'').split(',').slice(0,3).join(', ')}</td>
     </tr>`;
-  }).join('') || '<tr><td colspan="8" class="empty">Ничего не найдено под эти условия</td></tr>';
+  }).join('') || '<tr><td colspan="9" class="empty">Ничего не найдено под эти условия</td></tr>';
 }
 async function createListFromFilter(){
   if(!segResults.length) return;
@@ -1612,6 +1687,59 @@ async function createListFromFilter(){
     document.querySelector('[data-view="tasks"]').click();
   }catch(e){toast('Не удалось создать список');}
 }
+// --- Точечная сборка списка -------------------------------------------------
+// Фильтры конструктора отвечают на «кого позвать по признаку», а этот блок — на
+// «позвать вот этих конкретных». Клиенты копятся чипами и уходят одним списком.
+const manPicked=new Map();
+let manTimer;
+$('#manSearch').oninput=e=>{clearTimeout(manTimer);manTimer=setTimeout(()=>manSuggest(e.target.value),250);};
+async function manSuggest(q){
+  const box=$('#manSuggest');
+  if(!q.trim()){box.classList.remove('open');box.innerHTML='';return;}
+  const list=await api('/api/client-search?q='+encodeURIComponent(q));
+  box.classList.add('open');
+  box.innerHTML = list.length ? list.map(c=>{
+    const on=manPicked.has(c.id);
+    return `<div class="vip-sug ${on?'added':''}" ${on?'':`onclick="manAdd(${c.id},'${q1(c.name)}','${q1(c.phone||'')}')"`}>
+      <div>
+        <div class="nm">${c.do_not_call?ICON.ban:''}${c.name||'Без имени'}${(c.branches||[]).map(branchTag).join('')}${discTag(c.discount)}</div>
+        <div class="mt">${c.phone||'—'} · ${c.visits} визитов · последний ${fmtDate(c.last_visit)}${on?' · уже выбран':''}</div>
+      </div>
+      <div class="sp">${rub(c.spent)}</div>
+    </div>`;
+  }).join('') : '<div class="vip-sug" style="cursor:default"><div class="mt">Никого не найдено</div></div>';
+}
+function manAdd(id,name,phone){
+  manPicked.set(id,{name,phone});
+  $('#manSearch').value='';$('#manSuggest').classList.remove('open');
+  renderManChips();
+}
+function manRemove(id){manPicked.delete(id);renderManChips();}
+function renderManChips(){
+  const box=$('#manChips');
+  box.innerHTML=[...manPicked.entries()].map(([id,c])=>
+    `<span class="man-chip">${c.name||'Без имени'}${c.phone?`<span class="sub">${c.phone}</span>`:''}
+      <span class="x" onclick="manRemove(${id})" title="Убрать">✕</span></span>`).join('');
+  $('#manActs').style.display = manPicked.size ? 'flex' : 'none';
+  $('#manSummary').textContent = manPicked.size ? `Выбрано: ${plural(manPicked.size,'клиент','клиента','клиентов')}` : '';
+}
+$('#manClear').onclick=()=>{manPicked.clear();renderManChips();};
+$('#manToList').onclick=async()=>{
+  if(!manPicked.size) return;
+  const name=prompt('Название списка для дашборда:','Точечный обзвон');
+  if(!name) return;
+  const assignee=prompt('Ответственный администратор (пусто — без ответственного):', currentAdmin()||'');
+  if(assignee===null) return;
+  try{
+    const r=await api('/api/lists',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name,assignee,client_ids:[...manPicked.keys()]})});
+    if(r.error){toast(r.error);return;}
+    toast(`Список «${name}» создан: ${r.members} клиентов`);
+    manPicked.clear();renderManChips();
+    document.querySelector('[data-view="tasks"]').click();
+  }catch(e){toast('Не удалось создать список');}
+};
+
 $('#segRun').onclick=runSegment;
 $('#segToList').onclick=createListFromFilter;
 // NEW — готовый пресет первичек для NPS-обзвона. Остальные фильтры продолжают работать
@@ -1625,9 +1753,11 @@ $('#segNew').onclick=()=>{
 // Автопоиск при вводе любого критерия (с задержкой), чтобы список появлялся сразу
 let segTimer;
 const segAuto=()=>{clearTimeout(segTimer);segTimer=setTimeout(runSegment,350);};
-['segService','segStaff','segFrom','segTo','segMinVisits','segSpentFrom','segSpentTo','segDiscountFrom','segComment'].forEach(id=>$('#'+id).addEventListener('input',segAuto));
-['segFrom','segTo','segDnc','segDeposit','segDiscount'].forEach(id=>$('#'+id).addEventListener('change',segAuto));
-$('#segReset').onclick=()=>{clearTimeout(segTimer);['segService','segStaff','segFrom','segTo','segComment','segDnc','segDeposit','segSpentFrom','segSpentTo','segDiscount','segDiscountFrom'].forEach(id=>$('#'+id).value='');$('#segMinVisits').value='1';segPresetNew=false;$('#segNew').classList.remove('on');$('#segNewHint').classList.remove('on');$('#segSummary').textContent='';$('#segTable tbody').innerHTML='';$('#segToList').disabled=true;segResults=[];};
+['segStaff','segFrom','segTo','segMinVisits','segSpentFrom','segSpentTo','segDiscountFrom','segComment'].forEach(id=>$('#'+id).addEventListener('input',segAuto));
+['segFrom','segTo','segDnc','segDeposit','segDiscount','segGoods','segService','segGood'].forEach(id=>$('#'+id).addEventListener('change',segAuto));
+// Группа услуг заодно сужает подсказки в поле «Услуга содержит»
+$('#segCategory').addEventListener('change',()=>{renderServiceOptions();segAuto();});
+$('#segReset').onclick=()=>{clearTimeout(segTimer);['segService','segStaff','segFrom','segTo','segComment','segDnc','segDeposit','segSpentFrom','segSpentTo','segDiscount','segDiscountFrom','segCategory','segGood','segGoods'].forEach(id=>$('#'+id).value='');$('#segMinVisits').value='1';segPresetNew=false;$('#segNew').classList.remove('on');$('#segNewHint').classList.remove('on');$('#segSummary').textContent='';$('#segTable tbody').innerHTML='';$('#segToList').disabled=true;segResults=[];renderServiceOptions();};
 
 // --- Обновление ---
 // Дёргаем ТОЛЬКО будущие записи (окно «сегодня → +180 дн», 3-6 секунд). Нужно, когда
