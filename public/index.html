@@ -413,7 +413,8 @@
     border:1px solid var(--line);padding:16px 20px;margin-bottom:-1px}
   .jr-res{flex:0 0 auto;font-size:9.5px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;
     padding:3px 9px;white-space:nowrap;margin-top:3px;border:1px solid var(--line-strong);color:var(--muted)}
-  .jr-res.booked{color:var(--green);border-color:var(--green);background:var(--green-soft)}
+  /* «придёт» — такой же успешный итог звонка, как запись, только без брони в YClients */
+  .jr-res.booked,.jr-res.coming{color:var(--green);border-color:var(--green);background:var(--green-soft)}
   .jr-res.refused{color:var(--red);border-color:var(--red);background:var(--red-soft)}
   .jr-res.callback{color:var(--amber);border-color:var(--amber);background:var(--amber-soft)}
   .jr-body{flex:1;min-width:0}
@@ -1373,7 +1374,14 @@ async function act(taskId,result,btn){
   if(result==='callback'||result==='no_answer'){ openSnooze({kind:'task',taskId,result,btn}); return; }
   await sendAct(taskId,result,btn,null);
 }
+// Пока запрос в пути, вторая кнопка не срабатывает: иначе быстрый двойной клик уходил
+// двумя запросами (сервер их всё равно склеит, но лишний звонок в YClients ни к чему).
+let actBusy=false;
 async function sendAct(taskId,result,btn,until){
+  if(actBusy) return; actBusy=true;
+  try{ await doSendAct(taskId,result,btn,until); } finally { actBusy=false; }
+}
+async function doSendAct(taskId,result,btn,until){
   const note = $('#note-'+taskId)?.value || '';
   const admin = requireAdmin(); if(!admin) return;
   await api(`/api/tasks/${taskId}/action`,{method:'POST',headers:{'Content-Type':'application/json'},
@@ -1583,6 +1591,10 @@ async function memAct(listId,memberId,result,btn){
   await sendMemAct(listId,memberId,result,btn,null);
 }
 async function sendMemAct(listId,memberId,result,btn,until){
+  if(actBusy) return; actBusy=true;
+  try{ await doSendMemAct(listId,memberId,result,btn,until); } finally { actBusy=false; }
+}
+async function doSendMemAct(listId,memberId,result,btn,until){
   const note=$('#memnote-'+memberId)?.value||'';
   const admin=requireAdmin(); if(!admin) return;
   await api(`/api/lists/${listId}/members/${memberId}/action`,{method:'POST',headers:{'Content-Type':'application/json'},

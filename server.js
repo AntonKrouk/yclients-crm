@@ -644,8 +644,7 @@ function applyMemberAction(memberId, { result, note, admin, snooze_until } = {})
   db.prepare(`UPDATE list_members SET status=?, result=?, note=?, admin=?, updated_at=?,
               draft_note=NULL, callback_at=? WHERE id=?`)
     .run(status, result || null, text, admin || 'admin', new Date().toISOString(), until, m.id);
-  db.prepare('INSERT INTO task_actions(task_id,member_id,client_id,admin,result,note,created_at) VALUES(NULL,?,?,?,?,?,?)')
-    .run(m.id, m.client_id, admin || 'admin', result || null, text, new Date().toISOString());
+  recordAction({ memberId: m.id, clientId: m.client_id, admin: admin || 'admin', result: result || null, note: text });
 
   // Пишем результат звонка обратно в карточку клиента YClients (фоном)
   setImmediate(() => sync.writeCallToYclients(m.client_id, { result, note: text, admin })
@@ -750,6 +749,27 @@ const todayPlus = (days) => {
   return d.toISOString().slice(0, 10);
 };
 
+// Один звонок — одна строка в журнале. Админ нажимает кнопку дважды (промахнулся,
+// не понял, что сработало, или сразу уточнил результат) — это по-прежнему тот же звонок,
+// поэтому свежую запись обновляем, а не плодим новую. Разговор через час — уже новая.
+const SAME_CALL_MINUTES = 10;
+function recordAction({ taskId = null, memberId = null, clientId, admin, result, note }) {
+  const now = new Date().toISOString();
+  const since = new Date(Date.now() - SAME_CALL_MINUTES * 60000).toISOString();
+  const key = taskId ? 'task_id' : (memberId ? 'member_id' : null);
+  const recent = key
+    ? db.prepare(`SELECT id FROM task_actions WHERE ${key}=? AND created_at >= ?
+                  ORDER BY created_at DESC, id DESC LIMIT 1`).get(taskId || memberId, since)
+    : null;
+  if (recent) {
+    db.prepare('UPDATE task_actions SET admin=?, result=?, note=?, created_at=? WHERE id=?')
+      .run(admin, result, note, now, recent.id);
+    return recent.id;
+  }
+  return db.prepare(`INSERT INTO task_actions (task_id, member_id, client_id, admin, result, note, created_at)
+                     VALUES (?,?,?,?,?,?,?)`).run(taskId, memberId, clientId, admin, result, note, now).lastInsertRowid;
+}
+
 function applyTaskAction(rawTaskId, { result, note, admin, snooze_days, snooze_until } = {}) {
   const taskId = Number(rawTaskId);
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
@@ -758,10 +778,7 @@ function applyTaskAction(rawTaskId, { result, note, admin, snooze_days, snooze_u
   // Заметку берём из запроса, но если она пуста — из черновика (админ мог печатать
   // в другой вкладке или нажать кнопку до того, как черновик долетел обратно в поле)
   const text = (note && note.trim()) ? note : (task.draft_note || '');
-  db.prepare(`
-    INSERT INTO task_actions (task_id, client_id, admin, result, note, created_at)
-    VALUES (?,?,?,?,?,?)
-  `).run(taskId, task.client_id, admin || 'admin', result || null, text, new Date().toISOString());
+  recordAction({ taskId, clientId: task.client_id, admin: admin || 'admin', result: result || null, note: text });
   db.prepare('UPDATE tasks SET draft_note=NULL WHERE id=?').run(taskId);
 
   // Логика статуса: перезвонить → откладываем; иначе закрываем
