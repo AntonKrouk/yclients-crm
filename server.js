@@ -1322,10 +1322,16 @@ function journalHandler(scope) {
   if (filterAdmin) { conds.push('a.admin = ?'); args.push(filterAdmin); }
   if (filterResult) { conds.push('a.result = ?'); args.push(filterResult); }
 
+  // К «перезвонить» и «не ответил» показываем ДОГОВОРЁННОСТЬ: когда именно набрать снова.
+  // Срок живёт в задаче (due_date) или в строке списка (callback_at) — берём тот, что есть.
   const rows = db.prepare(`
     SELECT a.id, a.created_at, a.admin, a.result, a.note,
+           COALESCE(t.due_date, m.callback_at) AS callback_at,
            c.id AS client_id, c.name, c.phone, c.branch
-    FROM task_actions a JOIN clients c ON c.id = a.client_id
+    FROM task_actions a
+    JOIN clients c ON c.id = a.client_id
+    LEFT JOIN tasks t ON t.id = a.task_id AND t.status = 'snoozed'
+    LEFT JOIN list_members m ON m.id = a.member_id AND m.status = 'snoozed'
     WHERE ${conds.join(' AND ')}
     ORDER BY a.created_at DESC
     LIMIT 300

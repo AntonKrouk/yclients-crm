@@ -123,6 +123,19 @@
     font:inherit;font-size:11px;color:var(--muted);border-bottom:1px solid var(--line-strong)}
   .jr-fix:hover{color:var(--ink)}
   .fix-row{margin:4px 0 18px}
+  /* напоминание «набрать завтра в 15:00» рядом с результатом в журнале */
+  .jr-callback{display:inline-flex;align-items:center;gap:5px;margin-top:5px;font-size:12px;
+    color:var(--amber);border:1px solid #E2CFA6;background:var(--amber-soft);padding:2px 8px}
+  .jr-callback svg{width:11px;height:11px}
+  /* отложенные и обработанные участники списка — под свёртками, чтобы не мешали работе */
+  .mem-group{border-top:1px solid var(--line)}
+  .mem-group>summary{cursor:pointer;padding:12px 0;font-size:11px;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--muted);list-style:none}
+  .mem-group>summary::-webkit-details-marker{display:none}
+  .mem-group>summary::before{content:'▸ ';font-size:13px}
+  .mem-group[open]>summary::before{content:'▾ '}
+  .mem-group>summary:hover{color:var(--ink)}
+  .mem-group .member:first-of-type{border-top:none}
   .tname{font-family:var(--serif);font-weight:400;font-size:18px;cursor:pointer;color:var(--ink);
     letter-spacing:.01em;line-height:1.3}
   .tname:hover{text-decoration:underline;text-underline-offset:3px}
@@ -1394,8 +1407,10 @@ function snoozeQuickOptions(){
   const now=new Date();
   const later=new Date(now.getTime()+2*3600e3); later.setMinutes(0,0,0);
   const out=[];
-  if(later.getHours()<21) out.push({lbl:'Позже сегодня',sub:`в ${pad2(later.getHours())}:00`,
-    date:ymd(now),time:`${pad2(later.getHours())}:00`});
+  // «Позже сегодня» предлагаем, только если эти два часа не перевалили за полночь
+  // и салон ещё работает — иначе вариант бессмысленный
+  if(ymd(later)===ymd(now) && later.getHours()<21) out.push({lbl:'Позже сегодня',
+    sub:`в ${pad2(later.getHours())}:00`, date:ymd(later), time:`${pad2(later.getHours())}:00`});
   const d1=new Date(Date.now()+864e5), d3=new Date(Date.now()+3*864e5), d7=new Date(Date.now()+7*864e5);
   out.push({lbl:'Завтра',sub:`${pad2(d1.getDate())}.${pad2(d1.getMonth()+1)}`,date:ymd(d1),time:''});
   out.push({lbl:'Через 3 дня',sub:`${pad2(d3.getDate())}.${pad2(d3.getMonth()+1)}`,date:ymd(d3),time:''});
@@ -1508,8 +1523,22 @@ async function toggleList(id){
   if(who && [...sel.options].some(o=>o.value===who)) sel.value=who;
   const body=$('#lb-body-'+id);
   body.innerHTML='<div class="muted" style="padding:12px 0">Загрузка…</div>';
-  const members=await api(`/api/lists/${id}/members`);
-  body.innerHTML = members.map(m=>renderMember(id,m)).join('');
+  body.innerHTML = renderMembers(id, await api(`/api/lists/${id}/members`));
+}
+// В работе остаются только те, кому ещё звонить сегодня. Отложенные «на потом» и уже
+// обработанные не мозолят глаза — они под свёртками внизу, вместе с их результатами.
+function renderMembers(listId,members){
+  const today=ymd(new Date());
+  const soon=m=>m.status!=='done'&&(m.status!=='snoozed'||(m.callback_at||'').slice(0,10)<=today);
+  const active=members.filter(soon);
+  const later=members.filter(m=>m.status==='snoozed'&&!soon(m));
+  const done=members.filter(m=>m.status==='done');
+  const group=(list,label)=>list.length
+    ? `<details class="mem-group"><summary>${label} · ${list.length}</summary>
+         ${list.map(m=>renderMember(listId,m)).join('')}</details>` : '';
+  return (active.length? active.map(m=>renderMember(listId,m)).join('')
+       : '<div class="empty">Все обработаны — загляните в свёртки ниже</div>')
+    + group(later,'Отложенные') + group(done,'Обработанные');
 }
 function renderMember(listId,m){
   const done=m.status==='done';
@@ -1520,7 +1549,7 @@ function renderMember(listId,m){
   return `<div class="member ${done?'done':''}${m.callback_today?' callback-today':''}${later?' later':''}" id="mem-${m.member_id}">
     <div class="left">
       ${m.callback_today?`<span class="cb-badge">${ICON.clock}перезвонить${cbTime(m.callback_at)}</span>`:''}
-      ${later?`<span class="cb-badge later">${ICON.clock}${m.result==='no_calls'?'не звонить до':'перезвонить'} ${fmtDate(m.callback_at)}</span>`:''}
+      ${later?`<span class="cb-badge later">${ICON.clock}${m.result==='no_calls'?'не звонить до':'перезвонить'} ${whenLabel(m.callback_at)}</span>`:''}
       <div class="tname" onclick="openClient(${m.client_id})">${m.name||'Без имени'}</div>
       <div class="tmeta"><span class="phone">${m.phone||'—'}</span> · совпадений: ${m.match_visits} · ${rub(m.match_spent)}${m.favorite_staff?' · '+m.favorite_staff:''}</div>
       ${done?`<div class="treason">✓ ${R[m.result]||'обработан'}${m.note?' — «'+m.note+'»':''} · ${m.admin||''}
@@ -1568,7 +1597,7 @@ async function sendMemAct(listId,memberId,result,btn,until){
 async function reloadListBlock(listId){
   const members=await api(`/api/lists/${listId}/members`);
   const body=$('#lb-body-'+listId);
-  if(body) body.innerHTML=members.map(m=>renderMember(listId,m)).join('');
+  if(body) body.innerHTML=renderMembers(listId,members);
   const done=members.filter(m=>m.status==='done'||m.status==='snoozed').length;  // «перезвонить» тоже работа
   const block=document.querySelector(`.listblock[data-id="${listId}"]`);
   if(!block) return;
@@ -1630,6 +1659,7 @@ async function renderJournal(base,days,result,box){
       <span class="jr-res ${it.result||'no_answer'}">${JR_RES[it.result]||'звонок'}</span>
       <div class="jr-body">
         <div class="jr-name" onclick="openClient(${it.client_id})">${it.name||'Без имени'}${branchTag(it.branch)}</div>
+        ${it.callback_at?`<div class="jr-callback">${ICON.clock}${it.result==='no_calls'?'не звонить до':'набрать'} ${whenLabel(it.callback_at)}</div>`:''}
         <div class="jr-meta"><span class="phone">${it.phone||'—'}</span> · звонил: <b>${it.admin||'—'}</b></div>
         ${it.note?`<div class="jr-note">«${it.note}»</div>`:''}
         ${booking}
