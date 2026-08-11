@@ -209,6 +209,27 @@ ensureColumn('list_members', 'callback_at', 'TEXT');
 // в ленте. У звонков по задачам эту роль играет task_id.
 ensureColumn('task_actions', 'member_id', 'INTEGER');
 
+// Разовая уборка журнала: до появления склейки каждое нажатие кнопки заводило новую
+// запись, и один звонок распадался на два-три (админ уточнял результат или жал дважды).
+// Схлопываем такие пачки — оставляем последнюю запись, в ней итоговый результат.
+// Перед удалением кладём рядом копию базы: откатиться проще, чем восстанавливать.
+if (!db.prepare("SELECT value FROM meta WHERE key='dedupe_actions_v1'").get()) {
+  const dup = db.prepare(`SELECT COUNT(*) n FROM task_actions a
+    JOIN task_actions b ON b.client_id = a.client_id AND b.id > a.id
+      AND abs(julianday(a.created_at) - julianday(b.created_at)) * 1440 < 10`).get().n;
+  if (dup) {
+    try {
+      fs.copyFileSync(path.join(DATA_DIR, 'crm.db'), path.join(DATA_DIR, 'crm-before-dedup.db'));
+    } catch (e) { console.error('[migrate] копию базы сделать не удалось:', e.message); }
+    const n = db.prepare(`DELETE FROM task_actions WHERE id IN (
+      SELECT a.id FROM task_actions a
+      JOIN task_actions b ON b.client_id = a.client_id AND b.id > a.id
+        AND abs(julianday(a.created_at) - julianday(b.created_at)) * 1440 < 10)`).run().changes;
+    console.log(`[migrate] схлопнуто дублей в журнале звонков: ${n}`);
+  }
+  db.prepare("INSERT INTO meta(key,value) VALUES('dedupe_actions_v1','1')").run();
+}
+
 // Разовая уборка: клиент уже дал окончательный ответ (записался, придёт, отказался,
 // просил не звонить), а строки списков висели «в работе» — раньше звонок не всегда был
 // привязан к строке, да и один человек попадает сразу в несколько списков.
