@@ -787,16 +787,10 @@
             <option value="debt">Только с долгом</option>
           </select>
         </label>
-        <label class="segfld">Товар
-          <select id="segGood"><option value="">Все товары</option></select>
-        </label>
-        <label class="segfld">Что брал в салоне
-          <select id="segGoods">
-            <option value="">Не важно</option>
-            <option value="both">Услуги + товары</option>
-            <option value="goods">Только товары</option>
-            <option value="services">Только услуги</option>
-          </select>
+        <label class="segfld">Товар содержит
+          <input id="segGood" list="segGoodList" placeholder="все товары — или часть названия"
+                 autocomplete="off">
+          <datalist id="segGoodList"></datalist>
         </label>
       </div>
       <div class="seg-actions">
@@ -2040,8 +2034,10 @@ async function loadSegments(){
   $('#segCategory').innerHTML = '<option value="">Все группы</option>' + cats.map(c=>
     `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
   renderServiceOptions();
-  $('#segGood').innerHTML = '<option value="">Все товары</option>' + goods.map(g=>
-    `<option value="${esc(g.title)}">${esc(g.title)}</option>`).join('');
+  // Товар — комбобокс: можно выбрать из фактически проданных, а можно вписать часть
+  // названия руками (сервер ищет по LIKE). В datalist value = чистое название, детали в label.
+  $('#segGoodList').innerHTML = goods.map(g=>
+    `<option value="${esc(g.title)}" label="${esc(g.purchases)}× · ${esc(g.clients)} клиентов"></option>`).join('');
 }
 // Услуги в выпадающем списке разложены по категориям прайса YClients — как в самом
 // YClients. Выбранная группа сужает список до своих услуг, «Прочее» — то, чего в прайсе нет.
@@ -2077,7 +2073,6 @@ function currentFilter(){
   const cat=$('#segCategory').value.trim(); if(cat)f.category=cat;
   const service=$('#segService').value.trim(); if(service)f.service=service;
   const good=$('#segGood').value.trim(); if(good)f.good=good;
-  const goods=$('#segGoods').value; if(goods)f.goods=goods;
   const staff=$('#segStaff').value.trim(); if(staff)f.staff=staff;
   const from=$('#segFrom').value; if(from)f.from=from;
   const to=$('#segTo').value; if(to)f.to=to;
@@ -2098,9 +2093,6 @@ function filterLabel(f){
   if(f.category)parts.push('группа «'+f.category+'»');
   if(f.service)parts.push('«'+f.service+'»');
   if(f.good)parts.push('товар «'+f.good+'»');
-  if(f.goods==='both')parts.push('услуги + товары');
-  else if(f.goods==='goods')parts.push('только товары');
-  else if(f.goods==='services')parts.push('только услуги');
   if(f.staff)parts.push('мастер '+f.staff);
   if(f.from||f.to)parts.push(`${f.from||'…'}–${f.to||'…'}`);
   if(f.min_visits)parts.push('визитов≥'+f.min_visits);
@@ -2248,11 +2240,11 @@ $('#segNew').onclick=()=>{
 // Автопоиск при вводе любого критерия (с задержкой), чтобы список появлялся сразу
 let segTimer;
 const segAuto=()=>{clearTimeout(segTimer);segTimer=setTimeout(runSegment,350);};
-['segStaff','segFrom','segTo','segMinVisits','segSpentFrom','segSpentTo','segDiscountFrom','segComment'].forEach(id=>$('#'+id).addEventListener('input',segAuto));
-['segFrom','segTo','segDnc','segDeposit','segDiscount','segGoods','segService','segGood'].forEach(id=>$('#'+id).addEventListener('change',segAuto));
+['segStaff','segFrom','segTo','segMinVisits','segSpentFrom','segSpentTo','segDiscountFrom','segComment','segGood'].forEach(id=>$('#'+id).addEventListener('input',segAuto));
+['segFrom','segTo','segDnc','segDeposit','segDiscount','segService','segGood'].forEach(id=>$('#'+id).addEventListener('change',segAuto));
 // Группа услуг заодно сужает подсказки в поле «Услуга содержит»
 $('#segCategory').addEventListener('change',()=>{renderServiceOptions();segAuto();});
-$('#segReset').onclick=()=>{clearTimeout(segTimer);['segService','segStaff','segFrom','segTo','segComment','segDnc','segDeposit','segSpentFrom','segSpentTo','segDiscount','segDiscountFrom','segCategory','segGood','segGoods'].forEach(id=>$('#'+id).value='');$('#segMinVisits').value='1';segPresetNew=false;$('#segNew').classList.remove('on');$('#segNewHint').classList.remove('on');$('#segSummary').textContent='';$('#segTable tbody').innerHTML='';$('#segToList').disabled=true;segResults=[];segExcluded.clear();renderServiceOptions();};
+$('#segReset').onclick=()=>{clearTimeout(segTimer);['segService','segStaff','segFrom','segTo','segComment','segDnc','segDeposit','segSpentFrom','segSpentTo','segDiscount','segDiscountFrom','segCategory','segGood'].forEach(id=>$('#'+id).value='');$('#segMinVisits').value='1';segPresetNew=false;$('#segNew').classList.remove('on');$('#segNewHint').classList.remove('on');$('#segSummary').textContent='';$('#segTable tbody').innerHTML='';$('#segToList').disabled=true;segResults=[];segExcluded.clear();renderServiceOptions();};
 
 // --- Обновление ---
 // Дёргаем ТОЛЬКО будущие записи (окно «сегодня → +180 дн», 3-6 секунд). Нужно, когда

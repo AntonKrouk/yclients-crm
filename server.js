@@ -399,20 +399,15 @@ function querySegment(f = {}) {
   // Категория лежит готовой в visits.service_category — денормализация из services.
   const category = (f.category || '').toLowerCase().trim();
   // Товар из покупок (таблица purchases): и купленные вместе с визитом, и отдельные продажи.
+  // Поле — свободный ввод, поэтому ищем по вхождению названия.
   const good = (f.good || '').toLowerCase().trim();
-  // Что человек вообще брал в салоне:
-  //   'both'     — и услуги, и товары
-  //   'goods'    — только товары, ни одной услуги
-  //   'services' — только услуги, без единой покупки
-  // Считается по человеку целиком (обе карточки филиалов) — уже после склейки.
-  const goods = (f.goods || '').trim();
   const staff = (f.staff || '').toLowerCase().trim();
   const from = (f.from || '').trim();
   const to = (f.to || '').trim();
   // Фильтр по товару должен находить и тех, кто НИ РАЗУ не был на услуге (купил и ушёл),
   // поэтому при чистом товарном запросе порог визитов опускаем до нуля.
   const hasVisitFilter = !!(service || category || (f.staff || '').trim() || (f.from || '').trim() || (f.to || '').trim());
-  const wantsGoods = !!(good || goods);
+  const wantsGoods = !!good;
   const minVisits = Number(f.min_visits) > 0
     ? Number(f.min_visits)
     : (wantsGoods && !hasVisitFilter ? 0 : 1);
@@ -448,8 +443,6 @@ function querySegment(f = {}) {
   if (good) {
     conds.push('EXISTS (SELECT 1 FROM purchases p WHERE p.client_id = c.id AND lower_u(p.title) LIKE ?)');
     params.push('%' + good + '%');
-  } else if (goods === 'both' || goods === 'goods') {
-    conds.push('EXISTS (SELECT 1 FROM purchases p WHERE p.client_id = c.id)');
   }
   if (comment) { conds.push('lower_u(COALESCE(c.comment,\'\')) LIKE ?'); params.push('%' + comment + '%'); }
   if (deposit === 'positive' || deposit === 'only') conds.push('COALESCE(c.yc_balance,0) > 0');
@@ -517,14 +510,6 @@ function querySegment(f = {}) {
       base.do_not_call = cards.some(c => c.do_not_call) ? 1 : 0;
     }
     if (base.match_visits < minVisits) continue;
-    // Что человек брал: визиты считаем по всей его истории, покупки — по обеим карточкам
-    if (goods) {
-      const hasVisits = (base.total_visits || 0) > 0;
-      const hasGoods = (base.goods_count || 0) > 0;
-      if (goods === 'both' && !(hasVisits && hasGoods)) continue;
-      if (goods === 'goods' && (hasVisits || !hasGoods)) continue;
-      if (goods === 'services' && (hasGoods || !hasVisits)) continue;
-    }
     if (base.real_spent < spentFrom || base.real_spent > spentTo) continue;
     // NEW: ровно один визит за всю историю человека (по обеим карточкам)
     if (isNew && (base.total_visits || 0) !== 1) continue;
