@@ -998,63 +998,105 @@ app.get('/api/booking/times', async (req, res) => {
   } catch (e) { console.error('[booking/times]', e.message); res.status(502).json({ error: e.message }); }
 });
 
-// Создать запись в YClients + сразу подтянуть её к нам + зафиксировать звонок как «Записал»
+// Создать запись в YClients + сразу подтянуть её к нам + зафиксировать звонок как «Записал».
+// Записей может быть несколько: за один визит клиент идёт к нескольким мастерам (маникюр и
+// педикюр параллельно), а в YClients каждая услуга у своего мастера — отдельная запись.
+const BOOKING_MAX_ITEMS = 4;
 app.post('/api/booking/create', async (req, res) => {
   if (yc.isDemo()) return res.status(400).json({ error: 'Демо-режим: запись в YClients недоступна' });
   const {
-    client_id, staff_id, service_ids, datetime, seance_length,
+    client_id, staff_id, service_ids, datetime, seance_length, items,
     comment, send_sms, task_id, member_id, action_id, note, admin, company_id,
   } = req.body || {};
+
+  // старая форма слала одну запись плоскими полями — понимаем оба вида
+  const list = Array.isArray(items) && items.length
+    ? items
+    : [{ staff_id, service_ids, datetime, seance_length }];
 
   const client = getClient(client_id);
   if (!client) return res.status(404).json({ error: 'Клиент не найден' });
   if (!client.yclients_id || !client.company_id) return res.status(400).json({ error: 'У клиента нет карточки в YClients' });
-  if (!staff_id || !datetime || !Array.isArray(service_ids) || !service_ids.length) {
-    return res.status(400).json({ error: 'Нужны мастер, услуга и время' });
+  if (list.length > BOOKING_MAX_ITEMS) return res.status(400).json({ error: `За раз не больше ${BOOKING_MAX_ITEMS} записей` });
+  for (const it of list) {
+    if (!it.staff_id || !it.datetime || !Array.isArray(it.service_ids) || !it.service_ids.length) {
+      return res.status(400).json({ error: 'Нужны мастер, услуга и время' });
+    }
   }
 
-  // салон выбирает админ прямо в форме: клиент мог захотеть в соседний
-  const targetCid = Number(company_id) || Number(client.company_id);
-  const card = cardInCompany(client, targetCid);
-  const branchName = db.prepare('SELECT branch FROM clients WHERE company_id=? AND branch IS NOT NULL LIMIT 1')
-    .get(targetCid)?.branch || client.branch;
+  // Салон выбирает админ прямо в форме, причём У КАЖДОЙ СТРОКИ свой: клиент может взять
+  // одну услугу в одном салоне, а другую — в соседнем. Карточку клиента в нужном салоне
+  // ищем отдельно для каждого (в другом филиале у человека своя карточка, а то и никакой —
+  // тогда YClients заведёт её по телефону и имени).
+  const branchNameStmt = db.prepare('SELECT branch FROM clients WHERE company_id=? AND branch IS NOT NULL LIMIT 1');
+  const salonOf = (it) => {
+    const cid = Number(it.company_id) || Number(company_id) || Number(client.company_id);
+    return { cid, card: cardInCompany(client, cid),
+      branchName: branchNameStmt.get(cid)?.branch || client.branch };
+  };
 
-  let record;
-  try {
-    const created = await yc.createRecord(targetCid, {
-      staff_id: Number(staff_id),
-      services: service_ids.map(id => ({ id: Number(id) })),
-      // карточки в этом салоне может не быть — тогда YClients заведёт её по телефону и имени
-      client: {
-        ...(card?.yclients_id ? { id: card.yclients_id } : {}),
-        phone: String(client.phone || '').replace(/\D/g, ''),
-        name: client.name || '',
-      },
-      datetime,
-      seance_length: Number(seance_length) || undefined,
-      save_if_busy: false,
-      send_sms: send_sms !== false, // по умолчанию клиент получает обычное СМС-подтверждение
-      comment: comment || '',
-      api_id: '',
-    });
-    record = Array.isArray(created) ? created[0] : created;
-  } catch (e) {
-    console.error('[booking/create]', e.message);
-    return res.status(502).json({ error: 'YClients не принял запись: ' + e.message });
+  // Записи создаём по очереди: YClients принимает по одному мастеру за запрос, а
+  // save_if_busy:false страхует от гонки — окно могли занять, пока админ говорил с клиентом.
+  // Часть могла не пройти: удачные НЕ откатываем (клиент на них уже согласился), но честно
+  // возвращаем список несостоявшихся, чтобы админ увидел, чего не хватает.
+  const created = [], failed = [];
+  for (const it of list) {
+    const salon = salonOf(it);
+    try {
+      const r = await yc.createRecord(salon.cid, {
+        staff_id: Number(it.staff_id),
+        services: it.service_ids.map(id => ({ id: Number(id) })),
+        // карточки в этом салоне может не быть — тогда YClients заведёт её по телефону и имени
+        client: {
+          ...(salon.card?.yclients_id ? { id: salon.card.yclients_id } : {}),
+          phone: String(client.phone || '').replace(/\D/g, ''),
+          name: client.name || '',
+        },
+        datetime: it.datetime,
+        seance_length: Number(it.seance_length) || undefined,
+        save_if_busy: false,
+        // СМС клиенту салон отправляет сам с телефона администратора (решение Антона
+        // 13.08.2026) — из CRM не шлём, иначе клиент получит два сообщения
+        send_sms: send_sms === true,
+        comment: comment || '',
+        api_id: '',
+      });
+      const rec = Array.isArray(r) ? r[0] : r;
+      if (!rec?.id) throw new Error('YClients не вернул номер записи');
+      created.push({ rec, requested: it, salon });
+    } catch (e) {
+      console.error('[booking/create]', e.message);
+      failed.push({ staff_id: it.staff_id, datetime: it.datetime, error: e.message });
+    }
   }
-  if (!record?.id) return res.status(502).json({ error: 'YClients не вернул номер записи' });
+  if (!created.length) {
+    return res.status(502).json({ error: 'YClients не принял запись: ' + (failed[0]?.error || 'неизвестная ошибка') });
+  }
 
-  // Подтягиваем созданную запись к себе, чтобы она сразу была видна в ленте и в журнале
-  let imported = null;
-  try {
-    imported = await sync.importRecord(targetCid, branchName, record.id);
-  } catch (e) { console.error('[booking/import]', e.message); }
+  // Подтягиваем созданные записи к себе, чтобы они сразу были видны в ленте и в журнале
+  let imported = 0;
+  for (const c of created) {
+    try {
+      if ((await sync.importRecord(c.salon.cid, c.salon.branchName, c.rec.id))?.ok) imported++;
+    } catch (e) { console.error('[booking/import]', e.message); }
+  }
 
-  const staffName = record.staff?.name || '';
-  const svcTitles = (record.services || []).map(s => s.title).filter(Boolean).join(', ');
-  const when = new Date(record.datetime || datetime).toLocaleString('ru-RU',
+  const fmt = (dt) => new Date(dt).toLocaleString('ru-RU',
     { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' });
-  const booking = `Запись: ${when}, ${svcTitles}${staffName ? ' — ' + staffName : ''}`;
+  const madeList = created.map(({ rec, requested, salon }) => {
+    const staffName = rec.staff?.name || '';
+    const svcTitles = (rec.services || []).map(s => s.title).filter(Boolean).join(', ');
+    return { record_id: rec.id, datetime: rec.datetime || requested.datetime,
+      when: fmt(rec.datetime || requested.datetime), staff: staffName, services: svcTitles,
+      branch: salon.branchName || '' };
+  });
+  // в failed отдаём staff_id: имя мастера подставит дашборд, он его и выбирал
+  // Салон в заметке называем, только если записи разъехались по разным — иначе это шум:
+  // обычно человек идёт в свой салон, и админ его и так видит в карточке.
+  const manyBranches = new Set(madeList.map(m => m.branch)).size > 1;
+  const booking = 'Запись: ' + madeList.map(m =>
+    `${m.when}, ${m.services}${m.staff ? ' — ' + m.staff : ''}${manyBranches && m.branch ? ` (${m.branch})` : ''}`
+  ).join('; ');
   const fullNote = [note && note.trim(), booking].filter(Boolean).join('. ');
 
   // Фиксируем звонок как «Записал»: задача/участник списка + лента клиента + карточка YClients.
@@ -1071,9 +1113,11 @@ app.post('/api/booking/create', async (req, res) => {
   }
 
   res.json({
-    ok: true, record_id: record.id, datetime: record.datetime || datetime,
-    staff: staffName, services: svcTitles, when, imported: Boolean(imported?.ok),
-    status: action?.status || null,
+    ok: true, created: madeList, failed,
+    // одиночные поля — для совместимости со старыми вызовами
+    record_id: madeList[0].record_id, datetime: madeList[0].datetime,
+    staff: madeList[0].staff, services: madeList[0].services, when: madeList[0].when,
+    imported, status: action?.status || null,
   });
 });
 

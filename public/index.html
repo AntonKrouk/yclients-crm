@@ -461,9 +461,14 @@
   .adm-yc .rl{font-size:10.5px;color:var(--muted);margin-left:auto;white-space:nowrap;letter-spacing:.06em}
 
   /* ── модалки ───────────────────────────────────────────────────────────── */
+  /* Форма записи с несколькими мастерами выше экрана — оверлей должен прокручиваться,
+     иначе не добраться ни до верхних полей, ни до кнопки «Записать». Короткие модалки
+     по-прежнему висят по центру: центрируем через auto-поля, а не align-items:center
+     (он обрезал бы верх длинной формы). */
   .modal-overlay{position:fixed;inset:0;background:rgba(23,22,20,.32);display:none;z-index:70;
-    align-items:center;justify-content:center;padding:20px}
+    justify-content:center;padding:20px;overflow-y:auto;overscroll-behavior:contain}
   .modal-overlay.open{display:flex}
+  .modal-overlay>.modal{margin:auto}
   .modal{background:var(--paper);border:1px solid var(--line-strong);width:min(440px,100%);padding:28px}
   .modal-title{font-family:var(--serif);font-size:22px;color:var(--ink);line-height:1.25}
   .modal-sub{font-size:13px;color:var(--muted);margin:10px 0 20px;line-height:1.6}
@@ -483,9 +488,16 @@
   .book-modal{width:min(540px,100%)}
   .book-row{display:flex;gap:14px}
   .book-row .fld{flex:1;min-width:0}
-  .book-sms{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--muted);
-    margin:2px 0 18px;cursor:pointer}
-  .book-sms input{width:15px;height:15px;accent-color:var(--ink);cursor:pointer}
+  /* Строка записи: клиент нередко идёт за один визит к двум-трём мастерам (маникюр и
+     педикюр параллельно) — каждая такая строка станет отдельной записью в YClients. */
+  .book-item{border:1px solid var(--line);border-radius:var(--radius);padding:16px 16px 2px;
+    margin-bottom:12px;background:var(--panel)}
+  .book-item-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .book-item-n{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;color:var(--muted)}
+  .book-item-x{background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;
+    line-height:1;padding:2px 4px}
+  .book-item-x:hover{color:var(--red)}
+  .book-add{width:100%;margin-bottom:18px}
 
   /* выбор срока «перезвонить»: быстрые варианты + календарь */
   .sn-quick{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
@@ -500,8 +512,12 @@
 
   .toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:var(--ink);
     color:var(--paper);padding:12px 22px;font-size:12.5px;letter-spacing:.06em;opacity:0;
-    transition:opacity .2s;z-index:60;pointer-events:none}
+    transition:opacity .2s;z-index:60;pointer-events:none;max-width:min(560px,92vw);text-align:center}
   .toast.show{opacity:1}
+  /* Сбой — не рядовое уведомление: держим дольше и красным, иначе админ его не заметит
+     и решит, что звонок зафиксирован. */
+  .toast.bad{background:var(--red);color:#fff;font-weight:600;letter-spacing:.02em}
+  .act-failed{box-shadow:inset 0 0 0 2px var(--red)!important}
 
   @media(max-width:700px){
     header{padding:12px 16px;gap:12px}
@@ -589,24 +605,13 @@
   <div class="modal book-modal">
     <div class="modal-title">Записать к мастеру</div>
     <p class="modal-sub" id="bookWho"></p>
-    <label class="fld">Салон<select id="bookBranch"></select></label>
-    <!-- мастер и услуга: можно выбрать из списка, а можно просто начать печатать -->
-    <label class="fld">Мастер
-      <input type="text" id="bookStaff" list="bookStaffList" autocomplete="off"
-        placeholder="Введите имя или выберите из списка">
-      <datalist id="bookStaffList"></datalist>
-    </label>
-    <label class="fld">Услуга
-      <input type="text" id="bookService" list="bookServiceList" autocomplete="off" disabled
-        placeholder="Сначала выберите мастера">
-      <datalist id="bookServiceList"></datalist>
-    </label>
-    <div class="book-row">
-      <label class="fld">Дата<select id="bookDate" disabled><option value="">—</option></select></label>
-      <label class="fld">Время<select id="bookTime" disabled><option value="">—</option></select></label>
-    </div>
+    <!-- Строки записи: салон, мастер и услуга — у каждой свои. Мастер и услуга —
+         комбобоксы, можно выбрать из списка, а можно просто начать печатать. Строк до
+         четырёх: за один визит клиент часто идёт к нескольким мастерам, и каждая строка
+         станет отдельной записью в YClients. -->
+    <div id="bookRows"></div>
+    <button type="button" class="btn book-add" id="bookAdd">+ Ещё мастер</button>
     <label class="fld">Комментарий к записи<input type="text" id="bookComment" placeholder="Необязательно — увидят мастер и админы"></label>
-    <label class="book-sms"><input type="checkbox" id="bookSms" checked> Отправить клиенту СМС-подтверждение</label>
     <div id="bookError" class="login-error"></div>
     <div class="modal-actions">
       <button class="btn" onclick="closeBooking()">Отмена</button>
@@ -649,6 +654,23 @@
     </div>
     <div class="modal-note">Кнопки те же, что в задачах: «Записать» создаст настоящую запись в YClients,
       «Перезвонить» и «Не ответил» спросят время. Прежняя история в карточке клиента сохранится.</div>
+  </div>
+</div>
+
+<!-- «Кто звонит»: раньше при пустом поле нажатие результата просто молча отменялось —
+     тост на полторы секунды админ не замечал и был уверен, что звонок отмечен. Теперь
+     спрашиваем прямо и после выбора продолжаем то же действие. Идёт последним в разметке,
+     чтобы лечь поверх формы записи, если спросить придётся оттуда. -->
+<div class="modal-overlay" id="whoModal">
+  <div class="modal">
+    <div class="modal-title">Кто звонит?</div>
+    <p class="modal-sub">Отметьте себя — имя попадёт в журнал звонков.
+      Без имени результат не сохранится.</p>
+    <label class="fld">Администратор<select id="whoSel"></select></label>
+    <div class="modal-actions">
+      <button class="btn" id="whoCancel">Отмена</button>
+      <button class="btn primary" id="whoOk">Продолжить</button>
+    </div>
   </div>
 </div>
 
@@ -907,7 +929,36 @@
 
 <script>
 const $ = s => document.querySelector(s);
-const api = (p,o) => fetch(p,o).then(r=>r.json());
+
+// Раньше здесь стояло fetch(p,o).then(r=>r.json()) — без единой проверки ответа, и это
+// стоило нам потерянных звонков. Обрыв связи, 401 после протухшей куки, 500 на сервере —
+// промис падал молча, а карточка задачи всё равно уезжала с тостом «Отмечено». Админ был
+// уверен, что отметил разговор, в базе не появлялось ничего, и задача возвращалась в
+// список при следующей перерисовке («обработали, а она снова тут»). Теперь любой не-2xx,
+// любой нечитаемый ответ и любой {error} — это исключение с человеческим текстом,
+// которое обязан показать вызывающий код.
+class ApiError extends Error{
+  constructor(msg,status){ super(msg); this.name='ApiError'; this.status=status; }
+}
+async function api(p,o){
+  let r;
+  try{ r = await fetch(p,o); }
+  catch{ throw new ApiError('нет связи с сервером'); }
+  const txt = await r.text().catch(()=>'');
+  let data=null, parsed=false;
+  if(txt){ try{ data=JSON.parse(txt); parsed=true; }catch{} }
+  // сессия кончилась: сервер отдаёт 401 на /api/*, а на остальное — страницу входа
+  if(r.status===401 || r.status===403 || (txt && !parsed))
+    throw new ApiError('сессия истекла — обновите страницу (F5) и войдите заново', r.status);
+  if(!r.ok) throw new ApiError((data&&data.error)||`сервер ответил ${r.status}`, r.status);
+  if(data && data.error) throw new ApiError(data.error, r.status);
+  return data;
+}
+// Страховка на всё остальное: загрузчики вкладок ошибку не ловят, и без этого сбой
+// выглядел бы как «страница просто не обновилась».
+window.addEventListener('unhandledrejection', e=>{
+  if(e.reason instanceof ApiError){ toast('Не загрузилось: '+e.reason.message,'bad'); e.preventDefault(); }
+});
 
 // Тонкие штриховые иконки вместо эмодзи: наследуют currentColor и не ломают
 // типографику. Единый набор — без внешних библиотек.
@@ -940,17 +991,33 @@ const adminSelEl = () => (document.querySelector('#view-calls')?.style.display!=
   ? $('#adminSelCalls') : $('#adminSel'));
 const currentAdmin = () => adminSelEl()?.value || localStorage.getItem('admin_name') || '';
 // Раньше в журнале у половины звонков стояло безликое «Администратор»: имя подставлялось
-// заглушкой, если админ не выбрал себя. Теперь просим выбрать — иначе непонятно, чья работа.
-function requireAdmin(){
+// заглушкой, если админ не выбрал себя. Потом стали просить выбрать — но отказ выглядел как
+// тост на полторы секунды, кнопка при этом молча не срабатывала, и звонок терялся.
+// Теперь спрашиваем модалкой и, получив имя, продолжаем прерванное действие.
+let whoResolve=null;
+function needAdmin(){
   const a=currentAdmin();
-  if(a) return a;
-  if(!admins.length) return 'Администратор';   // список ещё не заведён — не блокируем работу
-  toast('Выберите себя в поле «Кто звонит»');
-  const sel=adminSelEl();
-  sel.focus(); sel.style.borderColor='var(--red)';
-  setTimeout(()=>{sel.style.borderColor='';},2000);
-  return null;
+  if(a) return Promise.resolve(a);
+  if(!admins.length) return Promise.resolve('Администратор'); // список не заведён — не блокируем работу
+  const sel=$('#whoSel');
+  sel.innerHTML=admins.map(x=>`<option value="${x.name.replace(/"/g,'&quot;')}">${x.name}</option>`).join('');
+  sel.value=localStorage.getItem('admin_name')||admins[0].name;
+  $('#whoModal').classList.add('open');
+  return new Promise(res=>{ whoResolve=res; });
 }
+function closeWho(name){
+  $('#whoModal').classList.remove('open');
+  const res=whoResolve; whoResolve=null;
+  if(name){
+    localStorage.setItem('admin_name',name);
+    for(const s of [$('#adminSel'),$('#adminSelCalls')])
+      if(s && [...s.options].some(o=>o.value===name)) s.value=name;
+  }
+  if(res) res(name||null);
+}
+$('#whoOk').onclick=()=>closeWho($('#whoSel').value);
+$('#whoCancel').onclick=()=>closeWho(null);
+$('#whoModal').onclick=e=>{ if(e.target.id==='whoModal') closeWho(null); };
 async function loadAdmins(){
   admins = await api('/api/admins');
   const saved=localStorage.getItem('admin_name')||'';
@@ -1058,12 +1125,21 @@ function silentBusy(){
   const el = document.activeElement;
   return !!(el && ['INPUT','TEXTAREA','SELECT'].includes(el.tagName));
 }
+// О сбое фонового обновления сообщаем ОДИН раз, а не каждые 45 секунд: иначе при
+// упавшей связи админ получил бы бесконечную ленту красных сообщений и перестал бы
+// их читать — а именно они и должны его останавливать при потере звонка.
+let silentFailed=false;
 function silentRefresh(){
   if(silentBusy()) return;
   const v = document.querySelector('.tab.active')?.dataset.view;
-  if(v==='tasks') loadTasks();
-  else if(v==='calls') loadCalls(false);  // без перерисовки списков: свернуло бы раскрытый блок
-  else if(v==='overview') loadOverview(); // внутри сам обновит журнал звонков
+  let p=null;
+  if(v==='tasks') p=loadTasks();
+  else if(v==='calls') p=loadCalls(false);  // без перерисовки списков: свернуло бы раскрытый блок
+  else if(v==='overview') p=loadOverview(); // внутри сам обновит журнал звонков
+  if(!p) return;
+  p.then(()=>{ silentFailed=false; })
+   .catch(e=>{ if(!silentFailed){ silentFailed=true;
+     toast('Данные не обновляются: '+(e.message||'нет связи'),'bad'); } });
 }
 setInterval(silentRefresh, SILENT_REFRESH_MS);
 // вернулись на вкладку браузера — показываем свежее, не дожидаясь тика
@@ -1084,7 +1160,14 @@ const fmtDate = d => d ? new Date(d).toLocaleDateString('ru-RU',{day:'numeric',m
 const fmtDT = d => d ? new Date(d).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
 const daysAgoTxt = d => { if(!d) return '—'; const n=Math.round((Date.now()-new Date(d))/864e5); return n<=0?'сегодня':`${n} дн. назад`; };
 
-function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1800);}
+// kind='bad' — сообщение о сбое: красное и висит дольше, чтобы его успели прочитать
+let toastTimer=null;
+function toast(msg,kind){
+  const t=$('#toast'); t.textContent=msg;
+  t.className='toast show'+(kind?' '+kind:'');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>t.classList.remove('show'), kind==='bad'?5000:1800);
+}
 
 // --- Вкладки ---
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
@@ -1210,17 +1293,24 @@ document.addEventListener('visibilitychange',()=>{ if(document.hidden) flushDraf
 // --- ЗАПИСЬ К МАСТЕРУ (создаёт настоящую запись в YClients) ---
 // ctx: {client_id, name, task_id | member_id, list_id, noteEl} — откуда пришли и куда вернуть результат
 let bookCtx = null;
+// За один визит клиент нередко идёт к нескольким мастерам сразу (маникюр и педикюр
+// параллельно, стрижка плюс окрашивание). В YClients каждая такая услуга — ОТДЕЛЬНАЯ
+// запись со своим мастером и временем, поэтому форма собирает несколько строк и создаёт
+// столько же записей. Больше четырёх за один визит в салоне не делают.
+const BOOK_MAX_ROWS = 4;
+let bookRows = [];   // [{uid, staffAll, serviceAll, staffPicked, servicePicked}]
+let bookUid = 0;
+
 function openBooking(ctx){
   bookCtx = ctx;
   $('#bookWho').textContent = `${ctx.name||'Клиент'} — запись создастся прямо в YClients, в филиале клиента.`;
   $('#bookError').textContent='';
-  $('#bookComment').value=''; $('#bookSms').checked=true;
-  bookStaffPicked=''; bookServicePicked='';
-  $('#bookStaff').value=''; $('#bookStaffList').innerHTML=''; bookStaffAll=[];
-  $('#bookService').value=''; $('#bookServiceList').innerHTML=''; bookServiceAll=[];
-  $('#bookService').disabled=true; $('#bookService').placeholder='Сначала выберите мастера';
-  $('#bookDate').innerHTML='<option value="">—</option>'; $('#bookDate').disabled=true;
-  $('#bookTime').innerHTML='<option value="">—</option>'; $('#bookTime').disabled=true;
+  $('#bookComment').value='';
+  // Филиалы обнуляем ДО создания строки: иначе строка успевала запросить мастеров ещё
+  // по салону предыдущего клиента, и два ответа гонялись, кто запишется последним.
+  bookBranches=[]; bookHomeCid='';
+  $('#bookRows').innerHTML=''; bookRows=[];
+  addBookRow();                    // одна строка есть всегда
   $('#bookSubmit').disabled=false; $('#bookSubmit').textContent='Записать в YClients';
   $('#bookModal').classList.add('open');
   loadBookBranches();   // филиалы, следом мастера выбранного салона
@@ -1231,51 +1321,131 @@ const bookErr = m => { $('#bookError').textContent = m || ''; };
 // Мастера и услуги — комбобоксы: список подсказок плюс ручной ввод, так быстрее.
 // В поле лежит НАЗВАНИЕ, id ищем сопоставлением (id в value спрятать нельзя — datalist
 // показывает пользователю именно value).
-let bookStaffAll=[], bookServiceAll=[];
 const norm = s => String(s||'').trim().toLowerCase();
-const staffId   = () => bookStaffAll.find(s=>norm(s.name)===norm($('#bookStaff').value))?.id || '';
-const serviceOf = () => bookServiceAll.find(s=>norm(s.title)===norm($('#bookService').value)) || null;
-const bookCid   = () => $('#bookBranch').value || '';
-const bookQ = (extra='') => `client_id=${bookCtx.client_id}${bookCid()?`&company_id=${bookCid()}`:''}${extra}`;
+// Салон выбирается в КАЖДОЙ строке: клиент может попросить одну услугу в Баскове, а
+// другую на Мытнинской, да и просто перепутать салон в одной строке проще, чем заметить
+// это в общей шапке формы. Список филиалов тянем один раз на всю форму.
+let bookBranches=[], bookHomeCid='';
+const fld       = (row,name) => $(`#bk${name}-${row.uid}`);
+const bookCid   = row => fld(row,'Br').value || '';
+const bookQ = (row,extra='') => `client_id=${bookCtx.client_id}${bookCid(row)?`&company_id=${bookCid(row)}`:''}${extra}`;
+const staffId   = row => row.staffAll.find(s=>norm(s.name)===norm(fld(row,'Staff').value))?.id || '';
+const serviceOf = row => row.serviceAll.find(s=>norm(s.title)===norm(fld(row,'Svc').value)) || null;
+
+function addBookRow(){
+  if(bookRows.length>=BOOK_MAX_ROWS) return null;
+  const row={uid:++bookUid, staffAll:[], serviceAll:[], staffPicked:'', servicePicked:''};
+  bookRows.push(row);
+  const box=document.createElement('div');
+  box.className='book-item'; box.dataset.uid=row.uid;
+  box.innerHTML=`
+    <div class="book-item-hd"><span class="book-item-n"></span>
+      <button type="button" class="book-item-x" title="Убрать эту запись">✕</button></div>
+    <label class="fld">Салон<select id="bkBr-${row.uid}"></select></label>
+    <label class="fld">Мастер
+      <input type="text" id="bkStaff-${row.uid}" list="bkStaffList-${row.uid}" autocomplete="off"
+        placeholder="Введите имя или выберите из списка">
+      <datalist id="bkStaffList-${row.uid}"></datalist></label>
+    <label class="fld">Услуга
+      <input type="text" id="bkSvc-${row.uid}" list="bkSvcList-${row.uid}" autocomplete="off" disabled
+        placeholder="Сначала выберите мастера">
+      <datalist id="bkSvcList-${row.uid}"></datalist></label>
+    <div class="book-row">
+      <label class="fld">Дата<select id="bkDate-${row.uid}" disabled><option value="">—</option></select></label>
+      <label class="fld">Время<select id="bkTime-${row.uid}" disabled><option value="">—</option></select></label>
+    </div>`;
+  $('#bookRows').appendChild(box);
+  // Комбобоксы реагируют и на выбор из списка, и на дописанный вручную текст: как только
+  // введённое совпало с мастером (услугой), подтягиваем следующий шаг. Пока совпадения
+  // нет — молчим, чтобы не дёргать YClients на каждую букву.
+  fld(row,'Staff').oninput = () => {
+    const id=staffId(row);
+    if(String(id)===String(row.staffPicked)) return;
+    row.staffPicked=id; row.servicePicked='';
+    if(id) loadBookServices(row);
+  };
+  fld(row,'Svc').oninput = () => {
+    const id=serviceOf(row)?.id||'';
+    if(String(id)===String(row.servicePicked)) return;
+    row.servicePicked=id;
+    if(id) loadBookDates(row);
+  };
+  fld(row,'Date').onchange = () => loadBookTimes(row);
+  // сменили салон в строке — мастера там другие, строку начинаем заново
+  fld(row,'Br').onchange = () => { row.staffPicked=''; row.servicePicked=''; loadBookStaff(row); };
+  box.querySelector('.book-item-x').onclick = () => removeBookRow(row.uid);
+  renumberBookRows();
+  // филиалы уже загружены (добавили строку в открытой форме) — заполняем сразу;
+  // иначе это сделает loadBookBranches, когда список приедет
+  if(bookCtx && bookBranches.length){ fillBookBranches(row); loadBookStaff(row); }
+  return row;
+}
+// Салон по умолчанию: тот же, что в предыдущей строке (к двум мастерам ходят в один
+// салон), а для первой строки — «родной» салон клиента.
+function fillBookBranches(row){
+  const sel=fld(row,'Br');
+  sel.innerHTML=bookBranches.map(b=>`<option value="${b.company_id}">${esc(b.branch)}</option>`).join('');
+  const prev=bookRows[bookRows.indexOf(row)-1];
+  const def=(prev && bookCid(prev)) || bookHomeCid;
+  if(def && [...sel.options].some(o=>o.value===String(def))) sel.value=String(def);
+  // один филиал — выбирать не из чего, поле прячем
+  sel.closest('.fld').style.display = bookBranches.length<2 ? 'none' : '';
+}
+function removeBookRow(uid){
+  if(bookRows.length<=1) return;      // последнюю строку убрать нельзя — это и есть запись
+  bookRows=bookRows.filter(r=>r.uid!==uid);
+  $(`#bookRows .book-item[data-uid="${uid}"]`)?.remove();
+  renumberBookRows(); bookErr('');
+}
+// Пока строка одна, форма выглядит ровно как раньше: без номера и без крестика.
+function renumberBookRows(){
+  const many=bookRows.length>1;
+  bookRows.forEach((r,i)=>{
+    const box=$(`#bookRows .book-item[data-uid="${r.uid}"]`);
+    box.querySelector('.book-item-n').textContent = many?`Запись ${i+1}`:'';
+    box.querySelector('.book-item-x').style.display = many?'':'none';
+  });
+  const add=$('#bookAdd');
+  add.style.display = bookRows.length>=BOOK_MAX_ROWS ? 'none' : '';
+  add.textContent = many ? '+ Ещё мастер' : '+ Записать ещё к одному мастеру';
+}
 
 // Салон записи: по умолчанию тот, где числится клиент, но админ может выбрать соседний —
 // клиент нередко просит записать его туда, где удобнее в этот раз.
 async function loadBookBranches(){
-  const sel=$('#bookBranch');
-  sel.innerHTML='<option value="">Загрузка…</option>';
   const r = await api(`/api/booking/context?client_id=${bookCtx.client_id}`).catch(()=>null);
-  const list = r?.branches || [];
-  if(list.length<2){ sel.closest('.fld').style.display='none'; }
-  else sel.closest('.fld').style.display='';
-  sel.innerHTML=list.map(b=>`<option value="${b.company_id}">${b.branch}</option>`).join('');
-  if(r?.company_id) sel.value=String(r.company_id);      // по умолчанию — «родной» салон клиента
-  await loadBookStaff();
+  bookBranches = r?.branches || [];
+  bookHomeCid = r?.company_id ? String(r.company_id) : '';   // «родной» салон клиента
+  for(const row of bookRows){ fillBookBranches(row); await loadBookStaff(row); }
 }
-async function loadBookStaff(){
-  const inp=$('#bookStaff'), dl=$('#bookStaffList');
-  inp.value=''; inp.placeholder='Загрузка…'; dl.innerHTML=''; bookStaffAll=[];
+async function loadBookStaff(row){
+  const inp=fld(row,'Staff'), dl=$(`#bkStaffList-${row.uid}`);
+  inp.value=''; inp.placeholder='Загрузка…'; dl.innerHTML=''; row.staffAll=[];
   try{
-    const list = await api(`/api/booking/staff?${bookQ()}`);
-    bookStaffAll=list;
+    const list = await api(`/api/booking/staff?${bookQ(row)}`);
+    row.staffAll=list;
     if(!list.length){ inp.placeholder='Нет мастеров, доступных к записи'; return; }
     // «любимого» мастера клиента поднимаем наверх и подставляем сразу
     list.sort((a,b)=> (b.favorite?1:0)-(a.favorite?1:0));
     dl.innerHTML=list.map(s=>
       `<option value="${esc(s.name)}" label="${s.favorite?'★ ':''}${esc(s.specialization||'')}"></option>`).join('');
     inp.placeholder='Введите имя или выберите из списка';
-    if(list[0]?.favorite){ inp.value=list[0].name; loadBookServices(); }
+    // подставляем любимого мастера только в первую строку: во второй ждут ДРУГОГО мастера,
+    // иначе админ каждый раз стирал бы подставленное имя
+    if(list[0]?.favorite && bookRows[0]===row){ inp.value=list[0].name; row.staffPicked=list[0].id; loadBookServices(row); }
   }catch(e){ inp.placeholder='Ошибка загрузки'; bookErr(e.message); }
 }
-async function loadBookServices(){
-  const staff=staffId(), inp=$('#bookService'), dl=$('#bookServiceList');
-  $('#bookDate').disabled=true; $('#bookDate').innerHTML='<option value="">—</option>';
-  $('#bookTime').disabled=true; $('#bookTime').innerHTML='<option value="">—</option>';
-  inp.value=''; dl.innerHTML=''; bookServiceAll=[];
+async function loadBookServices(row){
+  const staff=staffId(row), inp=fld(row,'Svc'), dl=$(`#bkSvcList-${row.uid}`);
+  const dsel=fld(row,'Date'), tsel=fld(row,'Time');
+  dsel.disabled=true; dsel.innerHTML='<option value="">—</option>';
+  tsel.disabled=true; tsel.innerHTML='<option value="">—</option>';
+  inp.value=''; dl.innerHTML=''; row.serviceAll=[];
   if(!staff){ inp.disabled=true; inp.placeholder='Сначала выберите мастера'; return; }
   inp.disabled=true; inp.placeholder='Загрузка…'; bookErr('');
   try{
-    const list = await api(`/api/booking/services?${bookQ(`&staff_id=${staff}`)}`);
-    bookServiceAll=list;
+    const list = await api(`/api/booking/services?${bookQ(row,`&staff_id=${staff}`)}`);
+    row.serviceAll=list;
     if(!list.length){ inp.placeholder='У мастера нет услуг для записи'; return; }
     list.sort((a,b)=> (b.favorite?1:0)-(a.favorite?1:0));
     dl.innerHTML=list.map(s=>{
@@ -1284,16 +1454,16 @@ async function loadBookServices(){
       return `<option value="${esc(s.title)}" label="${s.favorite?'★ ':''}${price}${len}"></option>`;
     }).join('');
     inp.disabled=false; inp.placeholder='Введите название или выберите из списка';
-    if(list[0]?.favorite){ inp.value=list[0].title; loadBookDates(); }
+    if(list[0]?.favorite && bookRows[0]===row){ inp.value=list[0].title; row.servicePicked=list[0].id; loadBookDates(row); }
   }catch(e){ inp.placeholder='Ошибка загрузки'; bookErr(e.message); }
 }
-async function loadBookDates(){
-  const staff=staffId(), svc=serviceOf()?.id||'', sel=$('#bookDate');
-  $('#bookTime').disabled=true; $('#bookTime').innerHTML='<option value="">—</option>';
+async function loadBookDates(row){
+  const staff=staffId(row), svc=serviceOf(row)?.id||'', sel=fld(row,'Date'), tsel=fld(row,'Time');
+  tsel.disabled=true; tsel.innerHTML='<option value="">—</option>';
   if(!staff||!svc){ sel.disabled=true; sel.innerHTML='<option value="">—</option>'; return; }
   sel.disabled=true; sel.innerHTML='<option value="">Загрузка…</option>'; bookErr('');
   try{
-    const r = await api(`/api/booking/dates?${bookQ(`&staff_id=${staff}&service_ids=${svc}`)}`);
+    const r = await api(`/api/booking/dates?${bookQ(row,`&staff_id=${staff}&service_ids=${svc}`)}`);
     const dates=r.dates||[];
     if(!dates.length){ sel.innerHTML='<option value="">У мастера нет свободных дней</option>'; return; }
     sel.innerHTML='<option value="">— выберите дату —</option>'+dates.map(d=>{
@@ -1301,14 +1471,18 @@ async function loadBookDates(){
       return `<option value="${d}">${dt.toLocaleDateString('ru-RU',{day:'2-digit',month:'long',weekday:'short'})}</option>`;
     }).join('');
     sel.disabled=false;
+    // К нескольким мастерам клиент идёт в ОДИН день — подставляем дату из соседней строки,
+    // если этот мастер в неё работает. Не работает — админ выберет свою, строки независимы.
+    const other = bookRows.filter(r2=>r2!==row).map(r2=>fld(r2,'Date').value).find(Boolean);
+    if(other && dates.includes(other)){ sel.value=other; loadBookTimes(row); }
   }catch(e){ sel.innerHTML='<option value="">Ошибка загрузки</option>'; bookErr(e.message); }
 }
-async function loadBookTimes(){
-  const staff=staffId(), svc=serviceOf()?.id||'', date=$('#bookDate').value, sel=$('#bookTime');
+async function loadBookTimes(row){
+  const staff=staffId(row), svc=serviceOf(row)?.id||'', date=fld(row,'Date').value, sel=fld(row,'Time');
   if(!staff||!svc||!date){ sel.disabled=true; sel.innerHTML='<option value="">—</option>'; return; }
   sel.disabled=true; sel.innerHTML='<option value="">Загрузка…</option>'; bookErr('');
   try{
-    const list = await api(`/api/booking/times?${bookQ(`&staff_id=${staff}&date=${date}&service_ids=${svc}`)}`);
+    const list = await api(`/api/booking/times?${bookQ(row,`&staff_id=${staff}&date=${date}&service_ids=${svc}`)}`);
     if(!list.length){ sel.innerHTML='<option value="">Свободных окон нет</option>'; return; }
     sel.innerHTML='<option value="">— выберите время —</option>'+list.map(t=>
       `<option value="${t.datetime}" data-len="${t.seance_length||0}">${t.time}</option>`).join('');
@@ -1317,25 +1491,44 @@ async function loadBookTimes(){
 }
 async function submitBooking(){
   const ctx=bookCtx; // closeBooking() обнулит bookCtx — держим ссылку для обновления блока
-  const staff=staffId(), service=serviceOf(), dt=$('#bookTime').value;
-  if(!staff){ bookErr('Выберите мастера из списка — имя должно совпасть'); return; }
-  if(!service){ bookErr('Выберите услугу из списка — название должно совпасть'); return; }
-  if(!dt){ bookErr('Выберите дату и время'); return; }
-  const admin=requireAdmin(); if(!admin) return;
-  const btn=$('#bookSubmit'); btn.disabled=true; btn.textContent='Записываем…'; bookErr('');
-  const len = $('#bookTime').selectedOptions[0]?.dataset.len || service.seance_length || 0;
+  const items=[];
+  for(const [i,row] of bookRows.entries()){
+    const nth = bookRows.length>1 ? `Запись ${i+1}: ` : '';
+    const staff=staffId(row), service=serviceOf(row), tsel=fld(row,'Time'), dt=tsel.value;
+    if(!staff){ bookErr(nth+'выберите мастера из списка — имя должно совпасть'); return; }
+    if(!service){ bookErr(nth+'выберите услугу из списка — название должно совпасть'); return; }
+    if(!dt){ bookErr(nth+'выберите дату и время'); return; }
+    // один и тот же мастер на то же самое время — это промах админа, а не «параллельная
+    // работа»: разные мастера в одно время нормальны, один мастер дважды — нет
+    if(items.some(it=>it.staff_id===Number(staff) && it.datetime===dt)){
+      bookErr(nth+'этот мастер уже стоит на это же время в другой строке'); return;
+    }
+    const len = tsel.selectedOptions[0]?.dataset.len || service.seance_length || 0;
+    items.push({staff_id:Number(staff), service_ids:[Number(service.id)],
+      datetime:dt, seance_length:Number(len)||undefined,
+      company_id:Number(bookCid(row))||null});   // салон у каждой строки свой
+  }
+  const admin=await needAdmin(); if(!admin) return;
+  const btn=$('#bookSubmit'); btn.disabled=true;
+  btn.textContent = items.length>1 ? `Записываем (${items.length})…` : 'Записываем…';
+  bookErr('');
   try{
     const r = await api('/api/booking/create',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
-        client_id:ctx.client_id, company_id:bookCid()||null,
-        staff_id:Number(staff), service_ids:[Number(service.id)],
-        datetime:dt, seance_length:Number(len)||undefined,
-        comment:$('#bookComment').value.trim(), send_sms:$('#bookSms').checked,
+        client_id:ctx.client_id, company_id:Number(bookCid(bookRows[0]))||null, items,
+        comment:$('#bookComment').value.trim(),
         task_id:ctx.task_id||null, member_id:ctx.member_id||null, action_id:ctx.action_id||null,
         note:ctx.noteEl?($(ctx.noteEl)?.value||''):'', admin,
       })});
     closeBooking();
-    toast(`Записан. ${r.when}${r.staff?' · '+r.staff:''}`);
+    // Часть записей могла не пройти (окно заняли, пока админ говорил) — созданные остаются,
+    // и админ должен УВИДЕТЬ, чего не хватает: повторной отправкой мы бы задвоили удачные.
+    const made=(r.created||[]).map(c=>`${c.when}${c.staff?' · '+c.staff:''}`).join(' | ');
+    const nameOf = id => bookRows.map(row=>row.staffAll.find(s=>String(s.id)===String(id))?.name)
+      .find(Boolean) || 'мастер';
+    if(r.failed?.length) toast(`Записан частично: ${made}. НЕ прошло — ${
+      r.failed.map(f=>`${nameOf(f.staff_id)}: ${f.error}`).join('; ')}`,'bad');
+    else toast(`Записан. ${made}`);
     // из правки результата вернёмся туда, откуда пришли: блок списка или текущая вкладка
     if(ctx.action_id){ closeFix(); if(ctx.listId) await reloadListBlock(ctx.listId); else reloadCurrentView(); }
     else if(ctx.list_id) await reloadListBlock(ctx.list_id); else loadTasks();
@@ -1345,20 +1538,22 @@ async function submitBooking(){
 async function bookJustMark(){
   const ctx=bookCtx;
   const note = ctx.noteEl ? ($(ctx.noteEl)?.value||'') : '';
-  const admin = requireAdmin(); if(!admin) return;
+  const admin = await needAdmin(); if(!admin) return;
   closeBooking();
-  if(ctx.action_id){            // пришли из исправления результата — правим тот же звонок
-    closeFix();
-    await sendFix(ctx.action_id,'booked',note,ctx.listId,null);
-  }else if(ctx.task_id){
-    await api(`/api/tasks/${ctx.task_id}/action`,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({result:'booked',note,admin})});
-    toast('Отмечено'); loadTasks();
-  }else if(ctx.member_id){
-    await api(`/api/lists/${ctx.list_id}/members/${ctx.member_id}/action`,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({result:'booked',note,admin})});
-    toast('Отмечено'); await reloadListBlock(ctx.list_id);
-  }
+  try{
+    if(ctx.action_id){          // пришли из исправления результата — правим тот же звонок
+      closeFix();
+      await sendFix(ctx.action_id,'booked',note,ctx.listId,null);
+    }else if(ctx.task_id){
+      await api(`/api/tasks/${ctx.task_id}/action`,{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({result:'booked',note,admin})});
+      toast('Отмечено'); loadTasks();
+    }else if(ctx.member_id){
+      await api(`/api/lists/${ctx.list_id}/members/${ctx.member_id}/action`,{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({result:'booked',note,admin})});
+      toast('Отмечено'); await reloadListBlock(ctx.list_id);
+    }
+  }catch(e){ actFailed(e,null); }
 }
 
 // «Перезвонить» и «Не ответил» — не просто отметка, а договорённость о времени:
@@ -1371,13 +1566,28 @@ async function act(taskId,result,btn){
 // Пока запрос в пути, вторая кнопка не срабатывает: иначе быстрый двойной клик уходил
 // двумя запросами (сервер их всё равно склеит, но лишний звонок в YClients ни к чему).
 let actBusy=false;
+// Фиксация не прошла — карточка ОСТАЁТСЯ на месте вместе с набранной заметкой, обведённая
+// красным, и админ видит, что надо нажать ещё раз. Молчаливый провал здесь дороже всего:
+// разговор уже состоялся, второй раз человеку никто не позвонит.
+function actFailed(e,btn){
+  const card = btn?.closest('.task,.member');
+  if(card){
+    card.style.opacity='';
+    card.classList.add('act-failed');
+    setTimeout(()=>card.classList.remove('act-failed'),6000);
+  }
+  toast('НЕ СОХРАНИЛОСЬ: '+(e instanceof ApiError ? e.message : 'попробуйте нажать ещё раз'),'bad');
+  console.error('[act]', e);
+}
 async function sendAct(taskId,result,btn,until){
-  if(actBusy) return; actBusy=true;
-  try{ await doSendAct(taskId,result,btn,until); } finally { actBusy=false; }
+  if(actBusy) return; actBusy=true; if(btn) btn.disabled=true;
+  try{ await doSendAct(taskId,result,btn,until); }
+  catch(e){ actFailed(e,btn); }
+  finally { actBusy=false; if(btn) btn.disabled=false; }
 }
 async function doSendAct(taskId,result,btn,until){
   const note = $('#note-'+taskId)?.value || '';
-  const admin = requireAdmin(); if(!admin) return;
+  const admin = await needAdmin(); if(!admin) return;
   await api(`/api/tasks/${taskId}/action`,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({result,note,admin,snooze_until:until})});
   const card = btn?.closest('.task') || document.querySelector(`.task[data-id="${taskId}"]`);
@@ -1585,12 +1795,14 @@ async function memAct(listId,memberId,result,btn){
   await sendMemAct(listId,memberId,result,btn,null);
 }
 async function sendMemAct(listId,memberId,result,btn,until){
-  if(actBusy) return; actBusy=true;
-  try{ await doSendMemAct(listId,memberId,result,btn,until); } finally { actBusy=false; }
+  if(actBusy) return; actBusy=true; if(btn) btn.disabled=true;
+  try{ await doSendMemAct(listId,memberId,result,btn,until); }
+  catch(e){ actFailed(e,btn); }
+  finally { actBusy=false; if(btn) btn.disabled=false; }
 }
 async function doSendMemAct(listId,memberId,result,btn,until){
   const note=$('#memnote-'+memberId)?.value||'';
-  const admin=requireAdmin(); if(!admin) return;
+  const admin=await needAdmin(); if(!admin) return;
   await api(`/api/lists/${listId}/members/${memberId}/action`,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({result,note,admin,snooze_until:until})});
   toast(result==='booked'?'Записан'
@@ -1716,9 +1928,11 @@ function fixPick(result){
   sendFix(ctx.actionId,result,$('#fixNote').value,ctx.listId,null);
 }
 async function sendFix(actionId,result,note,listId,until){
-  const r=await api(`/api/actions/${actionId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({result,note,admin:requireAdmin()||undefined,snooze_until:until})});
-  if(r.error){toast(r.error);return;}
+  const admin = await needAdmin(); if(!admin) return;
+  try{
+    await api(`/api/actions/${actionId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({result,note,admin,snooze_until:until})});
+  }catch(e){ actFailed(e,null); return; }
   toast('Результат изменён: '+(JR_RES[result]||result).toLowerCase()
     + (until?` · ${whenLabel(until)}`:''));
   // правили строку списка — обновляем только её блок, чтобы не схлопнуть раскрытый список
@@ -2169,10 +2383,9 @@ async function createListFromFilter(){
   try{
     const r=await api('/api/lists',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name,filter:segFilter,assignee,exclude_ids:[...segExcluded]})});
-    if(r.error){toast(r.error);return;}
     toast(`Список «${name}» создан: ${r.members} клиентов${assignee.trim()?' · отв. '+assignee.trim():''}`);
     document.querySelector('[data-view="calls"]').click();
-  }catch(e){toast('Не удалось создать список');}
+  }catch(e){toast('Не удалось создать список: '+(e.message||''),'bad');}
 }
 // --- Точечная сборка списка -------------------------------------------------
 // Фильтры конструктора отвечают на «кого позвать по признаку», а этот блок — на
@@ -2220,11 +2433,10 @@ $('#manToList').onclick=async()=>{
   try{
     const r=await api('/api/lists',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name,assignee,client_ids:[...manPicked.keys()]})});
-    if(r.error){toast(r.error);return;}
     toast(`Список «${name}» создан: ${r.members} клиентов`);
     manPicked.clear();renderManChips();
     document.querySelector('[data-view="calls"]').click();
-  }catch(e){toast('Не удалось создать список');}
+  }catch(e){toast('Не удалось создать список: '+(e.message||''),'bad');}
 };
 
 $('#segRun').onclick=runSegment;
@@ -2254,36 +2466,18 @@ $('#segReset').onclick=()=>{clearTimeout(segTimer);['segService','segStaff','seg
 $('#syncBtn').onclick = async ()=>{
   const b=$('#syncBtn');b.textContent='Обновляю…';b.disabled=true;
   try{
-    // api() не бросает на HTTP-ошибке — YClients мог не ответить, проверяем тело
     const r=await api('/api/sync-upcoming',{method:'POST'});
-    if(r.error) toast('YClients не ответил — попробуйте позже');
-    else if(r.skipped) toast('Демо-режим: обновлять нечего');
+    if(r.skipped) toast('Демо-режим: обновлять нечего');
     else toast(`Обновлено: ${r.visits} записей${r.cancelled?`, отменено ${r.cancelled}`:''}`);
   }
-  catch(e){toast('Не удалось обновить');}
+  catch(e){toast('Не удалось обновить: '+(e.message||''),'bad');}
   b.textContent='Обновить';b.disabled=false;
   loadTasks();
 };
 
 // --- Запись к мастеру: события формы (каждый шаг подгружает следующий) ---
-// Комбобоксы реагируют и на выбор из списка, и на дочитанный вручную текст: как только
-// введённое совпало с мастером (услугой), подтягиваем следующий шаг. Пока совпадения нет —
-// молчим, чтобы не дёргать YClients на каждую букву.
-let bookStaffPicked='', bookServicePicked='';
-$('#bookStaff').oninput = () => {
-  const id=staffId();
-  if(String(id)===String(bookStaffPicked)) return;
-  bookStaffPicked=id; bookServicePicked='';
-  if(id) loadBookServices();
-};
-$('#bookService').oninput = () => {
-  const id=serviceOf()?.id||'';
-  if(String(id)===String(bookServicePicked)) return;
-  bookServicePicked=id;
-  if(id) loadBookDates();
-};
-$('#bookBranch').onchange = () => { bookStaffPicked=''; bookServicePicked=''; loadBookStaff(); };
-$('#bookDate').onchange = loadBookTimes;
+// Поля салона/мастера/услуги/даты живут внутри строк записи — обработчики вешаются в addBookRow()
+$('#bookAdd').onclick = () => addBookRow();
 $('#bookSubmit').onclick = submitBooking;
 $('#bookJustMark').onclick = e=>{ e.preventDefault(); bookJustMark(); };
 $('#bookModal').onclick = e=>{ if(e.target.id==='bookModal') closeBooking(); };
