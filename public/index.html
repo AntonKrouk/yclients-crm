@@ -368,6 +368,7 @@
   .row-add.done{border-color:var(--green);color:var(--green);background:var(--green-soft);cursor:default}
   .row-add:disabled{opacity:.6;cursor:default}
   td.tdadd{width:1%;padding-left:0;padding-right:6px;text-align:right;white-space:nowrap}
+  .row-add + .row-add{margin-left:6px}   /* «+ в задачи» и «+ в обзвон» в одной ячейке */
 
   /* ── Ручная сборка списка в конструкторе ───────────────────────────────── */
   .man-card{margin-top:14px}
@@ -682,6 +683,22 @@
       <button class="btn" id="whoCancel">Отмена</button>
       <button class="btn primary" id="whoOk">Продолжить</button>
     </div>
+  </div>
+</div>
+
+<!-- В какой обзвон добавить клиента. Спрашиваем, ТОЛЬКО когда активных списков больше
+     одного: при единственном списке выбор фиктивный, а лишний клик админ делает каждый раз. -->
+<div class="modal-overlay" id="pickListModal">
+  <div class="modal">
+    <div class="modal-title">В какой обзвон добавить?</div>
+    <p class="modal-sub" id="pickListWho"></p>
+    <label class="fld">Список обзвона<select id="pickListSel"></select></label>
+    <div class="modal-actions">
+      <button class="btn" id="pickListCancel">Отмена</button>
+      <button class="btn primary" id="pickListOk">Добавить</button>
+    </div>
+    <div class="modal-note">Клиент встанет в конец списка со статусом «ждёт звонка».
+      Прогресс списка пересчитается сам.</div>
   </div>
 </div>
 
@@ -1987,6 +2004,64 @@ $('#cjResult').onchange=loadCallJournal;
 const addBtn = (id) => `<button class="row-add" title="Добавить в задачи на обзвон"
   onclick="event.stopPropagation();addToTasks(${id},this)">+ в задачи</button>`;
 
+// «+ в обзвон» — только в конструкторе: там админ разбирает выборку и решает, кого
+// доложить в идущую кампанию. В «Клиентах» такой кнопки нет — оттуда работают задачами.
+const callsBtn = (id,name) => `<button class="row-add" title="Добавить в список обзвона"
+  onclick="event.stopPropagation();addToCalls(${id},this,'${q1(name)}')">+ в обзвон</button>`;
+
+// Диалог выбора списка. Возвращает id списка или null, если админ передумал.
+let pickListResolve=null;
+function pickCallList(lists,name){
+  $('#pickListWho').textContent=`${name||'Клиент'} — выберите список обзвона.`;
+  $('#pickListSel').innerHTML=lists.map(l=>{
+    const left=Math.max(0,(l.total||0)-(l.done||0));
+    return `<option value="${l.id}">${esc(l.name)} — осталось ${left} из ${l.total||0}${l.assignee?' · '+esc(l.assignee):''}</option>`;
+  }).join('');
+  $('#pickListModal').classList.add('open');
+  return new Promise(res=>{ pickListResolve=res; });
+}
+function closePickList(id){
+  $('#pickListModal').classList.remove('open');
+  const res=pickListResolve; pickListResolve=null;
+  if(res) res(id||null);
+}
+$('#pickListOk').onclick=()=>closePickList(Number($('#pickListSel').value)||null);
+$('#pickListCancel').onclick=()=>closePickList(null);
+$('#pickListModal').onclick=e=>{ if(e.target.id==='pickListModal') closePickList(null); };
+
+// Поштучное добавление в обзвон. Списков нет — предлагаем завести первый прямо отсюда,
+// один список — кладём в него сразу, несколько — спрашиваем, в какой.
+async function addToCalls(id,btn,name){
+  const was=btn.textContent;
+  const back=()=>{ btn.textContent=was; btn.disabled=false; };
+  btn.disabled=true; btn.textContent='…';
+  try{
+    const lists=await api('/api/lists');
+    if(!lists.length){
+      const nm=prompt('Активных списков обзвона нет. Создать новый — название:','Точечный обзвон');
+      if(!nm){ back(); return; }
+      await api('/api/lists',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({name:nm,assignee:currentAdmin(),client_ids:[id]})});
+      btn.classList.add('done'); btn.textContent='в обзвоне'; btn.title='Список «'+nm+'» создан';
+      toast(`Список «${nm}» создан, клиент в нём`);
+      return;
+    }
+    const listId = lists.length===1 ? lists[0].id : await pickCallList(lists,name);
+    if(!listId){ back(); return; }   // закрыл диалог — ничего не делаем
+    const r=await api(`/api/lists/${listId}/members`,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({client_id:id})});
+    btn.classList.add('done');
+    btn.textContent = r.already ? 'уже в обзвоне' : 'в обзвоне';
+    btn.title = `Список «${r.list_name}»`;
+    toast(r.already
+      ? `${r.name||'Клиент'} уже ждёт звонка в «${r.list_name}»`
+      : `${r.name||'Клиент'} — в списке «${r.list_name}»`);
+  }catch(e){
+    back();
+    toast('Не удалось добавить в обзвон: '+(e.message||''),'bad');
+  }
+}
+
 async function addToTasks(id,btn){
   const was=btn.textContent;
   btn.disabled=true; btn.textContent='…';
@@ -1999,7 +2074,7 @@ async function addToTasks(id,btn){
       toast(`${r.name||'Клиент'} уже в задачах — ${r.type_label}`);
     }else{
       btn.textContent='в задачах'; btn.title='Задача создана, ждёт звонка';
-      toast(`${r.name||'Клиент'} добавлен в задачи`);
+      toast(`${r.name||'Клиент'} — теперь в задачах`);
     }
   }catch(e){
     btn.textContent=was; btn.disabled=false;
@@ -2385,7 +2460,7 @@ async function runSegment(){
       <td title="Покупки товаров${segFilter.good?' по фильтру «'+segFilter.good+'»':''}">${c.goods_count?`${c.goods_count}× · ${rub(c.goods_spent)}`:'—'}</td>
       <td>${fmtDate(c.last_match)}</td>
       <td class="muted" style="font-size:12px">${(c.masters||'').split(',').slice(0,3).join(', ')}</td>
-      <td class="tdadd">${addBtn(c.id)}</td>
+      <td class="tdadd">${addBtn(c.id)}${callsBtn(c.id,c.name)}</td>
       <td class="tdx"><button class="row-x" title="Вычеркнуть из выборки"
         onclick="event.stopPropagation();segExclude(${c.id})">✕</button></td>
     </tr>`;

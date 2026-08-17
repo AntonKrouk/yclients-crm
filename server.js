@@ -590,6 +590,34 @@ app.get('/api/lists', (req, res) => {
   }));
 });
 
+// Добавить одного клиента в уже существующий список обзвона — кнопка «+ в обзвон»
+// в строке «Конструктора». Список собирается фильтром разом, а этот путь — для
+// «этого тоже добавь»: попался нужный человек в выборке, ушёл в текущую кампанию.
+app.post('/api/lists/:id/members', (req, res) => {
+  const listId = Number(req.params.id);
+  const list = db.prepare("SELECT id, name FROM lists WHERE id=? AND status='active'").get(listId);
+  if (!list) return res.status(404).json({ error: 'Список не найден или уже в архиве' });
+
+  const client = db.prepare('SELECT id, name FROM clients WHERE id = ?').get(Number((req.body || {}).client_id));
+  if (!client) return res.status(404).json({ error: 'Клиент не найден' });
+
+  // Уже ждёт звонка в этом списке — второй строки не заводим. Обработанные строки
+  // (по человеку отзвонились) не в счёт: добавить его снова = позвать ещё раз, это нормально.
+  const waiting = db.prepare(`SELECT id FROM list_members
+                              WHERE list_id=? AND client_id=? AND status IN ('pending','snoozed')`)
+    .get(listId, client.id);
+  if (waiting) {
+    return res.json({ ok: true, already: true, member_id: waiting.id, list_name: list.name, name: client.name });
+  }
+
+  // Считаем визиты и суммы так же, как при ручной сборке списка: по всем карточкам человека.
+  const stat = manualMembers([client.id])[0] || { match_visits: 0, match_spent: 0 };
+  const info = db.prepare(`INSERT INTO list_members(list_id,client_id,status,match_visits,match_spent,updated_at)
+                           VALUES(?,?,'pending',?,?,?)`)
+    .run(listId, client.id, stat.match_visits, stat.match_spent, new Date().toISOString());
+  res.json({ ok: true, added: true, member_id: info.lastInsertRowid, list_name: list.name, name: client.name });
+});
+
 // Участники списка (клиенты) со статусом обработки
 app.get('/api/lists/:id/members', (req, res) => {
   const rows = db.prepare(`
