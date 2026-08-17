@@ -28,6 +28,12 @@ const REFUSAL_COOLDOWN_DAYS = 90; // «Отказ» — разговор сос�
 const NO_CALLS_COOLDOWN_DAYS = 60; // «Просил не звонить» — пауза, но не навсегда
 const DEFAULT_COOLDOWN_DAYS = 14;
 
+// Задачи, добавленные администратором вручную (кнопка «+ в задачи» в «Клиентах» и
+// «Конструкторе»), живут по своим правилам: не занимают дневной лимит и не снимаются
+// автоматической уборкой. Человека выбрали осознанно — карточка висит, пока по ней не позвонят.
+const NOT_MANUAL   = "COALESCE(source,'auto') <> 'manual'";
+const NOT_MANUAL_T = "COALESCE(t.source,'auto') <> 'manual'";
+
 // Не создаём дубль: если по клиенту уже есть открытая/отложенная задача такого типа
 const hasOpen = db.prepare(
   `SELECT 1 FROM tasks WHERE client_id = ? AND type = ? AND status IN ('open','snoozed') LIMIT 1`
@@ -56,7 +62,7 @@ function generate(opts = {}) {
 
   // Клиенты с пометкой «не беспокоить» в комментарии YClients — снимаем их открытые задачи
   db.prepare(`UPDATE tasks SET status='dismissed', closed_at=?
-              WHERE status IN ('open','snoozed')
+              WHERE status IN ('open','snoozed') AND ${NOT_MANUAL}
                 AND client_id IN (SELECT id FROM clients WHERE COALESCE(do_not_call,0)=1)`)
     .run(nowIso);
 
@@ -133,7 +139,8 @@ function generate(opts = {}) {
     for (let i = 0; i < ids.length; i += CH) {
       const part = ids.slice(i, i + CH);
       n += db.prepare(`UPDATE tasks SET status='dismissed', closed_at=?
-                       WHERE status IN ('open','snoozed') AND client_id IN (${part.map(() => '?').join(',')})`)
+                       WHERE status IN ('open','snoozed') AND ${NOT_MANUAL}
+                         AND client_id IN (${part.map(() => '?').join(',')})`)
         .run(nowIso, ...part).changes;
     }
     return n;
@@ -162,11 +169,18 @@ function generate(opts = {}) {
   `).all();
   const noShowMap = new Map(lastNoShow.map(r => [r.client_id, r.d]));
 
+  // Клиенты, которых админ уже добавил в задачи вручную: движок их не дублирует —
+  // иначе на одного человека висели бы две карточки, ручная и автоматическая.
+  const manualOpen = new Set(db.prepare(
+    `SELECT client_id FROM tasks WHERE status IN ('open','snoozed') AND COALESCE(source,'auto') = 'manual'`
+  ).all().map(r => r.client_id));
+
   const now = today();
   const candidates = [];
 
   for (const c of clients) {
     if (suppressed.has(c.id)) continue;                 // дубль в неприоритетном филиале
+    if (manualOpen.has(c.id)) continue;                 // админ уже добавил его в задачи руками
     if (vipPerson.has(c.id)) continue;                  // VIP ведут вручную
     if (upMap.get(c.id) || personBooked.has(c.id)) continue; // записан в этом или другом филиале
 
@@ -221,7 +235,7 @@ function generate(opts = {}) {
   // Снимаем их, пока пауза не вышла. Задачу, по которой звонок и был сделан (создана раньше
   // звонка), не трогаем, «перезвонить/не ответил» (snoozed) — тоже: там пауза задана админом.
   const clientById = new Map(clients.map(c => [c.id, c]));
-  const stale = db.prepare(`SELECT id, client_id, type, created_at FROM tasks WHERE status='open'`)
+  const stale = db.prepare(`SELECT id, client_id, type, created_at FROM tasks WHERE status='open' AND ${NOT_MANUAL}`)
     .all()
     .filter(t => {
       const call = personCall.get(t.client_id);
@@ -243,7 +257,7 @@ function generate(opts = {}) {
   const openBy = new Map(db.prepare(`
     SELECT COALESCE(c.branch,'') AS b, COUNT(*) AS n
     FROM tasks t JOIN clients c ON c.id = t.client_id
-    WHERE t.status = 'open' GROUP BY COALESCE(c.branch,'')
+    WHERE t.status = 'open' AND ${NOT_MANUAL_T} GROUP BY COALESCE(c.branch,'')
   `).all().map(r => [r.b, r.n]));
 
   let created = 0;

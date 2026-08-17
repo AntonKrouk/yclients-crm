@@ -201,6 +201,11 @@ ensureColumn('visits', 'service_category', 'TEXT');
 // поэтому виден и после перезагрузки страницы, и второму администратору.
 ensureColumn('tasks', 'draft_note', 'TEXT');
 ensureColumn('list_members', 'draft_note', 'TEXT');
+// Кто поставил задачу: пусто/auto — движок правил, manual — администратор добавил клиента
+// руками из «Клиентов» или «Конструктора». Ручные задачи не занимают дневной лимит и не
+// снимаются автоматической уборкой: админ добавил человека осознанно, задача висит до звонка.
+ensureColumn('tasks', 'source', 'TEXT');
+ensureColumn('tasks', 'added_by', 'TEXT');
 // Срок перезвона по участнику списка — то же, что due_date у задачи:
 // «YYYY-MM-DD» или «YYYY-MM-DD HH:MM», если админ договорился на время.
 ensureColumn('list_members', 'callback_at', 'TEXT');

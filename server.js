@@ -62,6 +62,7 @@ const TYPE_LABEL = {
   rebook: 'Пора записать',
   no_show: 'Не пришёл — перезаписать',
   reactivation: 'Реактивация',
+  manual: 'Добавлен вручную',
 };
 
 // --- Служебное ---------------------------------------------------------------
@@ -740,7 +741,8 @@ app.get('/api/tasks', (req, res) => {
            c.favorite_staff, c.favorite_service, c.visits_count, c.branch
     FROM tasks t JOIN clients c ON c.id = t.client_id
     WHERE (t.status = ? ${todayCallback}) ${branch ? 'AND c.branch = ?' : ''}
-    ORDER BY (t.status='snoozed') DESC, t.priority ASC, t.created_at ASC
+    -- ручные задачи наверх: админ добавил человека только что и ждёт, что тот попадётся на глаза
+    ORDER BY (t.status='snoozed') DESC, (t.type='manual') DESC, t.priority ASC, t.created_at ASC
   `).all(...(branch ? [status, branch] : [status]));
   res.json(rows.map(r => ({
     ...r,
@@ -748,6 +750,33 @@ app.get('/api/tasks', (req, res) => {
     // время перезвона показываем только у отложенных на сегодня
     callback_at: r.status === 'snoozed' ? r.due_date : null,
   })));
+});
+
+// Добавить клиента в задачи вручную — по одному, кнопкой в «Клиентах» и «Конструкторе».
+// Такая задача не занимает дневной лимит (движок по-прежнему добирает свои 10 на филиал)
+// и не снимается автоматической уборкой: висит, пока админ не отметит по ней результат.
+app.post('/api/tasks/manual', (req, res) => {
+  const { client_id, admin, note } = req.body || {};
+  const client = db.prepare('SELECT id, name, branch FROM clients WHERE id = ?').get(Number(client_id));
+  if (!client) return res.status(404).json({ error: 'Клиент не найден' });
+
+  // Уже висит задача по этому человеку — второй карточки не заводим, иначе админ
+  // звонил бы дважды по одному поводу. Отвечаем, что он уже в списке.
+  const open = db.prepare(`SELECT id, type, status, COALESCE(source,'auto') AS source
+                           FROM tasks WHERE client_id = ? AND status IN ('open','snoozed')
+                           ORDER BY id DESC LIMIT 1`).get(client.id);
+  if (open) {
+    return res.json({ ok: true, already: true, task_id: open.id, source: open.source,
+      type_label: TYPE_LABEL[open.type] || open.type, name: client.name });
+  }
+
+  const who = (admin || '').trim();
+  const reason = (note || '').trim()
+    || `Добавлен вручную${who ? ' — ' + who : ''}. Позвонить, обсудить запись.`;
+  const r = db.prepare(`INSERT INTO tasks (client_id, type, due_date, priority, status, reason, created_at, source, added_by)
+                        VALUES (?, 'manual', date('now','localtime'), 1, 'open', ?, ?, 'manual', ?)`)
+    .run(client.id, reason, new Date().toISOString(), who || null);
+  res.json({ ok: true, added: true, task_id: r.lastInsertRowid, name: client.name });
 });
 
 // Фиксация звонка по задаче: статус задачи + запись в ленту клиента + обратная запись в YClients.

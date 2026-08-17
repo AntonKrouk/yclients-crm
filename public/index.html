@@ -147,6 +147,7 @@
   .t-rebook{color:var(--amber);border-color:var(--amber);background:var(--amber-soft)}
   .t-no_show{color:var(--red);border-color:var(--red);background:var(--red-soft)}
   .t-reactivation{color:var(--violet);border-color:var(--violet);background:var(--violet-soft)}
+  .t-manual{color:var(--green);border-color:var(--green);background:var(--green-soft)}
   .phone{font-variant-numeric:tabular-nums;letter-spacing:.02em}
   .actions{display:flex;flex-direction:column;gap:9px;min-width:232px}
   /* 2×2: четыре кнопки одного размера, подписи не переносятся */
@@ -357,6 +358,16 @@
     line-height:1;padding:4px 6px;align-self:flex-start}
   .row-x:hover{color:var(--red)}
   td.tdx{width:1%;padding-left:0;padding-right:6px;text-align:right}
+
+  /* «+ в задачи» — поштучная отправка клиента на обзвон из «Клиентов» и «Конструктора».
+     Такие задачи идут СВЕРХ дневного набора и висят, пока по ним не отметят звонок. */
+  .row-add{border:1px solid var(--line-strong);background:var(--panel);color:var(--ink-2);
+    border-radius:var(--radius);cursor:pointer;font-size:11px;font-weight:600;
+    letter-spacing:.06em;padding:4px 8px;white-space:nowrap}
+  .row-add:hover{border-color:var(--green);color:var(--green);background:var(--green-soft)}
+  .row-add.done{border-color:var(--green);color:var(--green);background:var(--green-soft);cursor:default}
+  .row-add:disabled{opacity:.6;cursor:default}
+  td.tdadd{width:1%;padding-left:0;padding-right:6px;text-align:right;white-space:nowrap}
 
   /* ── Ручная сборка списка в конструкторе ───────────────────────────────── */
   .man-card{margin-top:14px}
@@ -845,7 +856,7 @@
     </div>
 
     <div class="card" style="margin-top:14px;padding:0">
-      <table id="segTable"><thead><tr><th>Клиент</th><th>Телефон</th><th title="Услуг, попавших под условия выборки">Совпало услуг</th><th title="Походов в салон за всю историю (несколько услуг в один день = один визит)">Всего визитов</th><th>Потратил всего</th><th>Сумма по выборке</th><th title="Покупки товаров: количество и сумма">Товары</th><th>Последний</th><th>Мастера</th><th></th></tr></thead><tbody></tbody></table>
+      <table id="segTable"><thead><tr><th>Клиент</th><th>Телефон</th><th title="Услуг, попавших под условия выборки">Совпало услуг</th><th title="Походов в салон за всю историю (несколько услуг в один день = один визит)">Всего визитов</th><th>Потратил всего</th><th>Сумма по выборке</th><th title="Покупки товаров: количество и сумма">Товары</th><th>Последний</th><th>Мастера</th><th></th><th></th></tr></thead><tbody></tbody></table>
     </div>
   </section>
 
@@ -868,7 +879,7 @@
   <section id="view-clients" style="display:none">
     <input class="search" id="clientSearch" placeholder="Поиск по имени или телефону…">
     <div class="card" style="margin-top:12px;padding:0">
-      <table id="clientTable"><thead><tr><th>Клиент</th><th>Телефон</th><th>Визитов</th><th>Периодичность</th><th>Последний</th><th>Прогноз</th></tr></thead><tbody></tbody></table>
+      <table id="clientTable"><thead><tr><th>Клиент</th><th>Телефон</th><th>Визитов</th><th>Периодичность</th><th>Последний</th><th>Прогноз</th><th></th></tr></thead><tbody></tbody></table>
     </div>
   </section>
 </main>
@@ -1240,6 +1251,7 @@ async function loadTasks(){
   const counts = {};
   tasks.forEach(t=>counts[t.type]=(counts[t.type]||0)+1);
   const KL={rebook:'Пора записать',no_show:'Не пришёл',reactivation:'Реактивация'};
+  if(counts.manual) KL.manual='Добавлены вручную';   // плитку показываем, только если такие задачи есть
   $('#taskKpis').innerHTML = Object.entries(KL).map(([k,l])=>
     `<div class="card kpi"><div class="n">${counts[k]||0}</div><div class="l">${l}</div></div>`).join('');
 
@@ -1967,6 +1979,34 @@ const loadCallJournal = () => renderJournal('/api/calls/journal', $('#cjDays').v
 $('#cjDays').onchange=loadCallJournal;
 $('#cjResult').onchange=loadCallJournal;
 
+// --- Поштучная отправка клиента в задачи ------------------------------------
+// Кнопка в строке «Клиентов» и «Конструктора»: админ увидел нужного человека — сразу
+// поставил задачу позвонить, не собирая ради него целый список обзвона. Дневной набор
+// (10 задач на филиал) от этого не меняется — ручные карточки идут сверх лимита и
+// автоматической уборкой не снимаются: висят, пока по ним не отметят результат звонка.
+const addBtn = (id) => `<button class="row-add" title="Добавить в задачи на обзвон"
+  onclick="event.stopPropagation();addToTasks(${id},this)">+ в задачи</button>`;
+
+async function addToTasks(id,btn){
+  const was=btn.textContent;
+  btn.disabled=true; btn.textContent='…';
+  try{
+    const r=await api('/api/tasks/manual',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({client_id:id,admin:currentAdmin()})});
+    btn.classList.add('done');
+    if(r.already){
+      btn.textContent='уже в задачах'; btn.title='Задача уже висит: '+r.type_label;
+      toast(`${r.name||'Клиент'} уже в задачах — ${r.type_label}`);
+    }else{
+      btn.textContent='в задачах'; btn.title='Задача создана, ждёт звонка';
+      toast(`${r.name||'Клиент'} добавлен в задачи`);
+    }
+  }catch(e){
+    btn.textContent=was; btn.disabled=false;
+    toast('Не удалось добавить в задачи: '+(e.message||''),'bad');
+  }
+}
+
 // --- КЛИЕНТЫ ---
 let searchTimer;
 $('#clientSearch').oninput = e=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>loadClients(e.target.value),250);};
@@ -1981,7 +2021,8 @@ async function loadClients(q=''){
       <td>${c.avg_interval_days?'~'+Math.round(c.avg_interval_days)+' дн.':'—'}</td>
       <td>${fmtDate(c.last_visit)}</td>
       <td>${fmtDate(c.predicted_next)}</td>
-    </tr>`).join('') || '<tr><td colspan="6" class="empty">Ничего не найдено</td></tr>';
+      <td class="tdadd">${addBtn(c.id)}</td>
+    </tr>`).join('') || '<tr><td colspan="7" class="empty">Ничего не найдено</td></tr>';
 }
 
 // --- VIP ---
@@ -2344,10 +2385,11 @@ async function runSegment(){
       <td title="Покупки товаров${segFilter.good?' по фильтру «'+segFilter.good+'»':''}">${c.goods_count?`${c.goods_count}× · ${rub(c.goods_spent)}`:'—'}</td>
       <td>${fmtDate(c.last_match)}</td>
       <td class="muted" style="font-size:12px">${(c.masters||'').split(',').slice(0,3).join(', ')}</td>
+      <td class="tdadd">${addBtn(c.id)}</td>
       <td class="tdx"><button class="row-x" title="Вычеркнуть из выборки"
         onclick="event.stopPropagation();segExclude(${c.id})">✕</button></td>
     </tr>`;
-  }).join('') || '<tr><td colspan="10" class="empty">Ничего не найдено под эти условия</td></tr>';
+  }).join('') || '<tr><td colspan="11" class="empty">Ничего не найдено под эти условия</td></tr>';
 }
 // Вычеркнуть человека из выборки перед созданием списка: фильтр может зацепить лишнего,
 // а переписывать условия ради одного клиента долго. В список такие строки не попадут.
