@@ -3,6 +3,7 @@
 require('./src/env');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
 const express = require('express');
 const { db } = require('./src/db');
 const sync = require('./src/sync');
@@ -19,6 +20,8 @@ const DASH_PW = process.env.DASHBOARD_PASSWORD || '';
 const SECRET = process.env.SESSION_SECRET || DASH_PW || 'dev-secret';
 const CRON_SECRET = process.env.CRON_SECRET || '';
 const AUTH_ON = Boolean(DASH_PW);
+const PUBLIC_ASSETS = new Set(['/app.css', '/app.js', '/manifest.webmanifest', '/prive-logo.png',
+  '/favicon.ico', '/apple-touch-icon.png', '/apple-touch-icon-precomposed.png']);
 const sessionCookie = () => crypto.createHmac('sha256', SECRET).update('authorized-v1').digest('hex');
 
 function parseCookies(req) {
@@ -45,6 +48,9 @@ app.post('/api/logout', (req, res) => {
 app.use((req, res, next) => {
   if (!AUTH_ON) return next();
   if (req.path === '/api/login' || req.path === '/api/health') return next();
+  // Оформление, код и иконки — без входа: клиентских данных в них нет. Раньше на любой
+  // путь неавторизованному отдавалась страница входа, и айфон получал HTML вместо иконки.
+  if (PUBLIC_ASSETS.has(req.path)) return next();
   // авто-синк по крону: разрешаем синки с валидным токеном без куки
   const CRON_PATHS = ['/api/sync', '/api/sync-upcoming', '/api/sync-comments'];
   if (CRON_PATHS.includes(req.path) && CRON_SECRET && req.query.token === CRON_SECRET) return next();
@@ -53,7 +59,24 @@ app.use((req, res, next) => {
   return res.sendFile(path.join(__dirname, 'public', 'login.html'));
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+// Отпечаток содержимого стилей и кода. Подставляется в ссылки на них, поэтому браузер
+// может держать файлы в кэше сколько угодно, а после деплоя сразу увидит новые.
+const PUBLIC_DIR = path.join(__dirname, 'public');
+const assetHash = (f) => {
+  try { return crypto.createHash('sha1').update(fs.readFileSync(path.join(PUBLIC_DIR, f))).digest('hex').slice(0, 8); }
+  catch { return 'dev'; }
+};
+const ASSET_V = assetHash('app.css') + assetHash('app.js');
+const INDEX_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8').split('__V__').join(ASSET_V);
+
+// Саму страницу не кэшируем никогда — она лёгкая, а внутри лежат ссылки на версии файлов.
+app.get(['/', '/index.html'], (req, res) => {
+  res.set('Cache-Control', 'no-cache').type('html').send(INDEX_HTML);
+});
+app.use(express.static(PUBLIC_DIR, {
+  maxAge: '365d',
+  setHeaders(res, file) { if (file.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache'); },
+}));
 
 const PORT = process.env.PORT || 3020;
 

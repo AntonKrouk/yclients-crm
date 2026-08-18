@@ -1,0 +1,542 @@
+/* ── Privé7 SPB CRM ─────────────────────────────────────────────────────────
+     Оформление в духе тихой роскоши (The Row): тёплая бумага вместо белого,
+     волосяные линейки вместо карточек с тенями, антиква в акцентах, почти
+     монохром. Цвет работает только там, где несёт смысл (статусы, долг).
+     Иконки — inline SVG по currentColor, без эмодзи.                        */
+  :root{
+    --paper:#F6F4F0;        /* фон — тёплая бумага */
+    --panel:#FCFBF9;        /* поверхность */
+    --panel2:#EFECE6;       /* утопленная плашка */
+    --line:#E0DAD1;         /* волосяная линейка */
+    --line-strong:#C9C1B5;
+    --ink:#171614;          /* основной текст */
+    --ink-2:#4A4640;        /* вторичный */
+    --muted:#8B857B;        /* подписи */
+    /* Акцент — фирменная бирюзовая зелень. Светлый тон для заливок и полос,
+       тёмный — для текста (контраст на бумаге ≥ 4.5:1). */
+    --accent:#12B3A6;       /* заливки, полосы, точки */
+    --accent-2:#0B776D;     /* текст и цифры */
+    --accent-soft:#E4F3F1;
+    --gold:#8A6A2F;         /* скидки — второй акцент */
+    --green:#2A7D52; --green-soft:#E6F2EA;
+    --red:#A33A2F;   --red-soft:#F8E8E5;
+    --amber:#9A6B14; --amber-soft:#F8EEDC;
+    --violet:#5A4E86; --violet-soft:#EDEAF5;
+    --blue:#2F6285;  --blue-soft:#E5EEF5;
+    --radius:3px;
+    --serif:'Georgia','Times New Roman',serif;
+    --sans:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    --sp:20px;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;font-family:var(--sans);background:var(--paper);color:var(--ink);
+       font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  ::selection{background:var(--ink);color:var(--paper)}
+  :focus-visible{outline:1.5px solid var(--ink);outline-offset:2px}
+
+  /* мелкая прописная подпись — основной типографский приём */
+  .eyebrow,.section-title,th,.tab,.stile .l,.cinfo .k,.kpi .l,.collap>summary{
+    text-transform:uppercase;letter-spacing:.14em;font-size:10.5px;font-weight:600;color:var(--muted)}
+
+  /* ── шапка ─────────────────────────────────────────────────────────────── */
+  header{position:sticky;top:0;z-index:30;background:var(--paper);
+    border-bottom:1px solid var(--line);padding:16px 24px;
+    display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:14px}
+  .brand-logo{height:26px;width:auto;display:block;filter:invert(1)}
+  .brand-div{width:1px;height:22px;background:var(--line-strong)}
+  .brand-tx{font-family:var(--serif);font-size:15px;letter-spacing:.22em;color:var(--ink);
+    line-height:1;text-transform:uppercase}
+  .brand-tx small{display:block;font-family:var(--sans);font-size:9px;font-weight:600;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-top:5px}
+  .badge{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;
+    padding:4px 9px;color:var(--muted);border:1px solid var(--line)}
+  .badge.live{color:var(--green);border-color:var(--green)}
+  .badge.live::before{content:'';display:inline-block;width:4px;height:4px;border-radius:50%;
+    background:var(--green);margin-right:6px;vertical-align:middle}
+
+  .branch-sel{padding:8px 28px 8px 10px;border:1px solid var(--line);background:var(--panel);
+    color:var(--ink);font-size:13px;font-family:inherit;cursor:pointer;border-radius:var(--radius);
+    appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+    background-position:calc(100% - 14px) 52%,calc(100% - 9px) 52%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+  .branch-sel:focus{outline:none;border-color:var(--ink)}
+  .branch-tag{display:inline-block;font-size:9.5px;font-weight:600;letter-spacing:.1em;
+    text-transform:uppercase;padding:2px 7px;color:var(--muted);border:1px solid var(--line);
+    margin-left:7px;vertical-align:middle;white-space:nowrap}
+
+  .tabs{display:flex;gap:0;margin-left:auto;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .tab{padding:9px 16px;background:transparent;color:var(--muted);border:none;cursor:pointer;
+    border-right:1px solid var(--line);transition:color .18s,background .18s}
+  .tab:last-child{border-right:none}
+  .tab:hover{color:var(--ink);background:var(--panel2)}
+  .tab.active{background:var(--accent-2);color:#fff}
+
+  button{font-family:inherit}
+  .btn{padding:9px 15px;border-radius:var(--radius);border:1px solid var(--line-strong);
+    background:transparent;color:var(--ink);cursor:pointer;font-size:12px;letter-spacing:.06em;
+    transition:border-color .18s,background .18s,color .18s}
+  .btn:hover{border-color:var(--ink);background:var(--panel)}
+  .btn.primary{background:var(--accent-2);border-color:var(--accent-2);color:#fff}
+  .btn.primary:hover{background:#095F57;border-color:#095F57}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn:disabled:hover{border-color:var(--line-strong);background:transparent}
+
+  main{max-width:1120px;margin:0 auto;padding:28px 24px 64px}
+  .grid{display:grid;gap:1px;background:var(--line)}
+  .kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));border:1px solid var(--line)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:var(--sp)}
+  .kpi{background:var(--panel);padding:18px 20px;border:none}
+  .kpi .n{font-family:var(--serif);font-size:34px;line-height:1;color:var(--accent-2)}
+  .kpi .l{margin-top:9px}
+  .section-title{margin:34px 0 12px}
+  .muted{color:var(--muted)}
+  .empty{text-align:center;color:var(--muted);padding:56px 20px;font-size:13px;
+    letter-spacing:.06em;background:var(--panel);border:1px solid var(--line)}
+
+  /* ── задачи ────────────────────────────────────────────────────────────── */
+  .task{display:flex;gap:24px;padding:20px;border:1px solid var(--line);background:var(--panel);
+    margin-bottom:-1px;transition:background .18s}
+  .task:hover{background:var(--panel2)}
+  .task .left{flex:1;min-width:0}
+  /* договорились перезвонить сегодня — карточка не уходит из списка и видна издалека */
+  .task.callback-today{border-color:var(--red);background:var(--red-soft);
+    box-shadow:inset 3px 0 0 var(--red)}
+  .task.callback-today:hover{background:var(--red-soft)}
+  .cb-badge{display:inline-flex;align-items:center;gap:5px;font-size:9.5px;font-weight:600;
+    letter-spacing:.14em;text-transform:uppercase;padding:3px 8px;margin:0 0 9px 6px;
+    border:1px solid var(--red);color:var(--red);background:var(--paper)}
+  .cb-badge svg{width:11px;height:11px}
+  .cb-badge.later{border-color:var(--line-strong);color:var(--muted);background:var(--panel2)}
+  /* участник списка: срок перезвона наступил — красным, назначен на потом — приглушённо */
+  .member.callback-today{background:var(--red-soft);box-shadow:inset 3px 0 0 var(--red)}
+  .member.later{opacity:.7}
+  /* «изменить» — правка результата уже сделанного звонка (журнал и обработанные строки) */
+  .jr-fix{display:inline-block;margin-top:6px;border:none;background:none;padding:0;cursor:pointer;
+    font:inherit;font-size:11px;color:var(--muted);border-bottom:1px solid var(--line-strong)}
+  .jr-fix:hover{color:var(--ink)}
+  .fix-row{margin:4px 0 18px}
+  /* напоминание «набрать завтра в 15:00» рядом с результатом в журнале */
+  .jr-callback{display:inline-flex;align-items:center;gap:5px;margin-top:5px;font-size:12px;
+    color:var(--amber);border:1px solid #E2CFA6;background:var(--amber-soft);padding:2px 8px}
+  .jr-callback svg{width:11px;height:11px}
+  /* отложенные и обработанные участники списка — под свёртками, чтобы не мешали работе */
+  .mem-group{border-top:1px solid var(--line)}
+  .mem-group>summary{cursor:pointer;padding:12px 0;font-size:11px;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--muted);list-style:none}
+  .mem-group>summary::-webkit-details-marker{display:none}
+  .mem-group>summary::before{content:'▸ ';font-size:13px}
+  .mem-group[open]>summary::before{content:'▾ '}
+  .mem-group>summary:hover{color:var(--ink)}
+  .mem-group .member:first-of-type{border-top:none}
+  .tname{font-family:var(--serif);font-weight:400;font-size:18px;cursor:pointer;color:var(--ink);
+    letter-spacing:.01em;line-height:1.3}
+  .tname:hover{text-decoration:underline;text-underline-offset:3px}
+  .tmeta{color:var(--muted);font-size:12.5px;margin-top:5px}
+  .treason{margin-top:10px;font-size:13.5px;color:var(--ink-2);max-width:56ch}
+  .type-badge{display:inline-block;font-size:9.5px;font-weight:600;letter-spacing:.14em;
+    text-transform:uppercase;padding:3px 8px;margin-bottom:9px;border:1px solid}
+  .t-confirm_visit{color:var(--blue);border-color:var(--blue);background:var(--blue-soft)}
+  .t-rebook{color:var(--amber);border-color:var(--amber);background:var(--amber-soft)}
+  .t-no_show{color:var(--red);border-color:var(--red);background:var(--red-soft)}
+  .t-reactivation{color:var(--violet);border-color:var(--violet);background:var(--violet-soft)}
+  .t-manual{color:var(--green);border-color:var(--green);background:var(--green-soft)}
+  .phone{font-variant-numeric:tabular-nums;letter-spacing:.02em}
+  .actions{display:flex;flex-direction:column;gap:9px;min-width:232px}
+  /* 2×2: четыре кнопки одного размера, подписи не переносятся */
+  .res-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+  /* Кнопки результата звонка различаются цветом: админ бьёт по ним весь день,
+     и цвет читается быстрее подписи. «Записать» — заливка, остальные — контур. */
+  .res{padding:9px 8px;font-size:11px;letter-spacing:.04em;white-space:nowrap;
+    border:1px solid var(--line-strong);background:var(--panel);color:var(--ink-2);cursor:pointer;
+    border-radius:var(--radius);transition:all .18s;display:flex;align-items:center;justify-content:center;gap:6px}
+  .res:hover{border-color:var(--accent-2);color:var(--accent-2);background:var(--accent-soft)}
+  .res.booked{border-color:var(--accent-2);background:var(--accent-2);color:#fff;font-weight:600}
+  .res.booked:hover{background:#095F57;border-color:#095F57;color:#fff}
+  .res.callback{border-color:#E2CFA6;color:var(--amber)}
+  .res.callback:hover{border-color:var(--amber);color:var(--amber);background:var(--amber-soft)}
+  .res.refused{border-color:#E8C7C1;color:var(--red)}
+  .res.refused:hover{border-color:var(--red);color:var(--red);background:var(--red-soft)}
+  .res svg{width:12px;height:12px;flex:none}
+  textarea{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    color:var(--ink);padding:9px 10px;font-family:inherit;font-size:13px;resize:vertical;min-height:38px}
+  textarea:focus,input.search:focus{outline:none;border-color:var(--ink)}
+  textarea::placeholder,input::placeholder{color:var(--muted)}
+  input.search{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    color:var(--ink);padding:11px 13px;font-size:14px;width:100%;max-width:380px;font-family:inherit}
+
+  /* ── таблицы ───────────────────────────────────────────────────────────── */
+  table{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--panel)}
+  th,td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line)}
+  th{border-bottom:1px solid var(--line-strong);white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  tr.crow{cursor:pointer;transition:background .15s}
+  tr.crow:hover td{background:var(--panel2)}
+  td b{font-weight:600}
+
+  /* ── статусы ───────────────────────────────────────────────────────────── */
+  .status-badge{font-size:9.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
+    padding:3px 9px;border:1px solid var(--line-strong);color:var(--muted);white-space:nowrap}
+  .st-active{color:var(--green);border-color:var(--green);background:var(--green-soft)}
+  .st-booked{color:var(--blue);border-color:var(--blue);background:var(--blue-soft)}
+  .st-due{color:var(--amber);border-color:var(--amber);background:var(--amber-soft)}
+  .st-churn{color:var(--red);border-color:var(--red);background:var(--red-soft)}
+  .st-new{color:var(--muted)}
+  .dnc-badge{font-size:9.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
+    padding:3px 9px;border:1px solid var(--red);color:var(--red);background:var(--red-soft);white-space:nowrap}
+  .dep-tag{display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;
+    color:var(--green);border:1px solid var(--green);margin-left:6px;white-space:nowrap;
+    vertical-align:middle;font-variant-numeric:tabular-nums}
+  .dep-tag.debt{color:var(--red);border-color:var(--red)}
+  .disc-tag{display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;color:var(--gold);
+    border:1px solid var(--gold);margin-left:6px;white-space:nowrap;vertical-align:middle;
+    font-variant-numeric:tabular-nums}
+
+  /* ── боковая карточка клиента ──────────────────────────────────────────── */
+  .overlay{position:fixed;inset:0;background:rgba(23,22,20,.28);display:none;z-index:50}
+  .overlay.open{display:block}
+  .drawer{position:fixed;top:0;right:0;height:100%;width:min(600px,100%);background:var(--paper);
+    border-left:1px solid var(--line-strong);transform:translateX(100%);transition:transform .28s cubic-bezier(.32,.72,0,1);
+    z-index:51;display:flex;flex-direction:column;overflow:hidden}
+  .drawer.open{transform:translateX(0)}
+  /* компактная шапка: имя, статус, действия — не больше 3 строк, чтобы визиты
+     были видны сразу без прокрутки */
+  .drawer .head{padding:18px 24px 0;background:var(--paper);border-bottom:1px solid var(--line);flex:none}
+  .dclose{border:none;background:none;color:var(--muted);cursor:pointer;font-size:11px;
+    letter-spacing:.12em;text-transform:uppercase;padding:0 0 14px;display:flex;align-items:center;gap:7px}
+  .dclose:hover{color:var(--ink)}
+  .dclose svg{width:13px;height:13px}
+  .dtitle{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .dname{font-family:var(--serif);font-size:25px;line-height:1.2;color:var(--ink)}
+  .dsub{margin-top:7px;font-size:12.5px;color:var(--muted);display:flex;align-items:center;
+    gap:9px;flex-wrap:wrap}
+  .dsub a{color:var(--ink-2);text-decoration:none;border-bottom:1px solid var(--line-strong)}
+  .dsub a:hover{color:var(--ink);border-color:var(--ink)}
+  .dsep{color:var(--line-strong);margin:0 2px}
+  .dacts{display:flex;gap:8px;margin:14px 0 0;flex-wrap:wrap}
+  .dact{border:1px solid var(--line-strong);background:transparent;color:var(--ink-2);cursor:pointer;
+    font-size:11px;letter-spacing:.08em;padding:6px 11px;border-radius:var(--radius);
+    display:inline-flex;align-items:center;gap:6px;transition:all .18s}
+  .dact:hover{border-color:var(--ink);color:var(--ink)}
+  .dact svg{width:12px;height:12px}
+  .dact.on{background:var(--gold);border-color:var(--gold);color:#fff}
+  .dact.dnc.on{background:var(--red);border-color:var(--red);color:#fff}
+  /* вкладки внутри карточки */
+  .dtabs{display:flex;gap:26px;margin-top:16px}
+  .dtab{background:none;border:none;padding:0 0 11px;cursor:pointer;color:var(--muted);
+    font-size:10.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
+    border-bottom:1.5px solid transparent;margin-bottom:-1px;transition:color .18s}
+  .dtab:hover{color:var(--ink-2)}
+  .dtab.active{color:var(--accent-2);border-bottom-color:var(--accent-2)}
+  .dtab .cnt{color:var(--muted);font-weight:400;margin-left:5px}
+  .dbody{flex:1;overflow-y:auto;padding:22px 24px 56px;overscroll-behavior:contain}
+  .dpane{display:none}
+  .dpane.active{display:block}
+
+  .timeline{position:relative;padding-left:22px}
+  .timeline::before{content:'';position:absolute;left:3px;top:6px;bottom:6px;width:1px;background:var(--line)}
+  .ev{position:relative;margin-bottom:20px}
+  .ev::before{content:'';position:absolute;left:-22px;top:6px;width:7px;height:7px;border-radius:50%;
+    background:var(--paper);border:1px solid var(--line-strong)}
+  .ev.visit::before{background:var(--accent);border-color:var(--accent)}
+  .ev.call::before{background:var(--gold);border-color:var(--gold)}
+  .ev.task::before{background:var(--paper);border-color:var(--amber)}
+  .ev .d{font-size:11px;color:var(--muted);letter-spacing:.06em}
+  .ev .t{font-weight:500;margin-top:3px;font-size:14px;line-height:1.4}
+  .ev .s{font-size:12.5px;color:var(--muted);margin-top:3px}
+  /* услуги внутри одного похода в салон */
+  .vsvc{margin-top:7px}
+  .vrow{display:grid;grid-template-columns:1fr auto;gap:2px 14px;padding:6px 0;
+    border-bottom:1px solid var(--line)}
+  .vrow:first-child{padding-top:0}
+  .vrow:last-child{border-bottom:none}
+  .vn{font-size:13.5px;color:var(--ink);line-height:1.4}
+  .vm{grid-column:1;font-size:12px;color:var(--muted)}
+  .vc{grid-column:2;grid-row:1/span 2;align-self:center;font-size:13px;color:var(--accent-2);
+    white-space:nowrap;font-variant-numeric:tabular-nums}
+  .vsum{margin-top:7px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .pill{display:inline-block;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+    padding:2px 7px;border:1px solid var(--line-strong);color:var(--muted);margin-left:7px;vertical-align:middle}
+
+  .cinfo{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);
+    border:1px solid var(--line)}
+  .cinfo>div{background:var(--panel);padding:12px 14px;min-width:0}
+  .cinfo .v{font-size:13.5px;margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+  .cinfo .v a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--line-strong)}
+  .note-box{margin-top:16px;background:var(--accent-soft);border:1px solid var(--line);
+    color:var(--ink-2);padding:13px 15px;font-size:13px;line-height:1.55}
+  .note-box.dnc{background:var(--red-soft);border-color:var(--red);color:var(--red)}
+
+  .statTiles{grid-template-columns:repeat(3,1fr);border:1px solid var(--line)}
+  .stile{background:var(--panel);padding:16px 15px}
+  .stile .n{font-family:var(--serif);font-size:23px;line-height:1.15;color:var(--accent-2)}
+  .stile .l{margin-top:8px;line-height:1.4}
+  .monthchart{display:flex;align-items:flex-end;gap:5px;height:110px;padding:16px;
+    background:var(--panel);border:1px solid var(--line)}
+  .mbar{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
+  .mbar .bar{width:100%;min-height:1px;background:var(--accent);transition:height .25s}
+  .mbar .ml{font-size:9px;color:var(--muted);letter-spacing:.04em}
+  .mbar .mc{font-size:10px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+
+  .collap{border:1px solid var(--line);background:var(--panel);margin-bottom:-1px}
+  .collap>summary{list-style:none;cursor:pointer;padding:14px 16px;display:flex;align-items:center;gap:10px}
+  .collap>summary::-webkit-details-marker{display:none}
+  .collap>summary::after{content:'';margin-left:auto;width:6px;height:6px;border-right:1px solid var(--muted);
+    border-bottom:1px solid var(--muted);transform:rotate(45deg);transition:transform .2s}
+  .collap[open]>summary::after{transform:rotate(-135deg)}
+  .collap>summary:hover{background:var(--panel2)}
+  .collap .cnt{margin-left:6px;color:var(--ink-2);text-transform:none;letter-spacing:0;font-weight:400}
+  .collap .cbody{padding:2px 16px 16px}
+  .brk .gdate{font-size:11px;color:var(--muted);margin-top:5px;letter-spacing:.02em}
+  .brk{padding:9px 0;border-bottom:1px solid var(--line)}
+  .brk:last-child{border-bottom:none}
+  .brk .row1{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:13px;margin-bottom:6px}
+  .brk .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+  .brk .v{color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;font-size:12px}
+  .brk .v b{color:var(--accent-2);font-weight:600}
+  .brk .bar{height:3px;background:var(--panel2)}
+  .brk .bar>div{height:100%;background:var(--accent);opacity:.55}
+  .brk.top .nm{color:var(--accent-2);font-weight:600}
+  .brk.top .bar>div{background:var(--accent);opacity:1}
+  .prio{display:inline-block;font-size:9px;letter-spacing:.12em;text-transform:uppercase;
+    padding:1px 6px;color:var(--accent-2);border:1px solid var(--accent-2);margin-left:7px;vertical-align:middle}
+
+  /* ── конструктор ───────────────────────────────────────────────────────── */
+  .seg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:16px}
+  .segfld{display:flex;flex-direction:column;gap:7px}
+  .segfld>span,.segfld{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+    font-weight:600;color:var(--muted)}
+  .segfld input,.segfld select{background:var(--panel);border:1px solid var(--line);
+    border-radius:var(--radius);color:var(--ink);padding:9px 11px;font-size:14px;
+    font-family:inherit;letter-spacing:normal;text-transform:none;font-weight:400}
+  .segfld input:focus,.segfld select:focus{outline:none;border-color:var(--ink)}
+  .seg-actions{display:flex;gap:10px;align-items:center;margin-top:20px;flex-wrap:wrap}
+  .seg-new.on{background:var(--accent-2);border-color:var(--accent-2);color:#fff}
+  .seg-hint{width:100%;font-size:12.5px;color:var(--ink-2);background:var(--accent-soft);
+    border:1px solid var(--line);padding:11px 14px;margin-top:6px;display:none;line-height:1.55}
+  .seg-hint.on{display:block}
+  .seg-summary{font-size:12.5px;color:var(--muted)}
+  .seg-summary b{color:var(--accent-2);font-weight:600}
+  .seg-coverage{font-size:12px;margin-top:16px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted)}
+  .seg-coverage a{color:var(--ink);cursor:pointer;border-bottom:1px solid var(--line-strong);text-decoration:none}
+  .seg-coverage a:hover{border-color:var(--ink)}
+
+  /* ── списки обзвона ────────────────────────────────────────────────────── */
+  .listblock{background:var(--panel);border:1px solid var(--line);margin-bottom:-1px}
+  .lb-head{display:flex;align-items:center;gap:16px;padding:16px 20px;cursor:pointer}
+  .lb-head:hover{background:var(--panel2)}
+  .lb-name{font-family:var(--serif);font-size:16px;color:var(--ink)}
+  .lb-count{font-size:11px;color:var(--muted);letter-spacing:.06em;margin-top:3px}
+  .lb-assignee{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--ink-2);border:1px solid var(--line-strong);
+    padding:4px 10px;cursor:pointer;white-space:nowrap}
+  .lb-assignee:hover{border-color:var(--ink);color:var(--ink)}
+  .lb-assignee.empty{color:var(--muted)}
+  .lb-progress{flex:1;max-width:200px;height:3px;background:var(--panel2)}
+  .lb-progress>div{height:100%;background:var(--accent);transition:width .3s}
+  .lb-actions{margin-left:auto;display:flex;align-items:center;gap:14px}
+  .lb-chev{color:var(--muted);transition:transform .2s;display:flex}
+  .lb-chev svg{width:11px;height:11px}
+  .listblock.open .lb-chev{transform:rotate(90deg)}
+  .lb-del{color:var(--muted);cursor:pointer;display:flex;padding:4px}
+  .lb-del:hover{color:var(--red)}
+  .lb-del svg{width:14px;height:14px}
+  .lb-body{display:none;padding:0 20px 16px}
+  .listblock.open .lb-body{display:block}
+  .member{display:flex;gap:24px;padding:16px 0;border-top:1px solid var(--line)}
+  .member.done{opacity:.45}
+  .member .left{flex:1;min-width:0}
+  /* убрать клиента из списка (в блоке на дашборде и в таблице выборки) */
+  .row-x{border:none;background:none;color:var(--line-strong);cursor:pointer;font-size:15px;
+    line-height:1;padding:4px 6px;align-self:flex-start}
+  .row-x:hover{color:var(--red)}
+  td.tdx{width:1%;padding-left:0;padding-right:6px;text-align:right}
+
+  /* «+ в задачи» — поштучная отправка клиента на обзвон из «Клиентов» и «Конструктора».
+     Такие задачи идут СВЕРХ дневного набора и висят, пока по ним не отметят звонок. */
+  .row-add{border:1px solid var(--line-strong);background:var(--panel);color:var(--ink-2);
+    border-radius:var(--radius);cursor:pointer;font-size:11px;font-weight:600;
+    letter-spacing:.06em;padding:4px 8px;white-space:nowrap}
+  .row-add:hover{border-color:var(--green);color:var(--green);background:var(--green-soft)}
+  .row-add.done{border-color:var(--green);color:var(--green);background:var(--green-soft);cursor:default}
+  .row-add:disabled{opacity:.6;cursor:default}
+  td.tdadd{width:1%;padding-left:0;padding-right:6px;text-align:right;white-space:nowrap}
+  .row-add + .row-add{margin-left:6px}   /* «+ в задачи» и «+ в обзвон» в одной ячейке */
+
+  /* ── Ручная сборка списка в конструкторе ───────────────────────────────── */
+  .man-card{margin-top:14px}
+  .man-head{font-size:13px;color:var(--ink);margin-bottom:12px}
+  .man-head .muted{font-size:12px}
+  .man-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .man-chip{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;background:var(--panel2);
+    border:1px solid var(--line-strong);font-size:12.5px;color:var(--ink)}
+  .man-chip .x{cursor:pointer;color:var(--muted);font-size:14px;line-height:1}
+  .man-chip .x:hover{color:var(--red,#b3261e)}
+  .man-chip .sub{color:var(--muted);font-size:11px}
+  .man-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px}
+
+  /* ── VIP ───────────────────────────────────────────────────────────────── */
+  .vip-add{position:relative}
+  .vip-suggest{position:absolute;left:0;right:0;top:calc(100% + 8px);background:var(--panel);
+    border:1px solid var(--line-strong);max-height:340px;overflow:auto;z-index:20;display:none}
+  .vip-suggest.open{display:block}
+  .vip-sug{display:flex;align-items:center;gap:14px;padding:12px 16px;cursor:pointer;
+    border-bottom:1px solid var(--line)}
+  .vip-sug:last-child{border-bottom:none}
+  .vip-sug:hover{background:var(--panel2)}
+  .vip-sug.added{opacity:.4;cursor:default}
+  .vip-sug .nm{font-size:14px;color:var(--ink)}
+  .vip-sug .mt{font-size:11.5px;color:var(--muted);margin-top:3px}
+  .vip-sug .sp{margin-left:auto;font-size:13px;color:var(--accent-2);white-space:nowrap;
+    font-variant-numeric:tabular-nums;font-family:var(--serif)}
+  .vip-card{background:var(--panel);border:1px solid var(--line);border-left:2px solid var(--gold);padding:20px;margin-bottom:-1px;
+    display:flex;gap:24px;align-items:flex-start}
+  .vip-card .left{flex:1;min-width:0}
+  .vip-nm{font-family:var(--serif);font-size:19px;cursor:pointer;color:var(--ink);
+    display:flex;align-items:center;gap:9px;flex-wrap:wrap;line-height:1.3}
+  .vip-nm:hover{text-decoration:underline;text-underline-offset:3px}
+  .vip-star{color:var(--gold);display:inline-flex}
+  .vip-star svg{width:13px;height:13px}
+  .vip-metrics{display:flex;flex-wrap:wrap;gap:22px;margin-top:14px}
+  .vip-m{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .vip-m b{display:block;font-family:var(--serif);font-size:17px;letter-spacing:normal;
+    text-transform:none;color:var(--accent-2);margin-top:4px;font-weight:400}
+  .vip-next{margin-top:14px;font-size:12.5px;border-left:2px solid var(--accent);
+    padding:5px 0 5px 12px;color:var(--ink-2)}
+  .vip-note{margin-top:12px;font-size:12.5px;color:var(--ink-2);background:var(--accent-soft);
+    border:1px solid var(--line);padding:8px 12px;cursor:pointer;line-height:1.5}
+  .vip-note.empty{background:transparent;border-style:dashed;color:var(--muted)}
+  .vip-acts{display:flex;flex-direction:column;gap:8px;align-items:stretch}
+
+  /* ── журнал обзвона ────────────────────────────────────────────────────── */
+  .jr-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;
+    margin:34px 0 12px;flex-wrap:wrap}
+  .jr-filters{display:flex;gap:8px}
+  .jr-filters select{padding:7px 11px;border:1px solid var(--line);background:var(--panel);
+    color:var(--ink);font-size:12.5px;font-family:inherit;cursor:pointer;border-radius:var(--radius)}
+  .jr-item{display:flex;gap:18px;align-items:flex-start;background:var(--panel);
+    border:1px solid var(--line);padding:16px 20px;margin-bottom:-1px}
+  .jr-res{flex:0 0 auto;font-size:9.5px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;
+    padding:3px 9px;white-space:nowrap;margin-top:3px;border:1px solid var(--line-strong);color:var(--muted)}
+  /* «придёт» — такой же успешный итог звонка, как запись, только без брони в YClients */
+  .jr-res.booked,.jr-res.coming{color:var(--green);border-color:var(--green);background:var(--green-soft)}
+  .jr-res.refused{color:var(--red);border-color:var(--red);background:var(--red-soft)}
+  .jr-res.callback{color:var(--amber);border-color:var(--amber);background:var(--amber-soft)}
+  .jr-body{flex:1;min-width:0}
+  .jr-name{font-family:var(--serif);font-size:16px;cursor:pointer;color:var(--ink)}
+  .jr-name:hover{text-decoration:underline;text-underline-offset:3px}
+  .jr-meta{font-size:12px;color:var(--muted);margin-top:4px}
+  .jr-meta b{color:var(--accent-2);font-weight:600}
+  .jr-note{font-size:13px;color:var(--ink-2);margin-top:7px}
+  .jr-booking{margin-top:9px;font-size:12.5px;border-left:2px solid var(--accent);
+    padding:4px 0 4px 12px;color:var(--ink-2)}
+  .jr-when{flex:0 0 auto;font-size:11px;color:var(--muted);text-align:right;white-space:nowrap;letter-spacing:.04em}
+
+  /* ── панель админа ─────────────────────────────────────────────────────── */
+  .admin-bar{display:flex;align-items:center;gap:14px;margin-bottom:24px;padding:14px 20px;
+    background:var(--panel);border:1px solid var(--line)}
+  .admin-bar-lbl{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+    font-weight:600;color:var(--muted)}
+  .admin-bar select{flex:0 1 240px;padding:8px 11px;border:1px solid var(--line);
+    background:var(--paper);color:var(--ink);font-size:13.5px;font-family:inherit;
+    cursor:pointer;border-radius:var(--radius)}
+  .admin-bar select:focus{outline:none;border-color:var(--ink)}
+  .admin-manage{margin-left:auto;width:34px;height:34px;border:1px solid var(--line-strong);
+    background:transparent;color:var(--muted);cursor:pointer;border-radius:var(--radius);
+    display:flex;align-items:center;justify-content:center}
+  .admin-manage:hover{border-color:var(--ink);color:var(--ink)}
+  .admin-manage svg{width:15px;height:15px}
+  .admin-row{display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:11px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .admin-row:last-child{border-bottom:none}
+  .admin-row button{border:none;background:none;color:var(--muted);cursor:pointer;font-size:11px;
+    letter-spacing:.1em;text-transform:uppercase}
+  .admin-row button:hover{color:var(--red)}
+  .admin-add{display:flex;gap:8px;margin-top:18px}
+  .admin-add input{flex:1;background:var(--panel);border:1px solid var(--line);
+    border-radius:var(--radius);color:var(--ink);padding:9px 12px;font-size:14px;font-family:inherit}
+  .admin-add input:focus{outline:none;border-color:var(--ink)}
+  .adm-import{margin:20px 0 4px;border-top:1px solid var(--line);padding-top:16px}
+  .adm-import-hd{display:flex;align-items:center;justify-content:space-between;gap:12px;
+    font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;color:var(--muted)}
+  .adm-yc{max-height:220px;overflow:auto;margin-top:12px}
+  .adm-yc label{display:flex;align-items:center;gap:10px;font-size:13.5px;padding:6px 2px;cursor:pointer}
+  .adm-yc label.added{color:var(--muted)}
+  .adm-yc input[type=checkbox]{accent-color:var(--ink)}
+  .adm-yc .rl{font-size:10.5px;color:var(--muted);margin-left:auto;white-space:nowrap;letter-spacing:.06em}
+
+  /* ── модалки ───────────────────────────────────────────────────────────── */
+  /* Форма записи с несколькими мастерами выше экрана — оверлей должен прокручиваться,
+     иначе не добраться ни до верхних полей, ни до кнопки «Записать». Короткие модалки
+     по-прежнему висят по центру: центрируем через auto-поля, а не align-items:center
+     (он обрезал бы верх длинной формы). */
+  .modal-overlay{position:fixed;inset:0;background:rgba(23,22,20,.32);display:none;z-index:70;
+    justify-content:center;padding:20px;overflow-y:auto;overscroll-behavior:contain}
+  .modal-overlay.open{display:flex}
+  .modal-overlay>.modal{margin:auto}
+  .modal{background:var(--paper);border:1px solid var(--line-strong);width:min(440px,100%);padding:28px}
+  .modal-title{font-family:var(--serif);font-size:22px;color:var(--ink);line-height:1.25}
+  .modal-sub{font-size:13px;color:var(--muted);margin:10px 0 20px;line-height:1.6}
+  .fld{display:block;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;
+    color:var(--muted);margin-bottom:16px}
+  .fld input,.fld select{width:100%;margin-top:7px;background:var(--panel);border:1px solid var(--line);
+    border-radius:var(--radius);color:var(--ink);padding:10px 12px;font-size:14px;font-family:inherit;
+    letter-spacing:normal;text-transform:none;font-weight:400}
+  .fld input:focus,.fld select:focus{outline:none;border-color:var(--ink)}
+  .fld select{cursor:pointer}
+  .fld select:disabled{background:var(--panel2);color:var(--muted);cursor:default}
+  .login-error{color:var(--red);font-size:12.5px;min-height:18px;margin-bottom:6px}
+  .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:10px}
+  .modal-note{font-size:11px;color:var(--muted);margin-top:18px;text-align:center;line-height:1.6}
+  .modal-note a{color:var(--ink);text-decoration:none;display:block;margin-top:8px;
+    border-bottom:1px solid var(--line-strong);width:fit-content;margin-inline:auto}
+  .book-modal{width:min(540px,100%)}
+  .book-row{display:flex;gap:14px}
+  .book-row .fld{flex:1;min-width:0}
+  /* Строка записи: клиент нередко идёт за один визит к двум-трём мастерам (маникюр и
+     педикюр параллельно) — каждая такая строка станет отдельной записью в YClients. */
+  .book-item{border:1px solid var(--line);border-radius:var(--radius);padding:16px 16px 2px;
+    margin-bottom:12px;background:var(--panel)}
+  .book-item-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .book-item-n{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;color:var(--muted)}
+  .book-item-x{background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;
+    line-height:1;padding:2px 4px}
+  .book-item-x:hover{color:var(--red)}
+  .book-add{width:100%;margin-bottom:18px}
+
+  /* выбор срока «перезвонить»: быстрые варианты + календарь */
+  .sn-quick{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px}
+  .sn-quick button{flex:1 1 calc(50% - 4px);padding:11px 10px;background:var(--panel);
+    border:1px solid var(--line);border-radius:var(--radius);color:var(--ink);font:inherit;
+    font-size:13px;cursor:pointer;text-align:left;line-height:1.35}
+  .sn-quick button:hover{border-color:var(--ink);background:var(--panel2)}
+  .sn-quick button.on{border-color:var(--ink);background:var(--panel2)}
+  .sn-quick .d{display:block;font-size:11px;color:var(--muted);margin-top:2px}
+  .sn-when{font-size:12.5px;color:var(--muted);margin:0 0 16px;line-height:1.5}
+  .sn-when b{color:var(--ink)}
+
+  .toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:var(--ink);
+    color:var(--paper);padding:12px 22px;font-size:12.5px;letter-spacing:.06em;opacity:0;
+    transition:opacity .2s;z-index:60;pointer-events:none;max-width:min(560px,92vw);text-align:center}
+  .toast.show{opacity:1}
+  /* Сбой — не рядовое уведомление: держим дольше и красным, иначе админ его не заметит
+     и решит, что звонок зафиксирован. */
+  .toast.bad{background:var(--red);color:#fff;font-weight:600;letter-spacing:.02em}
+  .act-failed{box-shadow:inset 0 0 0 2px var(--red)!important}
+
+  @media(max-width:700px){
+    header{padding:12px 16px;gap:12px}
+    .tabs{margin-left:0;order:3;width:100%;overflow-x:auto}
+    main{padding:20px 16px 48px}
+    .task{flex-direction:column;gap:14px}
+    .actions{min-width:0}
+    .statTiles{grid-template-columns:repeat(2,1fr)}
+    .cinfo{grid-template-columns:1fr}
+    .drawer .head{padding:14px 18px 0}
+    .dbody{padding:18px 18px 48px}
+    .jr-when{display:none}
+    .vip-card{flex-direction:column;gap:16px}
+  }
+  @media(prefers-reduced-motion:reduce){
+    *{transition-duration:.01ms !important;animation-duration:.01ms !important}
+  }
