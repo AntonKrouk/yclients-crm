@@ -150,6 +150,43 @@ db.exec(`
     added_at   TEXT
   );
 
+  -- Депозитные клиенты: устроены ровно так же, как vip_clients — ручной постоянный список,
+  -- который ведут персонально. Отдельная таблица, а не флаг в vip_clients: один и тот же
+  -- человек может быть и в VIP, и в «Депозите», и удаление из одного списка не должно
+  -- выкидывать его из второго.
+  CREATE TABLE IF NOT EXISTS deposit_clients (
+    id         INTEGER PRIMARY KEY,
+    client_id  INTEGER UNIQUE REFERENCES clients(id),
+    note       TEXT,
+    added_by   TEXT,
+    added_at   TEXT
+  );
+
+  -- Заметка ко дню рождения клиента. Пишется заранее («дарим сертификат на укладку»)
+  -- и всплывает в списке именинников в сам день рождения. Одна на карточку, живёт вечно.
+  CREATE TABLE IF NOT EXISTS birthday_notes (
+    id         INTEGER PRIMARY KEY,
+    client_id  INTEGER UNIQUE REFERENCES clients(id),
+    note       TEXT,
+    updated_by TEXT,
+    updated_at TEXT
+  );
+
+  -- Скрипты (шаблоны сообщений клиентам). Категории НЕ заданы заранее: это обычная
+  -- текстовая колонка, список категорий собирается из того, что админы уже написали.
+  -- В теле встречаются подстановки вида {имя}, {мастер} — раскрываются при вставке
+  -- из карточки клиента, в самом шаблоне лежат как есть.
+  CREATE TABLE IF NOT EXISTS scripts (
+    id         INTEGER PRIMARY KEY,
+    title      TEXT,
+    category   TEXT,
+    body       TEXT,
+    author     TEXT,
+    used_count INTEGER DEFAULT 0,
+    created_at TEXT,
+    updated_at TEXT
+  );
+
   -- Администраторы (редактируемый список) — для выбора «кто звонил» при фиксации звонка
   CREATE TABLE IF NOT EXISTS admins (
     id     INTEGER PRIMARY KEY,
@@ -192,6 +229,11 @@ ensureColumn('clients', 'yc_discount', 'REAL');
 // Эффективная скидка: max(поле YClients, процент из имени). Комментарий НЕ источник —
 // там пишут про разовые скидки на продажах. Пересчитывается каждым синком.
 ensureColumn('clients', 'discount_pct', 'REAL');
+// Дата рождения клиента (нормализованная, 'YYYY-MM-DD'). YClients отдаёт её ТОЛЬКО в полной
+// карточке /client/{cid}/{id}, поэтому заполняется тем же фоновым проходом, что комментарии.
+// Различаем три состояния: NULL — карточку ещё не смотрели, '' — смотрели, в YClients пусто,
+// дата — есть. Без пустой строки клиенты без ДР перезапрашивались бы каждым проходом вечно.
+ensureColumn('clients', 'birth_date', 'TEXT');
 // Категории оказанных услуг визита (через ', '), денормализация прайс-листа.
 // Нужна для группировки конструктора: без неё фильтр по группе перебирал бы
 // каждую строку визита против 750 названий услуг.

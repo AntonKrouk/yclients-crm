@@ -65,8 +65,13 @@
     text-transform:uppercase;padding:2px 7px;color:var(--muted);border:1px solid var(--line);
     margin-left:7px;vertical-align:middle;white-space:nowrap}
 
-  .tabs{display:flex;gap:0;margin-left:auto;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
-  .tab{padding:9px 16px;background:transparent;color:var(--muted);border:none;cursor:pointer;
+  /* Вкладок стало восемь: на узком десктопе они переставали помещаться и последняя
+     обрезалась под правым краем шапки. Панель скроллится по горизонтали, а сами вкладки
+     не сжимаются — иначе подписи ломались бы посреди слова. */
+  .tabs{display:flex;gap:0;margin-left:auto;max-width:100%;border:1px solid var(--line);
+    border-radius:var(--radius);overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}
+  .tab{padding:9px 15px;background:transparent;color:var(--muted);border:none;cursor:pointer;
+    flex:none;white-space:nowrap;
     border-right:1px solid var(--line);transition:color .18s,background .18s}
   .tab:last-child{border-right:none}
   .tab:hover{color:var(--ink);background:var(--panel2)}
@@ -407,6 +412,115 @@
     border:1px solid var(--line);padding:8px 12px;cursor:pointer;line-height:1.5}
   .vip-note.empty{background:transparent;border-style:dashed;color:var(--muted)}
   .vip-acts{display:flex;flex-direction:column;gap:8px;align-items:stretch}
+  /* «Депозит» и «ДР» переиспользуют карточку VIP целиком — различает их только цвет
+     торцевой полосы и иконка у имени, чтобы вкладки не путались между собой. */
+  .vip-card.dep{border-left-color:var(--accent)}
+  .vip-card.dep .vip-star{color:var(--accent-2)}
+
+  /* ── скрипты (шаблоны сообщений) ───────────────────────────────────────── */
+  .sc-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .sc-bar .search{flex:1;max-width:none;min-width:200px}
+  /* категории — то, что админы вписали сами; заранее заданного справочника нет */
+  .sc-cats{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .sc-cat{border:1px solid var(--line-strong);background:transparent;color:var(--ink-2);
+    cursor:pointer;font-family:inherit;font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+    font-weight:600;padding:6px 12px;border-radius:var(--radius)}
+  .sc-cat:hover{border-color:var(--ink);color:var(--ink)}
+  .sc-cat.on{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+  .sc-cat span{opacity:.6;margin-left:5px;letter-spacing:normal}
+  .sc-card{background:var(--panel);border:1px solid var(--line);border-left:2px solid var(--accent);
+    padding:18px 20px;margin-bottom:-1px}
+  .sc-hd{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .sc-t{font-family:var(--serif);font-size:18px;color:var(--ink)}
+  .sc-tag{font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;
+    color:var(--accent-2);background:var(--accent-soft);padding:3px 8px;border-radius:var(--radius)}
+  .sc-used{font-size:11px;color:var(--muted);margin-left:auto}
+  /* переносы строк в шаблоне значимы — это готовое сообщение, а не абзац текста */
+  .sc-body{margin-top:12px;font-size:13.5px;color:var(--ink-2);line-height:1.6;
+    white-space:pre-wrap;word-break:break-word}
+  .sc-acts{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+  .sc-acts .btn svg{width:12px;height:12px;margin-right:6px;vertical-align:-2px}
+  .sc-modal{width:min(560px,100%)}
+  /* ИИ-помощник в форме шаблона: отдельная плашка, чтобы визуально не смешивался
+     с полями самого шаблона — он пишет черновик, а не заполняет форму за админа */
+  .sc-ai{background:var(--accent-soft);border:1px solid #C9E4E0;border-radius:var(--radius);
+    padding:14px 16px;margin:0 0 22px}
+  .sc-ai-hd{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;
+    color:var(--accent-2);margin-bottom:9px}
+  .sc-ai textarea{background:var(--panel);font-size:13px}
+  .sc-ai-row{display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap}
+  .sc-ai-note{font-size:11.5px;color:var(--muted);flex:1;min-width:180px;line-height:1.45}
+  .sc-pick{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px;max-height:132px;overflow-y:auto}
+  .sc-chip{border:1px solid var(--line-strong);background:transparent;color:var(--ink-2);cursor:pointer;
+    font-family:inherit;font-size:12.5px;padding:6px 12px;border-radius:var(--radius);text-align:left}
+  .sc-chip:hover{border-color:var(--ink);color:var(--ink)}
+  .sc-chip.on{background:var(--accent-soft);border-color:var(--accent-2);color:var(--accent-2)}
+
+  /* ── дни рождения ──────────────────────────────────────────────────────── */
+  /* Строка именинника намеренно узкая: цифры по клиенту живут в его карточке,
+     здесь только то, что нужно для поздравления. */
+  .bd-row{display:flex;align-items:center;gap:18px;background:var(--panel);
+    border:1px solid var(--line);border-left:2px solid var(--violet);
+    padding:12px 18px;margin-bottom:-1px}
+  .bd-row:hover{background:var(--panel2)}
+  /* имя тянется, заметка стоит колонкой фиксированной ширины — иначе правый край
+     «пляшет» от строки к строке и список читается хуже */
+  .bd-who{display:flex;align-items:center;gap:10px;flex-wrap:wrap;cursor:pointer;min-width:0;flex:1 1 auto}
+  .bd-who .ic{display:inline-flex;color:var(--violet);flex:none}
+  .bd-who .ic svg{width:14px;height:14px}
+  .bd-who .nm{font-family:var(--serif);font-size:16px;color:var(--ink);
+    display:inline-flex;align-items:center;gap:6px}
+  .bd-who:hover .nm{text-decoration:underline;text-underline-offset:3px}
+  .bd-who .nm svg{width:12px;height:12px;color:var(--red)}
+  .bd-who .mt{font-size:12px;color:var(--muted)}
+  .bd-note{flex:0 0 320px;max-width:100%;margin-left:auto;font-size:12.5px;color:var(--ink-2);
+    background:var(--accent-soft);border:1px solid var(--line);border-radius:var(--radius);
+    padding:6px 11px;cursor:pointer;line-height:1.45}
+  .bd-note.blank{background:transparent;border-style:dashed;color:var(--muted);font-style:italic}
+  .bd-by{color:var(--muted);font-size:11.5px;font-style:normal}
+
+  .bd-head{display:flex;align-items:center;justify-content:space-between;gap:16px;
+    margin:34px 0 10px;flex-wrap:wrap}
+  .bd-cal{padding:18px 20px 20px}
+  .bd-cal-head{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+  .bd-cal-head select{padding:7px 11px;border:1px solid var(--line);background:var(--panel);
+    color:var(--ink);font-size:13px;font-family:inherit;cursor:pointer;border-radius:var(--radius)}
+  .bd-cal-head .muted{margin-left:auto;font-size:12px;color:var(--muted)}
+  .bd-nav{width:30px;height:30px;border:1px solid var(--line-strong);background:transparent;
+    color:var(--ink-2);cursor:pointer;font-size:17px;line-height:1;border-radius:var(--radius)}
+  .bd-nav:hover{border-color:var(--ink);color:var(--ink)}
+  .bd-dow,.bd-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+  .bd-dow{margin-bottom:6px}
+  .bd-dow span{text-align:center;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+    font-weight:600;color:var(--muted)}
+  .bd-cell{position:relative;min-height:54px;border:1px solid var(--line);background:var(--panel);
+    border-radius:var(--radius);padding:6px 8px;cursor:pointer;transition:border-color .12s}
+  .bd-cell.empty{border:none;background:transparent;cursor:default}
+  .bd-cell:not(.empty):hover{border-color:var(--ink)}
+  .bd-cell .d{font-size:12.5px;color:var(--ink-2)}
+  /* день с именинниками — заметный, но без крика: мягкая заливка вторым акцентом */
+  .bd-cell.has{background:var(--violet-soft);border-color:#D6D0E8}
+  .bd-cell.has .d{color:var(--ink);font-weight:600}
+  .bd-cell.today{box-shadow:inset 0 0 0 1.5px var(--ink)}
+  .bd-cell.sel{border-color:var(--ink);background:var(--ink)}
+  .bd-cell.sel .d,.bd-cell.sel .c{color:var(--paper)}
+  .bd-cell .c{position:absolute;right:7px;bottom:6px;font-family:var(--serif);font-size:15px;
+    color:var(--violet);line-height:1}
+  /* точка у числа — на этот день уже написана заметка, готовиться не с нуля */
+  .bd-cell .c.noted::after{content:'';position:absolute;top:-1px;right:-6px;width:4px;height:4px;
+    border-radius:50%;background:var(--accent)}
+
+  /* строка ДР в шапке карточки клиента */
+  .bd-strip{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;cursor:pointer;
+    background:var(--violet-soft);border:1px solid #D6D0E8;border-radius:var(--radius);
+    padding:8px 12px;font-size:12.5px;color:var(--ink-2)}
+  .bd-strip:hover{border-color:var(--violet)}
+  .bd-strip .ic{display:inline-flex;color:var(--violet)}
+  .bd-strip .ic svg{width:14px;height:14px}
+  .bd-strip .dt{color:var(--ink);font-weight:600}
+  .bd-strip .ag{color:var(--muted)}
+  .bd-strip .nt{flex:1;min-width:140px;border-left:1px solid #D6D0E8;padding-left:10px}
+  .bd-strip .nt.blank{color:var(--muted);font-style:italic}
 
   /* ── журнал обзвона ────────────────────────────────────────────────────── */
   .jr-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;
@@ -482,6 +596,8 @@
   .fld input,.fld select{width:100%;margin-top:7px;background:var(--panel);border:1px solid var(--line);
     border-radius:var(--radius);color:var(--ink);padding:10px 12px;font-size:14px;font-family:inherit;
     letter-spacing:normal;text-transform:none;font-weight:400}
+  .fld textarea{margin-top:7px;padding:10px 12px;font-size:14px;letter-spacing:normal;
+    text-transform:none;font-weight:400;line-height:1.55}
   .fld input:focus,.fld select:focus{outline:none;border-color:var(--ink)}
   .fld select{cursor:pointer}
   .fld select:disabled{background:var(--panel2);color:var(--muted);cursor:default}
@@ -536,6 +652,17 @@
     .dbody{padding:18px 18px 48px}
     .jr-when{display:none}
     .vip-card{flex-direction:column;gap:16px}
+    /* календарь на телефоне: семь колонок обязаны остаться семью — сжимаем клетку,
+       а не ломаем сетку. Число именинников уезжает под дату. */
+    .bd-cal{padding:14px 12px 16px}
+    .bd-dow,.bd-grid{gap:3px}
+    .bd-cell{min-height:44px;padding:4px 5px}
+    .bd-cell .c{position:static;display:block;margin-top:2px;font-size:13px}
+    .bd-cell .c.noted::after{right:auto;margin-left:4px;position:relative;top:-4px;display:inline-block}
+    .bd-cal-head .muted{margin-left:0;width:100%}
+    /* на телефоне заметка не помещается рядом с именем — уводим её на вторую строку */
+    .bd-row{flex-direction:column;align-items:stretch;gap:10px}
+    .bd-note{flex:1 1 auto;margin-left:0}
   }
   @media(prefers-reduced-motion:reduce){
     *{transition-duration:.01ms !important;animation-duration:.01ms !important}

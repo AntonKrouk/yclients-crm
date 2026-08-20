@@ -10,6 +10,7 @@ const sync = require('./src/sync');
 const telegram = require('./src/telegram');
 const yc = require('./src/yclients');
 const people = require('./src/people');
+const ai = require('./src/ai');
 
 const app = express();
 app.use(express.json());
@@ -258,98 +259,320 @@ app.get('/api/services-list', (req, res) => {
   res.json(list);
 });
 
-// --- VIP-клиенты ---------------------------------------------------------------
-// Ручной постоянный список: клиент лежит здесь, пока админ сам его не удалит.
-// Такие клиенты ведутся персонально, поэтому из конструктора выборок исключаются —
+// --- Ручные постоянные списки: VIP и Депозит ------------------------------------
+// Оба устроены одинаково: клиент лежит в списке, пока админ сам его не удалит.
+// Таких клиентов ведут персонально, поэтому из конструктора выборок они исключаются —
 // вместе со «вторыми» карточками того же человека в другом филиале.
+// Различаются ТОЛЬКО таблицей и названием вкладки, поэтому маршруты собираются циклом:
+// так расхождение в поведении между списками невозможно в принципе.
+// Ключи объекта попадают в URL (/api/vip, /api/deposit), значения — имена таблиц;
+// и то и другое — константы из кода, в SQL пользовательский ввод не подставляется.
+const MANUAL_LISTS = { vip: 'vip_clients', deposit: 'deposit_clients' };
 
-const vipRows = () => db.prepare(`
+const listRows = (table) => db.prepare(`
   SELECT v.client_id, v.note, v.added_by, v.added_at, c.name, c.phone, c.last_visit, c.visits_count
-  FROM vip_clients v JOIN clients c ON c.id = v.client_id
+  FROM ${table} v JOIN clients c ON c.id = v.client_id
 `).all();
 
-// Ключи людей (по телефону), которые в VIP — чтобы отсечь и дубли по филиалам
-function vipPersonKeys() {
-  return new Set(vipRows().map(r => people.personKey({ id: r.client_id, phone: r.phone })));
+// Ключи людей (по телефону), которые лежат в любом из ручных списков —
+// чтобы конструктор отсёк и вторую карточку того же человека
+function manualListPersonKeys() {
+  const keys = new Set();
+  for (const table of Object.values(MANUAL_LISTS)) {
+    for (const r of listRows(table)) keys.add(people.personKey({ id: r.client_id, phone: r.phone }));
+  }
+  return keys;
 }
 
-app.get('/api/vip', (req, res) => {
-  const rows = vipRows();
-  // ближайшая будущая запись — по всем карточкам человека
-  const nextVisit = (ids) => db.prepare(`SELECT date, service, staff, branch FROM visits
-    WHERE client_id IN (${ids.map(() => '?').join(',')}) AND status='upcoming' AND date >= datetime('now')
-    ORDER BY date ASC LIMIT 1`).get(...ids);
-  const items = rows.map(r => {
-    const p = loadPerson(r.client_id);
-    if (!p) return null;
-    const s = computeClientStats(p.client.id, p.client, p.ids);
+for (const [slug, table] of Object.entries(MANUAL_LISTS)) {
+  app.get(`/api/${slug}`, (req, res) => {
+    const rows = listRows(table);
+    // ближайшая будущая запись — по всем карточкам человека
+    const nextVisit = (ids) => db.prepare(`SELECT date, service, staff, branch FROM visits
+      WHERE client_id IN (${ids.map(() => '?').join(',')}) AND status='upcoming' AND date >= datetime('now')
+      ORDER BY date ASC LIMIT 1`).get(...ids);
+    const items = rows.map(r => {
+      const p = loadPerson(r.client_id);
+      if (!p) return null;
+      const s = computeClientStats(p.client.id, p.client, p.ids);
+      return {
+        client_id: r.client_id,
+        name: p.client.name, phone: p.client.phone,
+        branches: p.client.branches, cards: p.ids.length,
+        note: r.note || '', added_by: r.added_by || '', added_at: r.added_at,
+        do_not_call: p.client.do_not_call,
+        deposit_balance: p.client.yc_balance || 0,
+        visits: s.total_visits,
+        spent: p.client.yc_spent != null ? p.client.yc_spent : s.total_spent,
+        avg_check: s.avg_check,
+        last_visit: s.last_visit,
+        since_last_days: s.since_last_days,
+        status: s.status, status_label: s.status_label,
+        top_master: s.masters[0] && s.masters[0].name !== '—' ? s.masters[0].name : '',
+        next_visit: nextVisit(p.ids) || null,
+      };
+    }).filter(Boolean);
+    items.sort((a, b) => (b.spent || 0) - (a.spent || 0));
+    res.json({ count: items.length, total_spent: items.reduce((s, i) => s + (i.spent || 0), 0), items });
+  });
+
+  app.post(`/api/${slug}`, (req, res) => {
+    const clientId = Number(req.body?.client_id);
+    const client = db.prepare('SELECT id FROM clients WHERE id=?').get(clientId);
+    if (!client) return res.status(404).json({ error: 'Клиент не найден' });
+    db.prepare(`INSERT INTO ${table}(client_id, note, added_by, added_at) VALUES(?,?,?,?)
+                ON CONFLICT(client_id) DO UPDATE SET note=excluded.note`)
+      .run(clientId, (req.body?.note || '').trim(), (req.body?.admin || '').trim() || null, new Date().toISOString());
+    // такого клиента ведут персонально — автоматические задачи по нему снимаем сразу,
+    // не дожидаясь синка
+    const dropped = db.prepare(`UPDATE tasks SET status='dismissed', closed_at=?
+                                WHERE client_id=? AND status IN ('open','snoozed')`)
+      .run(new Date().toISOString(), clientId).changes;
+    res.json({ ok: true, tasks_dismissed: dropped });
+  });
+
+  app.patch(`/api/${slug}/:clientId`, (req, res) => {
+    db.prepare(`UPDATE ${table} SET note=? WHERE client_id=?`)
+      .run((req.body?.note || '').trim(), Number(req.params.clientId));
+    res.json({ ok: true });
+  });
+
+  app.delete(`/api/${slug}/:clientId`, (req, res) => {
+    const n = db.prepare(`DELETE FROM ${table} WHERE client_id=?`).run(Number(req.params.clientId)).changes;
+    res.json({ ok: true, removed: n });
+  });
+
+  // Поиск кандидатов в список: имя/телефон, один человек — одна строка,
+  // уже добавленные помечены (проверяем ТОЛЬКО свой список, не соседний)
+  app.get(`/api/${slug}/search`, (req, res) => {
+    const q = `%${(req.query.q || '').toLowerCase().trim()}%`;
+    if (q === '%%') return res.json([]);
+    const rows = db.prepare(`
+      SELECT id, name, phone, branch, visits_count, last_visit, COALESCE(yc_spent, spent, 0) AS real_spent
+      FROM clients WHERE lower_u(name) LIKE ? OR phone LIKE ?
+      ORDER BY visits_count DESC LIMIT 200`).all(q, q);
+    const inList = new Set(listRows(table).map(r => r.client_id));
+    const out = people.groupByPerson(rows).map(cards => ({
+      id: cards[0].id,
+      name: cards[0].name,
+      phone: cards[0].phone,
+      branches: [...new Set(cards.map(c => c.branch).filter(Boolean))],
+      visits: cards.reduce((s, c) => s + (c.visits_count || 0), 0),
+      spent: cards.reduce((s, c) => s + (c.real_spent || 0), 0),
+      last_visit: cards.map(c => c.last_visit).filter(Boolean).sort().pop() || null,
+      added: cards.some(c => inList.has(c.id)),
+    }));
+    out.sort((a, b) => (b.spent - a.spent) || (b.visits - a.visits));
+    res.json(out.slice(0, 30));
+  });
+}
+
+// --- Дни рождения ---------------------------------------------------------------
+// Дата рождения лежит в clients.birth_date в виде 'YYYY-MM-DD' (её кладёт фоновый проход по
+// карточкам YClients, см. syncComments). Выборка именинников — по «месяц-день», то есть
+// substr(birth_date, 6, 5); год нужен только чтобы посчитать, сколько человеку исполняется.
+//
+// Заметка к ДР хранится в birthday_notes отдельной строкой на КАРТОЧКУ. У человека карточек
+// может быть несколько (по одной на филиал), поэтому при чтении собираем заметки по всем его
+// карточкам и берём самую свежую: админ мог написать её из любого филиала.
+
+// «Сегодня» считаем по Москве: салон живёт по московскому времени, а сервер стоит в UTC,
+// и после 21:00 МСК «сегодняшние» именинники уехали бы на вчера.
+const mskToday = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' });
+const isLeap = (y) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+
+const birthdayRowsFor = (mdList) => db.prepare(`
+  SELECT id, name, phone, branch, birth_date, visits_count, last_visit,
+         COALESCE(yc_spent, spent, 0) AS real_spent,
+         COALESCE(do_not_call, 0) AS do_not_call,
+         COALESCE(yc_balance, 0) AS deposit_balance
+  FROM clients
+  WHERE COALESCE(birth_date,'') <> '' AND substr(birth_date, 6, 5) IN (${mdList.map(() => '?').join(',')})
+`).all(...mdList);
+
+// Заметки по всем карточкам человека → самая свежая
+function birthdayNoteOf(ids) {
+  const rows = db.prepare(`SELECT note, updated_by, updated_at FROM birthday_notes
+    WHERE client_id IN (${ids.map(() => '?').join(',')}) AND COALESCE(note,'') <> ''
+    ORDER BY updated_at DESC LIMIT 1`).all(...ids);
+  return rows[0] || null;
+}
+
+// Список именинников на конкретную календарную дату (YYYY-MM-DD).
+// 29 февраля в невисокосный год отмечают 28-го — иначе такие клиенты выпадали бы на три года.
+function birthdayItems(dateStr) {
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  const md = [`${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`];
+  if (mo === 2 && d === 28 && !isLeap(y)) md.push('02-29');
+  const rows = birthdayRowsFor(md);
+  const items = people.groupByPerson(rows).map(cards => {
+    const ids = cards.map(c => c.id);
+    const birth = cards.map(c => c.birth_date).filter(Boolean)[0] || '';
+    const birthYear = Number(birth.slice(0, 4)) || 0;
+    const note = birthdayNoteOf(ids);
     return {
-      client_id: r.client_id,
-      name: p.client.name, phone: p.client.phone,
-      branches: p.client.branches, cards: p.ids.length,
-      note: r.note || '', added_by: r.added_by || '', added_at: r.added_at,
-      do_not_call: p.client.do_not_call,
-      deposit_balance: p.client.yc_balance || 0,
-      visits: s.total_visits,
-      spent: p.client.yc_spent != null ? p.client.yc_spent : s.total_spent,
-      avg_check: s.avg_check,
-      last_visit: s.last_visit,
-      since_last_days: s.since_last_days,
-      status: s.status, status_label: s.status_label,
-      top_master: s.masters[0] && s.masters[0].name !== '—' ? s.masters[0].name : '',
-      next_visit: nextVisit(p.ids) || null,
+      client_id: cards[0].id,
+      name: cards[0].name || 'Без имени',
+      phone: cards[0].phone || '',
+      branches: [...new Set(cards.map(c => c.branch).filter(Boolean))],
+      birth_date: birth,
+      // сколько исполняется именно в выбранную дату (в прошлом — сколько исполнилось)
+      turns: birthYear ? y - birthYear : null,
+      visits: cards.reduce((s, c) => s + (c.visits_count || 0), 0),
+      spent: cards.reduce((s, c) => s + (c.real_spent || 0), 0),
+      last_visit: cards.map(c => c.last_visit).filter(Boolean).sort().pop() || null,
+      deposit_balance: cards.reduce((s, c) => s + (c.deposit_balance || 0), 0),
+      do_not_call: cards.some(c => c.do_not_call) ? 1 : 0,
+      note: note?.note || '',
+      note_by: note?.updated_by || '',
+      note_at: note?.updated_at || null,
     };
-  }).filter(Boolean);
-  items.sort((a, b) => (b.spent || 0) - (a.spent || 0));
-  res.json({ count: items.length, total_spent: items.reduce((s, i) => s + (i.spent || 0), 0), items });
+  });
+  // сперва те, к кому уже готовились (есть заметка), затем по деньгам
+  items.sort((a, b) => (Number(Boolean(b.note)) - Number(Boolean(a.note))) || (b.spent - a.spent));
+  return items;
+}
+
+// Именинники дня. Без параметра — сегодняшние (то, ради чего вкладка и открывается).
+app.get('/api/birthdays', (req, res) => {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : mskToday();
+  const items = birthdayItems(date);
+  res.json({ date, today: mskToday(), count: items.length, items });
 });
 
-app.post('/api/vip', (req, res) => {
-  const clientId = Number(req.body?.client_id);
-  const client = db.prepare('SELECT id FROM clients WHERE id=?').get(clientId);
-  if (!client) return res.status(404).json({ error: 'Клиент не найден' });
-  db.prepare(`INSERT INTO vip_clients(client_id, note, added_by, added_at) VALUES(?,?,?,?)
-              ON CONFLICT(client_id) DO UPDATE SET note=excluded.note`)
-    .run(clientId, (req.body?.note || '').trim(), (req.body?.admin || '').trim() || null, new Date().toISOString());
-  // VIP ведут персонально — автоматические задачи по нему снимаем сразу, не дожидаясь синка
-  const dropped = db.prepare(`UPDATE tasks SET status='dismissed', closed_at=?
-                              WHERE client_id=? AND status IN ('open','snoozed')`)
-    .run(new Date().toISOString(), clientId).changes;
-  res.json({ ok: true, tasks_dismissed: dropped });
+// Сетка календаря: сколько именинников в каждый день месяца и кто именно (для подсказки).
+// Человек, а не карточка: один клиент с карточками в двух филиалах — это один именинник.
+app.get('/api/birthdays/month', (req, res) => {
+  // разбираем строку 'YYYY-MM-DD' сами: new Date(строка) распарсил бы её как UTC-полночь,
+  // и на сервере западнее UTC месяц по умолчанию мог бы съехать на предыдущий
+  const [ty, tm] = mskToday().split('-').map(Number);
+  const year = Number(req.query.year) || ty;
+  const month = Number(req.query.month) || tm;
+  if (month < 1 || month > 12) return res.status(400).json({ error: 'Месяц вне диапазона' });
+  const mm = String(month).padStart(2, '0');
+  const days = new Date(year, month, 0).getDate();
+  const rows = db.prepare(`
+    SELECT id, name, phone, branch, birth_date, visits_count, last_visit
+    FROM clients
+    WHERE COALESCE(birth_date,'') <> '' AND substr(birth_date, 6, 2) = ?`).all(mm);
+  const noted = new Set(db.prepare("SELECT client_id FROM birthday_notes WHERE COALESCE(note,'') <> ''")
+    .all().map(r => r.client_id));
+  const byDay = {};
+  for (const cards of people.groupByPerson(rows)) {
+    const day = Number((cards.map(c => c.birth_date).filter(Boolean)[0] || '').slice(8, 10));
+    if (!day) continue;
+    // 29 февраля в невисокосный год показываем 28-го — так же, как отдаёт /api/birthdays
+    const slot = (month === 2 && day === 29 && !isLeap(year)) ? 28 : day;
+    if (slot > days) continue;
+    const b = byDay[slot] || (byDay[slot] = { count: 0, names: [], noted: 0 });
+    b.count++;
+    if (b.names.length < 5) b.names.push(cards[0].name || 'Без имени');
+    if (cards.some(c => noted.has(c.id))) b.noted++;
+  }
+  res.json({ year, month, days, today: mskToday(), by_day: byDay });
 });
 
-app.patch('/api/vip/:clientId', (req, res) => {
-  db.prepare('UPDATE vip_clients SET note=? WHERE client_id=?')
-    .run((req.body?.note || '').trim(), Number(req.params.clientId));
+// Заметка ко дню рождения: пишется заранее, видна в списке именинников в сам день.
+app.put('/api/birthdays/:clientId/note', (req, res) => {
+  const clientId = Number(req.params.clientId);
+  if (!db.prepare('SELECT id FROM clients WHERE id=?').get(clientId))
+    return res.status(404).json({ error: 'Клиент не найден' });
+  const note = String(req.body?.note || '').trim();
+  if (!note) {
+    db.prepare('DELETE FROM birthday_notes WHERE client_id=?').run(clientId);
+    return res.json({ ok: true, note: '' });
+  }
+  db.prepare(`INSERT INTO birthday_notes(client_id, note, updated_by, updated_at) VALUES(?,?,?,?)
+              ON CONFLICT(client_id) DO UPDATE SET
+                note=excluded.note, updated_by=excluded.updated_by, updated_at=excluded.updated_at`)
+    .run(clientId, note, (req.body?.admin || '').trim() || null, new Date().toISOString());
+  res.json({ ok: true, note });
+});
+
+// Заметка + дата рождения одного человека — нужна карточке клиента, которую открывают
+// не только из вкладки «ДР» (из задач, обзвонов, конструктора).
+app.get('/api/birthdays/:clientId/note', (req, res) => {
+  const p = loadPerson(req.params.clientId);
+  if (!p) return res.status(404).json({ error: 'client not found' });
+  const note = birthdayNoteOf(p.ids);
+  const birth = p.cards.map(c => c.birth_date).filter(Boolean)[0] || '';
+  res.json({ client_id: p.client.id, birth_date: birth, note: note?.note || '', note_by: note?.updated_by || '' });
+});
+
+// --- Скрипты (шаблоны сообщений) -------------------------------------------------
+// Хранилище текстов, которыми админы пишут клиентам. Категории заводятся сами: это
+// свободное текстовое поле, а список для фильтра собирается из уже сохранённых шаблонов —
+// заранее придуманный справочник тут только мешал бы.
+
+const scriptCategories = () => db.prepare(`SELECT category, COUNT(*) n FROM scripts
+  WHERE COALESCE(category,'') <> '' GROUP BY category ORDER BY n DESC, category`).all();
+
+app.get('/api/scripts', (req, res) => {
+  const q = (req.query.q || '').toLowerCase().trim();
+  const category = (req.query.category || '').trim();
+  const conds = [], params = [];
+  if (q) { conds.push('(lower_u(title) LIKE ? OR lower_u(body) LIKE ?)'); params.push('%' + q + '%', '%' + q + '%'); }
+  if (category) { conds.push('category = ?'); params.push(category); }
+  const items = db.prepare(`SELECT * FROM scripts
+    ${conds.length ? 'WHERE ' + conds.join(' AND ') : ''}
+    ORDER BY used_count DESC, updated_at DESC`).all(...params);
+  res.json({ count: items.length, categories: scriptCategories(), items });
+});
+
+app.post('/api/scripts', (req, res) => {
+  const title = String(req.body?.title || '').trim();
+  const body = String(req.body?.body || '').trim();
+  if (!title) return res.status(400).json({ error: 'Нужно название шаблона' });
+  if (!body) return res.status(400).json({ error: 'Нужен текст шаблона' });
+  const now = new Date().toISOString();
+  const id = db.prepare(`INSERT INTO scripts(title, category, body, author, created_at, updated_at)
+    VALUES(?,?,?,?,?,?)`)
+    .run(title, String(req.body?.category || '').trim(), body,
+      String(req.body?.admin || '').trim() || null, now, now).lastInsertRowid;
+  res.json({ ok: true, id: Number(id) });
+});
+
+app.patch('/api/scripts/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const cur = db.prepare('SELECT * FROM scripts WHERE id=?').get(id);
+  if (!cur) return res.status(404).json({ error: 'Шаблон не найден' });
+  // патчим только то, что пришло: так эта же ручка обслуживает и правку из формы,
+  // и переименование категории, не затирая остального
+  const title = req.body?.title != null ? String(req.body.title).trim() : cur.title;
+  const body = req.body?.body != null ? String(req.body.body).trim() : cur.body;
+  if (!title || !body) return res.status(400).json({ error: 'Название и текст не могут быть пустыми' });
+  const category = req.body?.category != null ? String(req.body.category).trim() : cur.category;
+  db.prepare('UPDATE scripts SET title=?, category=?, body=?, updated_at=? WHERE id=?')
+    .run(title, category, body, new Date().toISOString(), id);
   res.json({ ok: true });
 });
 
-app.delete('/api/vip/:clientId', (req, res) => {
-  const n = db.prepare('DELETE FROM vip_clients WHERE client_id=?').run(Number(req.params.clientId)).changes;
+app.delete('/api/scripts/:id', (req, res) => {
+  const n = db.prepare('DELETE FROM scripts WHERE id=?').run(Number(req.params.id)).changes;
   res.json({ ok: true, removed: n });
 });
 
-// Поиск кандидатов в VIP: имя/телефон, один человек — одна строка, уже добавленные помечены
-app.get('/api/vip/search', (req, res) => {
-  const q = `%${(req.query.q || '').toLowerCase().trim()}%`;
-  if (q === '%%') return res.json([]);
-  const rows = db.prepare(`
-    SELECT id, name, phone, branch, visits_count, last_visit, COALESCE(yc_spent, spent, 0) AS real_spent
-    FROM clients WHERE lower_u(name) LIKE ? OR phone LIKE ?
-    ORDER BY visits_count DESC LIMIT 200`).all(q, q);
-  const inVip = new Set(vipRows().map(r => r.client_id));
-  const out = people.groupByPerson(rows).map(cards => ({
-    id: cards[0].id,
-    name: cards[0].name,
-    phone: cards[0].phone,
-    branches: [...new Set(cards.map(c => c.branch).filter(Boolean))],
-    visits: cards.reduce((s, c) => s + (c.visits_count || 0), 0),
-    spent: cards.reduce((s, c) => s + (c.real_spent || 0), 0),
-    last_visit: cards.map(c => c.last_visit).filter(Boolean).sort().pop() || null,
-    added: cards.some(c => inVip.has(c.id)),
-  }));
-  out.sort((a, b) => (b.spent - a.spent) || (b.visits - a.visits));
-  res.json(out.slice(0, 30));
+// Есть ли ИИ-помощник. Фронт по этому флагу показывает или прячет блок генерации:
+// без ключа в .env вкладка остаётся рабочим хранилищем, просто без кнопки «Сгенерировать».
+// Объявлено ДО '/api/scripts/:id', иначе 'ai' попал бы в :id.
+app.get('/api/scripts/ai', (req, res) => res.json({ enabled: ai.enabled() }));
+
+// Черновик текста по задаче администратора. Ничего не сохраняет: результат едет в форму,
+// админ его правит и сохраняет сам — модель пишет заготовку, а не готовый шаблон.
+app.post('/api/scripts/generate', async (req, res) => {
+  try {
+    const r = await ai.generateScript(req.body?.task, req.body?.title);
+    res.json({ ok: true, text: r.text, model: r.model });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Отметка «шаблон пригодился»: по этому счётчику ходовые тексты поднимаются наверх списка,
+// и админу не приходится каждый раз прокручивать до нужного.
+app.post('/api/scripts/:id/used', (req, res) => {
+  db.prepare('UPDATE scripts SET used_count = COALESCE(used_count,0) + 1 WHERE id=?').run(Number(req.params.id));
+  res.json({ ok: true });
 });
 
 // Группы услуг (категории прайс-листа YClients) с числом услуг и фактических визитов.
@@ -478,8 +701,9 @@ function querySegment(f = {}) {
   else if (discount === 'none') conds.push('COALESCE(c.discount_pct,0) = 0');
   if (discountFrom) { conds.push('COALESCE(c.discount_pct,0) >= ?'); params.push(discountFrom); }
 
-  // VIP ведут персонально — в выборки конструктора они не попадают вовсе
+  // VIP и депозитных ведут персонально — в выборки конструктора они не попадают вовсе
   conds.push('c.id NOT IN (SELECT client_id FROM vip_clients)');
+  conds.push('c.id NOT IN (SELECT client_id FROM deposit_clients)');
 
   // Пресет NEW: первички для NPS-обзвана. Человек считается «новым», пока у него ровно один
   // визит И его ещё не обработал админ. Статус снимается сам — вторым визитом или любой
@@ -507,8 +731,8 @@ function querySegment(f = {}) {
   // порядок параметров: подзапросы SELECT → условия ON → условия WHERE
   const rows = db.prepare(sql).all(...goodParams, ...vParams, ...params);
 
-  // Склейка карточек одного человека + отсев тех, у кого VIP-карточка в другом филиале
-  const vipKeys = vipPersonKeys();
+  // Склейка карточек одного человека + отсев тех, у кого VIP/депозитная карточка в другом филиале
+  const vipKeys = manualListPersonKeys();
   // «уже обработан админом» — есть хоть одна отметка звонка в ленте клиента
   const handled = isNew
     ? new Set(db.prepare('SELECT DISTINCT client_id FROM task_actions').all().map(r => r.client_id))

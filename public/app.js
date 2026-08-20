@@ -51,7 +51,34 @@ const ICON = {
   building: svg('<path d="M3 13.5V4l5-2 5 2v9.5"/><path d="M6.5 13.5v-3h3v3M6 6.5h1M9 6.5h1"/>'),
   plug:     svg('<path d="M6 2v4M10 2v4M4.5 6h7v2a3.5 3.5 0 0 1-7 0z"/><path d="M8 11.5v2.5"/>'),
   spark:    svg('<path d="M8 2.5l1.2 3.3L12.5 7l-3.3 1.2L8 11.5 6.8 8.2 3.5 7l3.3-1.2z"/>'),
+  wallet:   svg('<path d="M2 5.5A1.5 1.5 0 0 1 3.5 4h8.2v1.5"/><rect x="2" y="5.5" width="12" height="7" rx="1.5"/><circle cx="11" cy="9" r=".9"/>'),
+  cake:     svg('<path d="M2.8 13.5h10.4V9.8a1.8 1.8 0 0 0-1.8-1.8H4.6a1.8 1.8 0 0 0-1.8 1.8z"/><path d="M5.5 5.6V4M8 5.6V3.4M10.5 5.6V4"/><path d="M2.8 10.8c1.15 0 1.15 1 2.3 1s1.15-1 2.3-1 1.15 1 2.3 1 1.15-1 2.3-1"/>'),
+  copy:     svg('<rect x="5.5" y="5.5" width="8" height="8" rx="1"/><path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2"/>'),
+  msg:      svg('<path d="M2.5 3.5h11v8h-6l-3.5 2.5V11.5h-1.5z"/>'),
 };
+
+// Текст, набранный админом (заметки, шаблоны), уходит в innerHTML — одна угловая скобка
+// в тексте ломала бы вёрстку блока. Экранируем всё, что пришло от человека.
+const esc = s => String(s==null?'':s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+// Копирование в буфер. navigator.clipboard живёт только в защищённом контексте
+// (https или localhost) — на всякий случай оставляем старый способ через скрытое поле,
+// иначе на http-адресе кнопка молча ничего не делала бы.
+async function copyText(text){
+  try{
+    if(navigator.clipboard && window.isSecureContext){ await navigator.clipboard.writeText(text); return true; }
+  }catch{ /* нет прав или отказ пользователя — пробуем запасной путь */ }
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=text; ta.setAttribute('readonly','');
+    ta.style.cssText='position:fixed;top:-1000px;opacity:0';
+    document.body.appendChild(ta); ta.select();
+    const ok=document.execCommand('copy');
+    ta.remove();
+    return ok;
+  }catch{ return false; }
+}
 
 // --- Администраторы (кто звонит) ---
 let admins = [];
@@ -181,8 +208,8 @@ function reloadCurrentView(){
 // Две точки (Басков и Мытнинская) работают в одной базе, но страница сама не
 // перерисовывалась: закрытая соседом задача висела до F5, а его звонок не появлялся
 // в журнале обзора. Раз в 45 сек тихо перезагружаем активную вкладку — только «живые»
-// (задачи и обзор). Конструктор и VIP не трогаем: там выборка строится долго и
-// перерисовка сбила бы работу.
+// (задачи и обзор). Конструктор, ручные списки и ДР не трогаем: там выборка строится долго,
+// а перерисовка сбила бы работу.
 // Обновление отменяется, если админ занят: открыта карточка клиента или модалка либо
 // курсор стоит в поле. Раньше отменяли и при любом набранном тексте в заметке — иначе
 // перерисовка стирала её. Теперь заметка живёт черновиком на сервере (saveDraft) и
@@ -244,12 +271,15 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   t.classList.add('active');
   const v=t.dataset.view;
-  ['tasks','calls','overview','clients','vip','segments'].forEach(name=>$('#view-'+name).style.display = name===v?'':'none');
+  ['tasks','calls','overview','clients','vip','deposit','bday','scripts','segments'].forEach(name=>$('#view-'+name).style.display = name===v?'':'none');
   if(v==='tasks') loadTasks();
   if(v==='calls') loadCalls();
   if(v==='overview') loadOverview();
   if(v==='clients') loadClients();
-  if(v==='vip') loadVip();
+  if(v==='vip') loadList('vip');
+  if(v==='deposit') loadList('deposit');
+  if(v==='bday') loadBday();
+  if(v==='scripts') loadScripts();
   if(v==='segments') loadSegments();
 });
 
@@ -1142,23 +1172,33 @@ async function loadClients(q=''){
     </tr>`).join('') || '<tr><td colspan="7" class="empty">Ничего не найдено</td></tr>';
 }
 
-// --- VIP ---
-// Постоянный ручной список. Живёт, пока админ сам не удалит; из конструктора исключён.
-let vipIds=new Set();
-async function loadVip(){
-  const r=await api('/api/vip');
-  vipIds=new Set(r.items.map(i=>i.client_id));
-  $('#vipSummary').innerHTML = r.count
-    ? `В VIP: <b>${plural(r.count,'клиент','клиента','клиентов')}</b> · суммарно потратили ${rub(r.total_spent)}`
+// --- РУЧНЫЕ СПИСКИ: VIP и ДЕПОЗИТ ---
+// Постоянные ручные списки. Клиент живёт в списке, пока админ сам не удалит; из выборок
+// конструктора такие клиенты исключены — их ведут персонально.
+// Списки отличаются ТОЛЬКО названием и префиксом id-шников в разметке, поэтому вся механика
+// (поиск, добавление, заметка, удаление, кнопка в карточке клиента) написана один раз и
+// параметризуется slug'ом. На сервере ровно так же — см. MANUAL_LISTS в server.js.
+const LIST_UI = {
+  vip:     { pre:'vip', icon:'star',   name:'VIP',       inTx:'В VIP',      addTx:'— в VIP',        delTx:'Убрать из VIP' },
+  deposit: { pre:'dep', icon:'wallet', name:'«Депозит»', inTx:'В Депозите', addTx:'— в «Депозит»',  delTx:'Убрать из «Депозита»' },
+};
+const listIds = { vip:new Set(), deposit:new Set() };
+
+async function loadList(slug){
+  const u=LIST_UI[slug];
+  const r=await api('/api/'+slug);
+  listIds[slug]=new Set(r.items.map(i=>i.client_id));
+  $('#'+u.pre+'Summary').innerHTML = r.count
+    ? `В списке: <b>${plural(r.count,'клиент','клиента','клиентов')}</b> · суммарно потратили ${rub(r.total_spent)}`
     : '';
-  const box=$('#vipList');
-  if(!r.count){ box.innerHTML='<div class="empty">Пока пусто. Найдите клиента в поле выше и добавьте его в VIP.</div>'; return; }
+  const box=$('#'+u.pre+'List');
+  if(!r.count){ box.innerHTML=`<div class="empty">Пока пусто. Найдите клиента в поле выше и добавьте его в ${u.name}.</div>`; return; }
   box.innerHTML=r.items.map(v=>{
     const br=(v.branches||[]).map(branchTag).join('');
     const n=v.next_visit;
-    return `<div class="vip-card">
+    return `<div class="vip-card ${slug==='deposit'?'dep':''}">
       <div class="left">
-        <div class="vip-nm" onclick="openClient(${v.client_id})"><span class="vip-star">${ICON.star}</span> ${v.do_not_call?ICON.ban:''}${v.name||'Без имени'}${br}</div>
+        <div class="vip-nm" onclick="openClient(${v.client_id})"><span class="vip-star">${ICON[u.icon]}</span> ${v.do_not_call?ICON.ban:''}${v.name||'Без имени'}${br}</div>
         <div class="tmeta"><span class="phone">${v.phone||'—'}</span>${v.top_master?' · мастер: '+v.top_master:''} · <span class="status-badge st-${v.status}">${v.status_label}</span></div>
         <div class="vip-metrics">
           <span class="vip-m">потратил <b>${rub(v.spent)}</b></span>
@@ -1169,70 +1209,449 @@ async function loadVip(){
           ${v.cards>1?`<span class="vip-m">карточек в YClients: <b>${v.cards}</b></span>`:''}
         </div>
         ${n?`<div class="vip-next">Записан: ${n.service||'услуга'} · ${n.staff||'мастер'} · ${fmtDT(n.date)}${n.branch?' · '+n.branch:''}</div>`:''}
-        <div class="vip-note ${v.note?'':'empty'}" onclick="editVipNote(${v.client_id},'${q1(v.note)}')">${v.note?v.note:'Добавить заметку'}</div>
+        <div class="vip-note ${v.note?'':'empty'}" onclick="editListNote('${slug}',${v.client_id},'${q1(v.note)}')">${v.note?v.note:'Добавить заметку'}</div>
       </div>
       <div class="vip-acts">
         <button class="btn" onclick="openClient(${v.client_id})">История</button>
-        <button class="vip-del" onclick="removeVip(${v.client_id},'${q1(v.name)}')">Убрать из VIP</button>
+        <button class="vip-del" onclick="removeFromList('${slug}',${v.client_id},'${q1(v.name)}')">${u.delTx}</button>
       </div>
     </div>`;
   }).join('');
 }
-let vipTimer;
-$('#vipSearch').oninput=e=>{clearTimeout(vipTimer);vipTimer=setTimeout(()=>vipSuggest(e.target.value),250);};
-async function vipSuggest(q){
-  const box=$('#vipSuggest');
+async function listSuggest(slug,q){
+  const u=LIST_UI[slug];
+  const box=$('#'+u.pre+'Suggest');
   if(!q.trim()){box.classList.remove('open');box.innerHTML='';return;}
-  const list=await api('/api/vip/search?q='+encodeURIComponent(q));
+  const list=await api(`/api/${slug}/search?q=`+encodeURIComponent(q));
   box.classList.add('open');
   box.innerHTML = list.length ? list.map(c=>`
-    <div class="vip-sug ${c.added?'added':''}" ${c.added?'':`onclick="addVip(${c.id},'${q1(c.name)}')"`}>
+    <div class="vip-sug ${c.added?'added':''}" ${c.added?'':`onclick="addToList('${slug}',${c.id},'${q1(c.name)}')"`}>
       <div>
         <div class="nm">${c.name||'Без имени'}${(c.branches||[]).map(branchTag).join('')}</div>
-        <div class="mt">${c.phone||'—'} · ${c.visits} визитов · последний ${fmtDate(c.last_visit)}${c.added?' · уже в VIP':''}</div>
+        <div class="mt">${c.phone||'—'} · ${c.visits} визитов · последний ${fmtDate(c.last_visit)}${c.added?` · уже в списке`:''}</div>
       </div>
       <div class="sp">${rub(c.spent)}</div>
     </div>`).join('') : '<div class="vip-sug" style="cursor:default"><div class="mt">Никого не найдено</div></div>';
 }
-async function addVip(id,name){
-  await api('/api/vip',{method:'POST',headers:{'Content-Type':'application/json'},
+async function addToList(slug,id,name){
+  const u=LIST_UI[slug];
+  await api('/api/'+slug,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({client_id:id,admin:currentAdmin()})});
-  $('#vipSearch').value='';$('#vipSuggest').classList.remove('open');
-  toast(`${name} — в VIP`);
-  await loadVip();
+  $('#'+u.pre+'Search').value='';$('#'+u.pre+'Suggest').classList.remove('open');
+  toast(`${name} ${u.addTx}`);
+  await loadList(slug);
 }
-async function removeVip(id,name){
-  if(!confirm(`Убрать «${name}» из VIP? Клиент снова начнёт попадать в выборки конструктора.`)) return;
-  await api(`/api/vip/${id}`,{method:'DELETE'});
-  toast('Убран из VIP');
-  await loadVip();
+async function removeFromList(slug,id,name){
+  const u=LIST_UI[slug];
+  if(!confirm(`Убрать «${name}» из ${u.name}? Клиент снова начнёт попадать в выборки конструктора.`)) return;
+  await api(`/api/${slug}/${id}`,{method:'DELETE'});
+  toast('Убран из списка');
+  await loadList(slug);
 }
-async function editVipNote(id,current){
-  const note=prompt('Заметка по VIP-клиенту (пусто — убрать):',current||'');
+async function editListNote(slug,id,current){
+  const note=prompt(`Заметка по клиенту (${LIST_UI[slug].name}, пусто — убрать):`,current||'');
   if(note===null) return;
-  await api(`/api/vip/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({note})});
-  await loadVip();
+  await api(`/api/${slug}/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({note})});
+  await loadList(slug);
 }
-// добавить/убрать VIP прямо из карточки клиента
-async function toggleVipFromDrawer(){
+// добавить/убрать прямо из карточки клиента
+async function toggleListFromDrawer(slug){
   if(!drawerClientId) return;
-  const on=vipIds.has(drawerClientId);
-  if(on) await api(`/api/vip/${drawerClientId}`,{method:'DELETE'});
-  else await api('/api/vip',{method:'POST',headers:{'Content-Type':'application/json'},
+  const u=LIST_UI[slug], on=listIds[slug].has(drawerClientId);
+  if(on) await api(`/api/${slug}/${drawerClientId}`,{method:'DELETE'});
+  else await api('/api/'+slug,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({client_id:drawerClientId,admin:currentAdmin()})});
-  if(on) vipIds.delete(drawerClientId); else vipIds.add(drawerClientId);
-  renderVipToggle();
-  toast(on?'Убран из VIP':'Добавлен в VIP');
-  if(document.querySelector('.tab.active')?.dataset.view==='vip') loadVip();
+  if(on) listIds[slug].delete(drawerClientId); else listIds[slug].add(drawerClientId);
+  renderListToggle(slug);
+  toast(on?`Убран из ${u.name}`:`Добавлен в ${u.name}`);
+  if(document.querySelector('.tab.active')?.dataset.view===slug) loadList(slug);
 }
-function renderVipToggle(){
-  const b=$('#vipToggle'), on=vipIds.has(drawerClientId);
+function renderListToggle(slug){
+  const u=LIST_UI[slug], b=$('#'+u.pre+'Toggle'), on=listIds[slug].has(drawerClientId);
   b.classList.toggle('on',on);
-  b.innerHTML = ICON.star + (on ? 'В VIP' : 'В VIP');
+  b.innerHTML = ICON[u.icon] + u.inTx;
+}
+let listTimer={};
+for(const slug of Object.keys(LIST_UI)){
+  $('#'+LIST_UI[slug].pre+'Search').oninput=e=>{
+    clearTimeout(listTimer[slug]);
+    const q=e.target.value;
+    listTimer[slug]=setTimeout(()=>listSuggest(slug,q),250);
+  };
+}
+
+// --- СКРИПТЫ (шаблоны сообщений) ---
+// Хранилище текстов, которыми админы пишут клиентам. Категорий заранее нет: админ вписывает
+// свою, и она сама попадает в фильтр и в подсказки. Основной сценарий — «Копировать»
+// и вставить в мессенджер; из карточки клиента шаблон открывается уже с подставленным
+// именем и мастером, с возможностью поправить текст перед копированием.
+let scripts=[], scCats=[], scFilter='', scQuery='', scEditId=null, scLoaded=false, scUseId=null;
+
+async function loadScripts(){
+  const r=await api('/api/scripts'+(scFilter?'?category='+encodeURIComponent(scFilter):''));
+  scripts=r.items; scCats=r.categories; scLoaded=true;
+  renderScCats();
+  renderScList();
+}
+function renderScCats(){
+  const all=`<button class="sc-cat ${scFilter?'':'on'}" onclick="pickScCat('')">Все</button>`;
+  $('#scCats').innerHTML = all + scCats.map(c=>
+    `<button class="sc-cat ${scFilter===c.category?'on':''}" onclick="pickScCat('${q1(c.category)}')">${esc(c.category)} <span>${c.n}</span></button>`
+  ).join('');
+}
+// Поиск фильтрует уже загруженный список на месте: шаблонов десятки, а не тысячи,
+// и ходить за этим на сервер на каждую букву незачем.
+function renderScList(){
+  const q=scQuery.toLowerCase().trim();
+  const list=q ? scripts.filter(s=>(s.title+' '+s.body).toLowerCase().includes(q)) : scripts;
+  const box=$('#scList');
+  if(!list.length){
+    box.innerHTML = scripts.length
+      ? '<div class="empty">Ничего не нашлось. Попробуйте другое слово или сбросьте категорию.</div>'
+      : '<div class="empty">Шаблонов пока нет. Нажмите «Новый шаблон» — категорию можно вписать любую, она сама появится в фильтре.</div>';
+    return;
+  }
+  box.innerHTML=list.map(s=>`<div class="sc-card">
+    <div class="sc-hd">
+      <div class="sc-t">${esc(s.title)}</div>
+      ${s.category?`<span class="sc-tag">${esc(s.category)}</span>`:''}
+      ${s.used_count?`<span class="sc-used">использован ${s.used_count}×</span>`:''}
+    </div>
+    <div class="sc-body">${esc(s.body)}</div>
+    <div class="sc-acts">
+      <button class="btn primary" onclick="copyScript(${s.id})">${ICON.copy}Копировать</button>
+      <button class="btn" onclick="openScEdit(${s.id})">Изменить</button>
+      <button class="btn" onclick="deleteScript(${s.id},'${q1(s.title)}')">Удалить</button>
+    </div>
+  </div>`).join('');
+}
+function pickScCat(c){ scFilter=c; loadScripts(); }
+$('#scSearch').oninput=e=>{ scQuery=e.target.value; renderScList(); };
+
+async function copyScript(id){
+  const s=scripts.find(x=>x.id===id); if(!s) return;
+  if(await copyText(s.body)){
+    toast('Текст скопирован');
+    api(`/api/scripts/${id}/used`,{method:'POST'}).catch(()=>{});  // счётчик не критичен
+  } else toast('Не удалось скопировать — выделите текст вручную','bad');
+}
+
+// --- ИИ-помощник ---
+// Показываем блок, только если на сервере есть ключ YandexGPT. Проверяем один раз
+// за загрузку страницы: ключ в .env посреди рабочего дня не появляется.
+let scAiOn=null;
+async function checkScAi(){
+  if(scAiOn!==null) return scAiOn;
+  try{ scAiOn=(await api('/api/scripts/ai')).enabled; }catch{ scAiOn=false; }
+  return scAiOn;
+}
+$('#scAiGo').onclick=async ()=>{
+  const task=$('#scAiTask').value.trim();
+  const note=$('#scAiNote'), b=$('#scAiGo');
+  if(!task){ note.textContent='Сначала опишите, какое сообщение нужно'; return; }
+  b.disabled=true; b.textContent='Пишу…';
+  note.textContent='YandexGPT думает, это займёт несколько секунд…';
+  try{
+    const r=await api('/api/scripts/generate',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({task, title:$('#scTitle').value.trim()})});
+    $('#scBody').value=r.text;
+    $('#scBody').focus();
+    note.textContent='Готово — проверьте текст и подстановки, при необходимости поправьте.';
+  }catch(e){ note.textContent=e.message||'Не удалось сгенерировать'; }
+  b.disabled=false; b.textContent='Сгенерировать';
+};
+
+// --- Создание и правка шаблона ---
+function openScEdit(id){
+  scEditId=id||null;
+  const s=id?scripts.find(x=>x.id===id):null;
+  $('#scEditTitle').textContent = s?'Изменить шаблон':'Новый шаблон';
+  $('#scTitle').value=s?s.title:'';
+  $('#scCategory').value=s?(s.category||''):'';
+  $('#scBody').value=s?s.body:'';
+  $('#scEditError').textContent='';
+  $('#scCatList').innerHTML=scCats.map(c=>`<option value="${esc(c.category)}">`).join('');
+  // помощник — с чистого листа при каждом открытии формы
+  $('#scAiTask').value='';
+  $('#scAiNote').textContent='Черновик попадёт в поле «Текст сообщения» — правьте как угодно.';
+  checkScAi().then(on=>{ $('#scAi').style.display = on ? '' : 'none'; });
+  $('#scEditModal').classList.add('open');
+  $('#scTitle').focus();
+}
+function closeScEdit(){ $('#scEditModal').classList.remove('open'); scEditId=null; }
+$('#scNew').onclick=()=>openScEdit(null);
+$('#scEditModal').onclick=e=>{ if(e.target.id==='scEditModal') closeScEdit(); };
+$('#scSave').onclick=async ()=>{
+  const payload={title:$('#scTitle').value.trim(), category:$('#scCategory').value.trim(),
+    body:$('#scBody').value.trim(), admin:currentAdmin()};
+  const err=$('#scEditError'); err.textContent='';
+  if(!payload.title){ err.textContent='Введите название'; return; }
+  if(!payload.body){ err.textContent='Введите текст сообщения'; return; }
+  const b=$('#scSave'); b.disabled=true;
+  try{
+    if(scEditId) await api(`/api/scripts/${scEditId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    else await api('/api/scripts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    closeScEdit();
+    toast(scEditId?'Шаблон обновлён':'Шаблон сохранён');
+    await loadScripts();
+  }catch(e){ err.textContent=e.message||'Не удалось сохранить'; }
+  b.disabled=false;
+};
+async function deleteScript(id,title){
+  if(!confirm(`Удалить шаблон «${title}»? Отменить это будет нельзя.`)) return;
+  await api(`/api/scripts/${id}`,{method:'DELETE'});
+  toast('Шаблон удалён');
+  await loadScripts();
+}
+
+// --- Шаблон под конкретного клиента (из карточки) ---
+// Подстановки раскрываем на клиенте: все нужные данные уже приехали вместе с карточкой.
+function scFill(body){
+  const d=drawerData; if(!d) return body;
+  const c=d.client, s=d.stats;
+  const next=(d.timeline||[]).filter(e=>e.kind==='visit' && e.status==='upcoming' && new Date(e.date)>=new Date())
+    .sort((a,b)=>new Date(a.date)-new Date(b.date))[0];
+  const vals={
+    // в базе имя лежит целиком («Смирнова Елена»); в сообщении уместно одно слово
+    'имя':   String(c.name||'').trim().split(/\s+/)[0] || 'клиент',
+    'мастер': (s.masters[0] && s.masters[0].name!=='—' ? s.masters[0].name : (c.favorite_staff||'')),
+    'услуга': next?.title || (s.services[0]?.name) || '',
+    'дата':   next ? fmtDT(next.date) : '',
+    'филиал': (c.branches&&c.branches.length?c.branches.join(', '):c.branch)||'',
+  };
+  // Метку могут написать в склонённом виде — и админ руками, и ИИ («запишем на {услугу}»).
+  // Ловим по основе слова: нераспознанная метка уехала бы клиенту прямо в фигурных
+  // скобках, а это худшее, что может случиться с сообщением.
+  const STEMS=[[/^им[ея]/,'имя'],[/^мастер/,'мастер'],[/^услуг/,'услуга'],
+               [/^дат/,'дата'],[/^филиал/,'филиал']];
+  // незаполненную подстановку оставляем видимой — пусть админ заметит и допишет сам,
+  // это лучше, чем отправить клиенту фразу с дырой в середине
+  return body.replace(/\{([^}]+)\}/g, (m,k)=>{
+    const key=k.trim().toLowerCase();
+    const hit=STEMS.find(([re])=>re.test(key));
+    const v=hit ? vals[hit[1]] : vals[key];
+    return v ? v : m;
+  });
+}
+async function openScUse(){
+  if(!drawerClientId) return;
+  if(!scLoaded) await loadScripts();
+  scUseId=null;
+  $('#scUseWho').textContent = $('#drawerName').textContent;
+  $('#scUseBody').value='';
+  renderScPick(null);
+  $('#scUseModal').classList.add('open');
+}
+function closeScUse(){ $('#scUseModal').classList.remove('open'); }
+$('#scUseModal').onclick=e=>{ if(e.target.id==='scUseModal') closeScUse(); };
+function renderScPick(activeId){
+  $('#scPick').innerHTML = scripts.length
+    ? scripts.map(s=>`<button class="sc-chip ${s.id===activeId?'on':''}" onclick="useScript(${s.id})">${esc(s.title)}</button>`).join('')
+    : '<div class="muted" style="font-size:12.5px">Шаблонов пока нет — заведите их на вкладке «Скрипты».</div>';
+}
+function useScript(id){
+  const s=scripts.find(x=>x.id===id); if(!s) return;
+  scUseId=id;
+  $('#scUseBody').value=scFill(s.body);
+  renderScPick(id);
+}
+$('#scCopyUse').onclick=async ()=>{
+  const text=$('#scUseBody').value.trim();
+  if(!text){ toast('Сначала выберите шаблон'); return; }
+  if(await copyText(text)){
+    toast('Текст скопирован — вставьте в мессенджер');
+    if(scUseId) api(`/api/scripts/${scUseId}/used`,{method:'POST'}).catch(()=>{});
+    closeScUse();
+  } else toast('Не удалось скопировать — выделите текст вручную','bad');
+};
+
+// --- ДНИ РОЖДЕНИЯ ---
+// Сверху — именинники выбранного дня (по умолчанию сегодняшнего), снизу — календарь.
+// Заметка к ДР пишется заранее и лежит вечно: в день рождения клиента она сама всплывает
+// в списке, чтобы админ не искал, что для человека готовили.
+const MONTHS_RU = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+let bdToday=null;       // сегодня по данным сервера (Москва), чтобы не зависеть от часов ПК
+let bdPickDate=null;    // день, выбранный в календаре (список под ним), null — не выбран
+let bdCal={year:0,month:0};
+let bdLoaded=false;
+
+// 'YYYY-MM-DD' → «17 апреля 1985». Разбираем строку руками: new Date('YYYY-MM-DD')
+// считается UTC-полночью и в минусовых поясах показал бы предыдущий день.
+const bdParse = s => { const [y,m,d]=String(s).split('-').map(Number); return new Date(y,m-1,d); };
+const fmtBd = s => s ? bdParse(s).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'}) : '—';
+const fmtBdShort = s => s ? bdParse(s).toLocaleDateString('ru-RU',{day:'numeric',month:'long'}) : '—';
+
+async function loadBday(){
+  if(!bdLoaded){
+    bdLoaded=true;
+    $('#bdMonthSel').innerHTML = MONTHS_RU.map((m,i)=>`<option value="${i+1}">${m}</option>`).join('');
+  }
+  await loadBdayToday();
+  await loadBdayMonth(bdCal.year, bdCal.month);
+}
+
+// Верхний блок — ВСЕГДА сегодняшние именинники. Их видно сразу при открытии вкладки,
+// и они не подменяются датой, выбранной в календаре (та уезжает вниз).
+async function loadBdayToday(){
+  const r=await api('/api/birthdays');
+  bdToday=r.today;
+  if(!bdCal.year){ const [y,m]=r.date.split('-').map(Number); bdCal={year:y,month:m}; }
+  $('#bdDayTitle').textContent = `Сегодня, ${fmtBdShort(r.date)}`;
+  $('#bdSummary').innerHTML = r.count
+    ? `Именинников: <b>${plural(r.count,'клиент','клиента','клиентов')}</b>`
+    : '';
+  $('#bdList').innerHTML = r.count
+    ? r.items.map(bdRowHtml).join('')
+    : '<div class="empty">Сегодня именинников нет. Ближайшие дни рождения — в календаре ниже.</div>';
+}
+
+// Строка именинника: только то, что нужно для поздравления — имя, телефон, дата, возраст
+// и заметка. Визиты, деньги и история намеренно не дублируются: они на один клик дальше,
+// в карточке клиента, а здесь сделали бы список длинным и нечитаемым.
+function bdRowHtml(v){
+  const br=(v.branches||[]).map(branchTag).join('');
+  const turns = v.turns!=null && v.turns>0 && v.turns<120 ? `исполняется ${v.turns}` : '';
+  return `<div class="bd-row">
+    <div class="bd-who" onclick="openClient(${v.client_id})">
+      <span class="ic">${ICON.cake}</span>
+      <span class="nm">${v.do_not_call?ICON.ban:''}${v.name||'Без имени'}</span>${br}
+      <span class="mt">${[v.phone||'—', fmtBdShort(v.birth_date), turns].filter(Boolean).join(' · ')}</span>
+    </div>
+    <div class="bd-note ${v.note?'':'blank'}" onclick="openBdNote(${v.client_id},'${q1(v.name)}','${q1(v.note)}')">${
+      v.note ? `${esc(v.note)}${v.note_by?` <span class="bd-by">— ${esc(v.note_by)}</span>`:''}` : 'заметка ко дню рождения…'}</div>
+  </div>`;
+}
+
+async function loadBdayMonth(year,month){
+  const r=await api(`/api/birthdays/month?year=${year}&month=${month}`);
+  bdCal={year:r.year,month:r.month};
+  bdToday=r.today;
+  $('#bdMonthSel').value=String(r.month);
+  // Год выбирается из небольшого окна вокруг текущего: календарь ДР нужен, чтобы
+  // планировать поздравления, а не листать историю.
+  const [ty]=r.today.split('-').map(Number);
+  $('#bdYearSel').innerHTML=[ty-1,ty,ty+1,ty+2].map(y=>`<option value="${y}">${y}</option>`).join('');
+  $('#bdYearSel').value=String(r.year);
+
+  // понедельник — первый столбец: getDay() отдаёт 0 для воскресенья
+  const shift=(new Date(r.year,r.month-1,1).getDay()+6)%7;
+  const total=Object.values(r.by_day).reduce((s,b)=>s+b.count,0);
+  $('#bdMonthSummary').textContent = total
+    ? `${plural(total,'именинник','именинника','именинников')} в этом месяце`
+    : 'В этом месяце именинников нет';
+
+  const cells=[];
+  for(let i=0;i<shift;i++) cells.push('<div class="bd-cell empty"></div>');
+  for(let d=1;d<=r.days;d++){
+    const iso=`${r.year}-${String(r.month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const b=r.by_day[d];
+    const cls=['bd-cell'];
+    if(b) cls.push('has');
+    if(iso===r.today) cls.push('today');
+    if(iso===bdPickDate) cls.push('sel');
+    const hint=b?`${b.names.join(', ')}${b.count>b.names.length?` и ещё ${b.count-b.names.length}`:''}`:'';
+    cells.push(`<div class="${cls.join(' ')}" onclick="pickBdayDay('${iso}')"${hint?` title="${hint.replace(/"/g,'&quot;')}"`:''}>
+      <span class="d">${d}</span>
+      ${b?`<span class="c${b.noted?' noted':''}">${b.count}</span>`:''}
+    </div>`);
+  }
+  $('#bdGrid').innerHTML=cells.join('');
+}
+
+// Клик по дню календаря — список именинников этого дня ПОД календарём.
+async function pickBdayDay(iso){
+  bdPickDate=iso;
+  const r=await api('/api/birthdays?date='+encodeURIComponent(iso));
+  $('#bdPick').style.display='';
+  $('#bdPickTitle').textContent = iso===r.today ? `Сегодня, ${fmtBdShort(iso)}` : fmtBd(iso);
+  $('#bdPickSummary').innerHTML = r.count
+    ? `Именинников: <b>${plural(r.count,'клиент','клиента','клиентов')}</b>`
+    : '';
+  $('#bdPickList').innerHTML = r.count
+    ? r.items.map(bdRowHtml).join('')
+    : '<div class="empty">В этот день именинников нет.</div>';
+  const [y,m]=iso.split('-').map(Number);
+  await loadBdayMonth(y,m);            // перерисовать, чтобы подсветилась выбранная клетка
+  $('#bdPick').scrollIntoView({behavior:'smooth',block:'start'});
+}
+function clearBdayPick(){
+  bdPickDate=null;
+  $('#bdPick').style.display='none';
+  loadBdayMonth(bdCal.year,bdCal.month);
+}
+function shiftBdMonth(delta){
+  let y=bdCal.year, m=bdCal.month+delta;
+  if(m<1){m=12;y--;} if(m>12){m=1;y++;}
+  loadBdayMonth(y,m);
+}
+$('#bdPrev').onclick=()=>shiftBdMonth(-1);
+$('#bdNext').onclick=()=>shiftBdMonth(1);
+$('#bdMonthSel').onchange=e=>loadBdayMonth(bdCal.year,Number(e.target.value));
+$('#bdYearSel').onchange=e=>loadBdayMonth(Number(e.target.value),bdCal.month);
+$('#bdPickClear').onclick=clearBdayPick;
+
+// --- Окно заметки ко дню рождения ---
+let bdNoteFor=null;
+function openBdNote(id,name,note){
+  bdNoteFor={id,name};
+  $('#bdNoteWho').textContent=name||'Клиент';
+  $('#bdNoteText').value=note||'';
+  $('#bdNoteModal').classList.add('open');
+  $('#bdNoteText').focus();
+}
+function closeBdNote(){ $('#bdNoteModal').classList.remove('open'); bdNoteFor=null; }
+$('#bdNoteModal').onclick=e=>{ if(e.target.id==='bdNoteModal') closeBdNote(); };
+$('#bdNoteSave').onclick=async ()=>{
+  if(!bdNoteFor) return;
+  const {id}=bdNoteFor, note=$('#bdNoteText').value.trim();
+  const b=$('#bdNoteSave'); b.disabled=true;
+  try{
+    await api(`/api/birthdays/${id}/note`,{method:'PUT',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({note,admin:currentAdmin()})});
+    closeBdNote();
+    toast(note?'Заметка сохранена':'Заметка убрана');
+    // обновляем то, что сейчас на экране: оба списка ДР и/или открытую карточку клиента
+    if(document.querySelector('.tab.active')?.dataset.view==='bday'){
+      await loadBdayToday();
+      if(bdPickDate) await pickBdayDay(bdPickDate);
+      else await loadBdayMonth(bdCal.year,bdCal.month);
+    }
+    if(drawerClientId===id) renderDrawerBday(id);
+  }catch(e){ toast('Не удалось сохранить: '+(e.message||''),'bad'); }
+  b.disabled=false;
+};
+
+// Строка ДР в шапке карточки клиента: дата, сколько исполнится, заметка. Клик — окно заметки.
+// Полоса скрыта, пока дата рождения не приехала из YClients (её тянет фоновый проход).
+let drawerBday=null;
+async function renderDrawerBday(id){
+  const strip=$('#drawerBday');
+  drawerBday=null; strip.style.display='none';
+  let r;
+  try{ r=await api(`/api/birthdays/${id}/note`); }catch{ return; }
+  if(drawerClientId!==id) return;           // пока грузилось, открыли другого клиента
+  if(!r.birth_date) return;
+  drawerBday=r;
+  const [by,bm,bd]=r.birth_date.split('-').map(Number);
+  const now=new Date();
+  const isToday = now.getMonth()+1===bm && now.getDate()===bd;
+  let turns=now.getFullYear()-by;
+  // ДР в этом году уже прошёл → следующий круглый возраст будет в следующем
+  if(now.getMonth()+1>bm || (now.getMonth()+1===bm && now.getDate()>bd)) turns++;
+  strip.style.display='';
+  strip.innerHTML = `<span class="ic">${ICON.cake}</span>
+    <span class="dt">${fmtBdShort(r.birth_date)}${isToday?' — сегодня':''}</span>
+    <span class="ag">${isToday?'исполняется':'исполнится'} ${turns}</span>
+    <span class="nt ${r.note?'':'blank'}">${esc(r.note)||'заметки нет — добавить'}</span>`;
+}
+function openBdNoteFromDrawer(){
+  if(!drawerClientId) return;
+  openBdNote(drawerClientId, $('#drawerName').textContent, drawerBday?.note||'');
 }
 
 // --- ЛЕНТА КЛИЕНТА ---
 let drawerClientId=null;
+let drawerData=null;   // клиент + статистика + лента открытой карточки (нужны шаблонам)
 async function toggleDnc(){
   if(!drawerClientId) return;
   const dt=$('#dncToggle');
@@ -1250,6 +1669,8 @@ async function toggleDnc(){
 }
 async function openClient(id){
   const {client:c, stats:s, timeline} = await api(`/api/clients/${id}/timeline`);
+  // держим данные открытой карточки: по ним раскрываются подстановки в шаблонах сообщений
+  drawerData = {client:c, stats:s, timeline};
   $('#drawerName').textContent = c.name || 'Без имени';
 
   const sb=$('#drawerStatus');
@@ -1266,7 +1687,10 @@ async function openClient(id){
   const dt=$('#dncToggle');
   dt.classList.toggle('on', !!c.do_not_call);
   dt.innerHTML = ICON.ban + 'Не беспокоить';
-  renderVipToggle();
+  renderListToggle('vip');
+  renderListToggle('deposit');
+  $('#scDrawerBtn').innerHTML = ICON.msg + 'Шаблон';
+  renderDrawerBday(c.id);
 
   // подзаголовок шапки: телефон, филиалы, статус визитов — одной строкой
   $('#drawerSub').innerHTML = [
@@ -1428,7 +1852,6 @@ function renderServiceOptions(){
     names.sort((a,b)=>a.localeCompare(b,'ru')).map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('') +
     '</optgroup>').join('');
 }
-const esc = s => String(s??'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
 // Ручной полный проход по карточкам YClients. Инкрементальный идёт сам после каждого
 // ночного синка — эта кнопка нужна, чтобы обновить разом всех, включая давно не заходивших.
 async function syncComments(){
@@ -1653,5 +2076,7 @@ $('#adminNewName').onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); add
 // Старт
 loadAdmins();
 loadBranches();
-loadVip();   // нужен vipIds, чтобы кнопка ★ в карточке клиента знала своё состояние
+// нужны listIds, чтобы кнопки «В VIP» / «В Депозите» в карточке клиента знали своё состояние
+loadList('vip');
+loadList('deposit');
 loadTasks();

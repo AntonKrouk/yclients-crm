@@ -27,6 +27,9 @@
     <button class="tab" data-view="overview">Обзор</button>
     <button class="tab" data-view="clients">Клиенты</button>
     <button class="tab" data-view="vip">VIP</button>
+    <button class="tab" data-view="deposit">Депозит</button>
+    <button class="tab" data-view="bday">ДР</button>
+    <button class="tab" data-view="scripts">Скрипты</button>
     <button class="tab" data-view="segments">Конструктор</button>
   </div>
   <button class="btn primary" id="connectBtn" style="display:none">Подключить YClients</button>
@@ -129,6 +132,75 @@
     </div>
     <div class="modal-note">Кнопки те же, что в задачах: «Записать» создаст настоящую запись в YClients,
       «Перезвонить» и «Не ответил» спросят время. Прежняя история в карточке клиента сохранится.</div>
+  </div>
+</div>
+
+<!-- Создание и правка шаблона сообщения -->
+<div class="modal-overlay" id="scEditModal">
+  <div class="modal sc-modal">
+    <div class="modal-title" id="scEditTitle">Новый шаблон</div>
+    <!-- ИИ-помощник. Блок скрыт, если в .env нет ключа YandexGPT — вкладка остаётся
+         рабочим хранилищем и без него. Текст едет в поле ниже, а не сохраняется сам:
+         модель пишет заготовку, последнее слово за администратором. -->
+    <div class="sc-ai" id="scAi" style="display:none">
+      <div class="sc-ai-hd">Написать с помощью ИИ</div>
+      <textarea id="scAiTask" rows="2"
+        placeholder="Опишите задачу: напр. «позвать на окрашивание тех, кто не был полгода»"></textarea>
+      <div class="sc-ai-row">
+        <button type="button" class="btn" id="scAiGo">Сгенерировать</button>
+        <span class="sc-ai-note" id="scAiNote">Черновик попадёт в поле «Текст сообщения» — правьте как угодно.</span>
+      </div>
+    </div>
+    <label class="fld">Название<input type="text" id="scTitle" maxlength="80" placeholder="Напр.: Поздравление с днём рождения"></label>
+    <!-- Категория — свободный ввод с подсказками из уже созданных шаблонов:
+         справочник складывается сам, но и опечаток-дублей помогает избежать. -->
+    <label class="fld">Категория<input type="text" id="scCategory" maxlength="40" list="scCatList"
+      placeholder="Своя категория — просто впишите" autocomplete="off"><datalist id="scCatList"></datalist></label>
+    <label class="fld">Текст сообщения<textarea id="scBody" rows="8"
+      placeholder="Здравствуйте, {имя}! Поздравляем вас с днём рождения…"></textarea></label>
+    <div id="scEditError" class="login-error"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeScEdit()">Отмена</button>
+      <button class="btn primary" id="scSave">Сохранить</button>
+    </div>
+    <div class="modal-note">Подстановки: <b>{имя}</b>, <b>{мастер}</b>, <b>{услуга}</b>, <b>{дата}</b>, <b>{филиал}</b>.
+      В шаблоне они хранятся как есть, а подставляются, когда шаблон открывают из карточки клиента.
+      Подставляются они в именительном падеже («Ольга», а не «Ольги») — стройте фразу так, чтобы склонение
+      не требовалось: не «у {мастер}», а «мастер {мастер} ждёт вас».</div>
+  </div>
+</div>
+
+<!-- Шаблон под конкретного клиента: подстановки уже раскрыты, текст можно поправить
+     руками и скопировать. Открывается из карточки клиента — а её открывают из задач,
+     обзвонов, VIP, Депозита и ДР, так что одна кнопка обслуживает все вкладки. -->
+<div class="modal-overlay" id="scUseModal">
+  <div class="modal sc-modal">
+    <div class="modal-title">Шаблон сообщения</div>
+    <p class="modal-sub" id="scUseWho"></p>
+    <div class="sc-pick" id="scPick"></div>
+    <label class="fld">Текст — можно поправить перед копированием<textarea id="scUseBody" rows="7"></textarea></label>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeScUse()">Закрыть</button>
+      <button class="btn primary" id="scCopyUse">Копировать</button>
+    </div>
+    <div class="modal-note">Правки здесь на шаблон не влияют — он остаётся прежним для всех.</div>
+  </div>
+</div>
+
+<!-- Заметка ко дню рождения. Пишется заранее («готовим сертификат»), лежит вечно и
+     всплывает в списке именинников в сам день рождения клиента. -->
+<div class="modal-overlay" id="bdNoteModal">
+  <div class="modal">
+    <div class="modal-title">Заметка ко дню рождения</div>
+    <p class="modal-sub" id="bdNoteWho"></p>
+    <label class="fld">Что готовим<textarea id="bdNoteText" rows="4"
+      placeholder="Напр.: дарим сертификат на укладку, поздравляет Ольга, любит пионы"></textarea></label>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeBdNote()">Отмена</button>
+      <button class="btn primary" id="bdNoteSave">Сохранить</button>
+    </div>
+    <div class="modal-note">Заметка сохранится навсегда и появится в списке именинников,
+      когда наступит день рождения. Пустое поле — убрать заметку.</div>
   </div>
 </div>
 
@@ -355,6 +427,68 @@
     <div id="vipList" style="margin-top:14px"></div>
   </section>
 
+  <!-- ДЕПОЗИТ. Устроен ровно как VIP (см. MANUAL_LISTS в server.js и LIST_UI в app.js):
+       тот же поиск, та же карточка с заметкой, то же исключение из конструктора. -->
+  <section id="view-deposit" style="display:none">
+    <div class="card">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
+        Постоянный список. Клиент остаётся здесь, пока его не удалит администратор, и не попадает в выборки конструктора.
+      </div>
+      <div class="vip-add">
+        <input class="search" id="depSearch" style="max-width:none" placeholder="Найти клиента по имени или телефону, чтобы добавить в «Депозит»…">
+        <div id="depSuggest" class="vip-suggest"></div>
+      </div>
+      <div class="seg-summary muted" id="depSummary" style="margin-top:12px"></div>
+    </div>
+    <div id="depList" style="margin-top:14px"></div>
+  </section>
+
+  <!-- ДНИ РОЖДЕНИЯ: сверху именинники выбранного дня (по умолчанию сегодня),
+       снизу календарь с перелистыванием месяцев. -->
+  <section id="view-bday" style="display:none">
+    <div class="section-title" id="bdDayTitle" style="margin-top:6px">Сегодня</div>
+    <div class="seg-summary muted" id="bdSummary"></div>
+    <div id="bdList" style="margin-top:12px"></div>
+
+    <div class="section-title">Календарь дней рождения</div>
+    <div class="card bd-cal">
+      <div class="bd-cal-head">
+        <button class="bd-nav" id="bdPrev" title="Предыдущий месяц" aria-label="Предыдущий месяц">‹</button>
+        <select id="bdMonthSel" title="Месяц"></select>
+        <select id="bdYearSel" title="Год"></select>
+        <button class="bd-nav" id="bdNext" title="Следующий месяц" aria-label="Следующий месяц">›</button>
+        <span class="muted" id="bdMonthSummary"></span>
+      </div>
+      <div class="bd-dow"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div>
+      <div class="bd-grid" id="bdGrid"></div>
+    </div>
+
+    <!-- Выбранный в календаре день показываем ПОД календарём, а не наверху: сверху всегда
+         остаются сегодняшние именинники, и админ не путает «кого поздравлять сейчас»
+         с «кого смотрю на будущее». -->
+    <div id="bdPick" style="display:none">
+      <div class="bd-head">
+        <div class="section-title" id="bdPickTitle" style="margin:0"></div>
+        <button class="btn" id="bdPickClear">Скрыть</button>
+      </div>
+      <div class="seg-summary muted" id="bdPickSummary"></div>
+      <div id="bdPickList" style="margin-top:12px"></div>
+    </div>
+  </section>
+
+  <!-- СКРИПТЫ: хранилище текстов, которыми пишут клиентам. Категории заводятся сами,
+       по мере создания шаблонов — заранее заданного справочника нет. -->
+  <section id="view-scripts" style="display:none">
+    <div class="card">
+      <div class="sc-bar">
+        <input class="search" id="scSearch" placeholder="Поиск по названию или тексту…">
+        <button class="btn primary" id="scNew">+ Новый шаблон</button>
+      </div>
+      <div class="sc-cats" id="scCats"></div>
+    </div>
+    <div id="scList" style="margin-top:14px"></div>
+  </section>
+
   <!-- КЛИЕНТЫ -->
   <section id="view-clients" style="display:none">
     <input class="search" id="clientSearch" placeholder="Поиск по имени или телефону…">
@@ -378,9 +512,14 @@
     </div>
     <div class="dsub" id="drawerSub"></div>
     <div class="dacts">
-      <button class="dact" id="vipToggle" onclick="toggleVipFromDrawer()"></button>
+      <button class="dact" id="vipToggle" onclick="toggleListFromDrawer('vip')"></button>
+      <button class="dact" id="depToggle" onclick="toggleListFromDrawer('deposit')"></button>
+      <button class="dact" id="scDrawerBtn" onclick="openScUse()"></button>
       <button class="dact dnc" id="dncToggle" onclick="toggleDnc()"></button>
     </div>
+    <!-- День рождения и заметка к нему — прямо в шапке, чтобы админ видел их сразу,
+         с какой бы вкладки карточку ни открыли. Клик по строке открывает заметку. -->
+    <div class="bd-strip" id="drawerBday" style="display:none" onclick="openBdNoteFromDrawer()"></div>
     <div class="dtabs">
       <button class="dtab active" data-pane="visits">Визиты <span class="cnt" id="cntTimeline"></span></button>
       <button class="dtab" data-pane="stats">Статистика</button>

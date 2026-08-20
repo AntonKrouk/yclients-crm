@@ -301,6 +301,18 @@ function daysAgo(n) {
   return d;
 }
 
+// Дни рождения демо-клиентов. Первые трое — «сегодня», ещё несколько на этой неделе,
+// остальные размазаны по году: иначе вкладку «ДР» в демо-режиме нечем было бы проверить.
+function demoBirthDate(i) {
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  if (i < 3) { /* сегодня */ }
+  else if (i < 7) d.setDate(d.getDate() + (i - 2));
+  else d.setDate(d.getDate() + (i * 13) % 360);
+  const year = 1966 + (i * 7) % 34;
+  return `${year}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function demoData() {
   const clients = [];
   const records = [];
@@ -351,7 +363,7 @@ function demoData() {
       });
     }
 
-    clients.push({ id: clientId, name, phone });
+    clients.push({ id: clientId, name, phone, birth_date: demoBirthDate(i) });
   });
 
   return { clients, records };

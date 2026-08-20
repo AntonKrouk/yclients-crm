@@ -126,11 +126,14 @@ function computeFrequency(visits) {
 // Карточку клиента заводим/обновляем БЕЗ агрегатов: имя, телефон, филиал. Визиты и деньги
 // пересчитываются отдельно (recomputeClient) по всей локальной истории — см. комментарий там.
 const upsertClient = db.prepare(`
-  INSERT INTO clients (yclients_id, company_id, branch, name, phone, updated_at)
-  VALUES (?,?,?,?,?,?)
+  INSERT INTO clients (yclients_id, company_id, branch, name, phone, birth_date, updated_at)
+  VALUES (?,?,?,?,?,?,?)
   ON CONFLICT(yclients_id) DO UPDATE SET
     company_id=excluded.company_id, branch=excluded.branch,
-    name=excluded.name, phone=excluded.phone, updated_at=excluded.updated_at
+    name=excluded.name, phone=excluded.phone, updated_at=excluded.updated_at,
+    -- дату рождения синк по записям не знает (в /records её нет) и передаёт NULL —
+    -- в этом случае бережём то, что уже добыл проход по карточкам
+    birth_date=COALESCE(excluded.birth_date, clients.birth_date)
 `);
 const upsertVisitStmt = db.prepare(`
   INSERT INTO visits (yclients_record_id, client_id, company_id, branch, date, service, staff, cost, status, service_category)
@@ -247,7 +250,8 @@ function syncBranch(clients, records, company, now) {
   let clientsN = 0, visitsN = 0, goodsN = 0;
   for (const c of clients) {
     const visits = byClient.get(c.id) || [];
-    upsertClient.run(c.id, cid, company.name, c.name || '', c.phone || '', now);
+    upsertClient.run(c.id, cid, company.name, c.name || '', c.phone || '',
+      c.birth_date ? normBirthDate(c.birth_date) : null, now);
     const local = getClientLocalId.get(c.id);
     for (const v of visits) {
       upsertVisit.run(v.yclients_record_id, local.id, cid, company.name, v.date, v.service, v.staff, v.cost, v.status);
@@ -447,6 +451,25 @@ function effectiveDiscount(row) {
 const THROTTLE_MS = 350;
 let commentSync = { running: false, done: 0, total: 0 };
 
+// Дата рождения из карточки YClients → 'YYYY-MM-DD'. Формат в поле birth_date плавает:
+// у части клиентов «1985-04-17», у части «17.04.1985», иногда с временем. Приводим к одному
+// виду, чтобы выборка именинников шла простым substr(birth_date,6,5) = 'MM-DD'.
+// Пустая строка = «в YClients даты нет» (см. комментарий у колонки в db.js).
+function normBirthDate(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);            // 1985-04-17[ 00:00:00]
+  if (!m) {
+    m = s.match(/^(\d{2})\.(\d{2})\.(\d{4})/);            // 17.04.1985
+    if (m) m = [m[0], m[3], m[2], m[1]];
+  }
+  if (!m) return '';
+  const [, y, mo, d] = m;
+  // YClients иногда кладёт заглушку 0000-00-00 / 1900-01-01 — это не дата рождения
+  if (Number(y) < 1901 || Number(mo) < 1 || Number(mo) > 12 || Number(d) < 1 || Number(d) > 31) return '';
+  return `${y}-${mo}-${d}`;
+}
+
 // Маркер нашего блока обзвона внутри комментария клиента YClients.
 // Всё, что ДО него — «родной» текст админов; ниже — история звонков из дашборда.
 const CRM_MARK = '——— Обзвон (CRM) ———';
@@ -498,12 +521,13 @@ async function syncComments({ full = false } = {}) {
     SELECT id, yclients_id, company_id, name, dnc_manual FROM clients
     WHERE yclients_id IS NOT NULL AND company_id IS NOT NULL
     ${full ? '' : `AND (comment_checked_at IS NULL
+                       OR birth_date IS NULL
                        OR (comment_checked_at < datetime('now','-3 days')
                            AND last_visit >= datetime('now','-120 days')))`}
   `).all();
   commentSync = { running: true, done: 0, total: rows.length };
   const upd = db.prepare(`UPDATE clients SET comment=?, do_not_call=?, yc_spent=?, yc_balance=?,
-    yc_discount=?, discount_pct=?, comment_checked_at=? WHERE id=?`);
+    yc_discount=?, discount_pct=?, birth_date=?, comment_checked_at=? WHERE id=?`);
   let dnc = 0;
   try {
     for (const r of rows) {
@@ -516,7 +540,7 @@ async function syncComments({ full = false } = {}) {
         // только карточка и имя — см. комментарий у effectiveDiscount()
         const pct = Math.max(ycDisc, parseDiscount(r.name));
         upd.run(comment || null, flag, card?.spent ?? null, card?.balance ?? null,
-          ycDisc, pct || null, iso(Date.now()), r.id);
+          ycDisc, pct || null, normBirthDate(card?.birth_date), iso(Date.now()), r.id);
         if (flag) dnc++;
       } catch { /* сетевая ошибка или клиент удалён — не трогаем, попробуем в следующий проход */ }
       commentSync.done++;
