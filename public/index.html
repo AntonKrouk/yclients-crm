@@ -22,6 +22,7 @@
   <span id="mode" class="badge">…</span>
   <select id="branchSel" class="branch-sel" title="Филиал" style="display:none"></select>
   <div class="tabs">
+    <button class="tab" data-view="analytics">Аналитика</button>
     <button class="tab active" data-view="tasks">Задачи</button>
     <button class="tab" data-view="calls">Обзвоны</button>
     <button class="tab" data-view="overview">Обзор</button>
@@ -493,6 +494,47 @@
       <div class="sc-cats" id="scCats"></div>
     </div>
     <div id="scList" style="margin-top:14px"></div>
+  </section>
+
+  <!-- АНАЛИТИКА: здоровье клиентской базы и результативность самой программы -->
+  <section id="view-analytics" style="display:none">
+    <div class="an-head">
+      <div class="section-title" style="margin:0">Аналитика</div>
+      <select id="anMonths" title="Глубина периода">
+        <option value="3">3 месяца</option>
+        <option value="6">6 месяцев</option>
+        <option value="12" selected>12 месяцев</option>
+        <option value="24">24 месяца</option>
+      </select>
+    </div>
+    <div class="an-since muted" id="anSince"></div>
+
+    <!-- Главное — результат самой программы, поэтому этот блок первый -->
+    <div class="section-title">Работа программы</div>
+    <div class="grid kpis" id="anCrmKpis"></div>
+    <div class="card an-chart">
+      <div class="an-t">Обзвон против тех, кому не звонили</div>
+      <div class="an-sub">Обе группы отобраны движком одинаково, поэтому разницу можно засчитать программе.</div>
+      <div id="anLift"></div>
+    </div>
+    <div class="card an-chart">
+      <div class="an-t">Звонки по месяцам</div>
+      <div class="an-sub">Столбцы — сделано отметок, линия — доля записавшихся.</div>
+      <div id="anCalls"></div>
+    </div>
+
+    <div class="section-title">Клиентская база</div>
+    <div class="grid kpis" id="anBaseKpis"></div>
+    <div class="card an-chart">
+      <div class="an-t">Новые и вернувшиеся клиенты по месяцам</div>
+      <div class="an-sub">Новый — тот, у кого это первый визит в салоне.</div>
+      <div id="anNewRet"></div>
+    </div>
+    <div class="card an-chart">
+      <div class="an-t">Состояние базы сегодня</div>
+      <div class="an-sub">Пропущен обычный интервал клиента — «пора записать», пропущен вдвое — «уходит».</div>
+      <div id="anStatus"></div>
+    </div>
   </section>
 
   <!-- КЛИЕНТЫ -->

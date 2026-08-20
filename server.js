@@ -584,6 +584,150 @@ app.post('/api/scripts/:id/used', (req, res) => {
   res.json({ ok: true });
 });
 
+// --- Аналитика ------------------------------------------------------------------
+// Две темы: здоровье клиентской базы и результативность самой программы.
+//
+// Про результативность важно: «пришёл после звонка» — это НЕ «пришёл благодаря
+// звонку», часть клиентов вернулась бы и сама. Поэтому рядом с обзвонёнными считаем
+// контрольную группу: те, кому движок поставил задачу, но до кого не дошли. Обе
+// группы отобраны одним движком по одним правилам, значит сопоставимы, и разница
+// в доле вернувшихся — это и есть вклад программы.
+
+const RETURN_WINDOW = 30;   // дней на возврат после звонка
+const COHORT_WINDOW = 60;   // дней на второй визит для «возвращаемости первичек»
+
+// Вернулся ли клиент в окне после момента t0 — одним запросом на всю группу, без
+// перебора клиентов в JS: на девяти тысячах карточек перебор занимал бы секунды.
+// Считаем коррелированными подзапросами, индекс idx_visits_client делает их дешёвыми.
+function measureGroup(cteSql, params = []) {
+  const row = db.prepare(`
+    WITH g AS (${cteSql})
+    SELECT
+      COUNT(*) AS people,
+      SUM(CASE WHEN EXISTS(
+            SELECT 1 FROM visits v WHERE v.client_id = g.client_id AND v.status = 'completed'
+              AND v.date > g.t0 AND v.date <= datetime(g.t0, '+${RETURN_WINDOW} days')
+          ) THEN 1 ELSE 0 END) AS returned,
+      COALESCE(SUM((
+            SELECT COALESCE(SUM(v.cost), 0) FROM visits v
+             WHERE v.client_id = g.client_id AND v.status = 'completed'
+               AND v.date > g.t0 AND v.date <= datetime(g.t0, '+${RETURN_WINDOW} days')
+          )), 0) AS revenue
+    FROM g`).get(...params);
+  return {
+    people: row.people || 0,
+    returned: row.returned || 0,
+    revenue: Math.round(row.revenue || 0),
+    pct: row.people ? Math.round((row.returned / row.people) * 100) : 0,
+  };
+}
+
+app.get('/api/analytics', (req, res) => {
+  const months = Math.min(Math.max(Number(req.query.months) || 12, 3), 24);
+  const since = `-${months} months`;
+
+  // Когда программой начали пользоваться — по первой отметке звонка.
+  const prog = db.prepare(`SELECT MIN(created_at) started, MAX(created_at) last,
+    COUNT(*) calls, COUNT(DISTINCT client_id) clients FROM task_actions`).get();
+
+  // --- КЛИЕНТСКАЯ БАЗА ---
+  // Новые и вернувшиеся по месяцам. «Новый» — тот, чей ПЕРВЫЙ визит в этом месяце.
+  const FIRSTS = `SELECT client_id, MIN(date) fv FROM visits WHERE status='completed' GROUP BY client_id`;
+  const byMonth = db.prepare(`
+    WITH firsts AS (${FIRSTS})
+    SELECT substr(v.date,1,7) m,
+           COUNT(DISTINCT v.client_id) clients,
+           COUNT(DISTINCT CASE WHEN substr(f.fv,1,7) = substr(v.date,1,7) THEN v.client_id END) new_clients,
+           COUNT(*) visits,
+           ROUND(COALESCE(SUM(v.cost),0)) revenue
+    FROM visits v JOIN firsts f ON f.client_id = v.client_id
+    WHERE v.status='completed' AND v.date >= date('now', ?)
+    GROUP BY m ORDER BY m`).all(since)
+    .map(r => ({ ...r, returning: r.clients - r.new_clients }));
+
+  // Возвращаемость первичек: из пришедших впервые в месяце — сколько вернулись за 60 дней.
+  // Последние месяцы помечаем неполными: окно ещё не истекло, и без пометки график
+  // показывал бы фальшивый обвал в конце.
+  const cutoff = db.prepare(`SELECT date('now', '-${COHORT_WINDOW} days') d`).get().d;
+  const cohorts = db.prepare(`
+    WITH firsts AS (${FIRSTS})
+    SELECT substr(fv,1,7) m, COUNT(*) cohort,
+           SUM(CASE WHEN EXISTS(
+                 SELECT 1 FROM visits v2 WHERE v2.client_id = firsts.client_id
+                   AND v2.status='completed' AND v2.date > firsts.fv
+                   AND v2.date <= datetime(firsts.fv, '+${COHORT_WINDOW} days')
+               ) THEN 1 ELSE 0 END) returned
+    FROM firsts WHERE fv >= date('now', ?) GROUP BY m ORDER BY m`).all(since)
+    .map(r => ({ ...r, pct: r.cohort ? Math.round((r.returned / r.cohort) * 100) : 0,
+                 partial: r.m >= cutoff.slice(0, 7) }));
+
+  // Распределение по состоянию. Пороги те же, что в карточке клиента: свой обычный
+  // интервал пропущен — «пора записать», пропущен вдвое — «уходит».
+  const statuses = db.prepare(`
+    SELECT CASE
+      WHEN COALESCE(visits_count,0) = 0 THEN 'new'
+      WHEN last_visit IS NULL THEN 'new'
+      WHEN julianday('now') - julianday(last_visit) > COALESCE(avg_interval_days, 60) * 2 THEN 'churn'
+      WHEN julianday('now') - julianday(last_visit) > COALESCE(avg_interval_days, 60) THEN 'due'
+      ELSE 'active' END AS st,
+      COUNT(*) n
+    FROM clients GROUP BY st`).all();
+
+  // --- РАБОТА ПРОГРАММЫ ---
+  const CALLED = `SELECT client_id, MIN(created_at) t0 FROM task_actions GROUP BY client_id`;
+  const CONTROL = `SELECT client_id, MIN(created_at) t0 FROM tasks
+                   WHERE client_id NOT IN (SELECT DISTINCT client_id FROM task_actions)
+                   GROUP BY client_id`;
+  const called = measureGroup(CALLED);
+  const control = measureGroup(CONTROL);
+
+  const callsByMonth = db.prepare(`
+    SELECT substr(created_at,1,7) m, COUNT(*) calls,
+           COUNT(DISTINCT client_id) clients,
+           SUM(CASE WHEN result IN ('booked','coming') THEN 1 ELSE 0 END) won
+    FROM task_actions WHERE created_at >= date('now', ?)
+    GROUP BY m ORDER BY m`).all(since)
+    .map(r => ({ ...r, conv: r.calls ? Math.round((r.won / r.calls) * 100) : 0 }));
+
+  const byResult = db.prepare(`
+    SELECT result, COUNT(*) n FROM task_actions
+    WHERE created_at >= date('now', ?) GROUP BY result ORDER BY n DESC`).all(since);
+
+  const byAdmin = db.prepare(`
+    SELECT COALESCE(admin,'(не указан)') admin, COUNT(*) calls,
+           SUM(CASE WHEN result IN ('booked','coming') THEN 1 ELSE 0 END) won
+    FROM task_actions WHERE created_at >= date('now', ?)
+    GROUP BY admin ORDER BY calls DESC LIMIT 12`).all(since)
+    .map(r => ({ ...r, conv: r.calls ? Math.round((r.won / r.calls) * 100) : 0 }));
+
+  const byType = db.prepare(`
+    SELECT t.type, COUNT(*) calls,
+           SUM(CASE WHEN ta.result IN ('booked','coming') THEN 1 ELSE 0 END) won
+    FROM task_actions ta JOIN tasks t ON t.id = ta.task_id
+    WHERE ta.created_at >= date('now', ?)
+    GROUP BY t.type ORDER BY calls DESC`).all(since)
+    .map(r => ({ ...r, label: TYPE_LABEL[r.type] || r.type,
+                 conv: r.calls ? Math.round((r.won / r.calls) * 100) : 0 }));
+
+  // Вклад программы: насколько обзвонённые возвращаются чаще контрольных.
+  const liftPp = called.people && control.people ? +(called.pct - control.pct).toFixed(1) : null;
+  const perHead = called.returned ? called.revenue / called.returned : 0;
+  const extraPeople = liftPp != null && liftPp > 0 ? Math.round(called.people * liftPp / 100) : 0;
+
+  res.json({
+    months,
+    window: { return: RETURN_WINDOW, cohort: COHORT_WINDOW },
+    program: prog,
+    base: { by_month: byMonth, cohorts, statuses },
+    crm: {
+      called, control, lift_pp: liftPp,
+      extra_people: extraPeople,
+      extra_revenue: Math.round(extraPeople * perHead),
+      by_month: callsByMonth, by_result: byResult, by_admin: byAdmin, by_type: byType,
+    },
+  });
+});
+
 // Группы услуг (категории прайс-листа YClients) с числом услуг и фактических визитов.
 // Вложенности у категорий нет — в YClients этого салона все они одного уровня.
 app.get('/api/service-categories', (req, res) => {

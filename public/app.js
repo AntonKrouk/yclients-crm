@@ -271,7 +271,7 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   t.classList.add('active');
   const v=t.dataset.view;
-  ['tasks','calls','overview','clients','vip','deposit','bday','scripts','segments'].forEach(name=>$('#view-'+name).style.display = name===v?'':'none');
+  ['tasks','calls','overview','clients','vip','deposit','bday','scripts','analytics','segments'].forEach(name=>$('#view-'+name).style.display = name===v?'':'none');
   if(v==='tasks') loadTasks();
   if(v==='calls') loadCalls();
   if(v==='overview') loadOverview();
@@ -280,6 +280,7 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   if(v==='deposit') loadList('deposit');
   if(v==='bday') loadBday();
   if(v==='scripts') loadScripts();
+  if(v==='analytics') loadAnalytics();
   if(v==='segments') loadSegments();
 });
 
@@ -1278,6 +1279,155 @@ for(const slug of Object.keys(LIST_UI)){
     const q=e.target.value;
     listTimer[slug]=setTimeout(()=>listSuggest(slug,q),250);
   };
+}
+
+// --- АНАЛИТИКА ---
+// Графики рисуем сами, инлайновым SVG: в проекте намеренно нет ни одной внешней
+// библиотеки, и заводить её ради столбиков не стоит. Все размеры — в системе координат
+// viewBox, наружу SVG растягивается по ширине карточки.
+
+const MONTH_SHORT = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+// '2026-08' → «авг 26»
+const mLabel = m => { const [y,mo]=String(m).split('-').map(Number);
+  return `${MONTH_SHORT[mo-1]} ${String(y).slice(2)}`; };
+// Масштабируем пропорционально: с preserveAspectRatio="none" подписи на осях
+// растягивались бы по горизонтали вместе с картинкой и выглядели приплюснутыми.
+const svgWrap = (h, inner) =>
+  `<svg viewBox="0 0 760 ${h}" class="an-svg">${inner}</svg>`;
+
+// Горизонтальная сетка с подписями значений — общая для столбчатых графиков
+function grid(max, top, bottom, fmt=String){
+  const steps=4, out=[];
+  for(let i=0;i<=steps;i++){
+    const v=max*i/steps, y=bottom-(bottom-top)*(i/steps);
+    out.push(`<line x1="44" x2="752" y1="${y}" y2="${y}" class="an-grid"/>
+      <text x="40" y="${y+4}" class="an-ax" text-anchor="end">${fmt(Math.round(v))}</text>`);
+  }
+  return out.join('');
+}
+
+// Столбцы с накоплением: две серии друг на друге (новые + вернувшиеся)
+function chartStacked(rows, aKey, bKey){
+  if(!rows.length) return '<div class="empty">Данных за период нет</div>';
+  const H=230, top=16, bottom=H-30;
+  const max=Math.max(1,...rows.map(r=>r[aKey]+r[bKey]));
+  const bw=(752-44)/rows.length, w=Math.min(bw*0.62,46);
+  const bars=rows.map((r,i)=>{
+    const x=44+bw*i+(bw-w)/2, sc=(bottom-top)/max;
+    const ha=r[aKey]*sc, hb=r[bKey]*sc;
+    return `<rect x="${x}" y="${bottom-hb}" width="${w}" height="${hb}" class="an-b2"><title>${mLabel(r.m)}: вернувшихся ${r[bKey]}</title></rect>
+      <rect x="${x}" y="${bottom-hb-ha}" width="${w}" height="${ha}" class="an-b1"><title>${mLabel(r.m)}: новых ${r[aKey]}</title></rect>
+      <text x="${x+w/2}" y="${H-10}" class="an-ax" text-anchor="middle">${mLabel(r.m)}</text>`;
+  }).join('');
+  return svgWrap(H, grid(max,top,bottom)+bars);
+}
+
+// Столбцы + линия поверх (звонки и конверсия; когорты и процент возврата)
+function chartBarsLine(rows, barKey, lineKey, lineMax=100){
+  if(!rows.length) return '<div class="empty">Данных за период нет</div>';
+  const H=230, top=16, bottom=H-30;
+  const max=Math.max(1,...rows.map(r=>r[barKey]));
+  const bw=(752-44)/rows.length, w=Math.min(bw*0.62,46);
+  const bars=rows.map((r,i)=>{
+    const x=44+bw*i+(bw-w)/2, h=r[barKey]*(bottom-top)/max;
+    // неполный период — штриховкой: окно возврата ещё не истекло, цифра вырастет
+    return `<rect x="${x}" y="${bottom-h}" width="${w}" height="${h}" class="an-b1${r.partial?' partial':''}">
+        <title>${mLabel(r.m)}: ${r[barKey]}${r.partial?' (период не закрыт)':''}</title></rect>
+      <text x="${x+w/2}" y="${H-10}" class="an-ax" text-anchor="middle">${mLabel(r.m)}</text>`;
+  }).join('');
+  const pts=rows.map((r,i)=>`${44+bw*i+bw/2},${bottom-(r[lineKey]||0)*(bottom-top)/lineMax}`).join(' ');
+  const dots=rows.map((r,i)=>`<circle cx="${44+bw*i+bw/2}" cy="${bottom-(r[lineKey]||0)*(bottom-top)/lineMax}" r="3.5" class="an-dot">
+      <title>${mLabel(r.m)}: ${r[lineKey]||0}%</title></circle>`).join('');
+  return svgWrap(H, grid(max,top,bottom)+bars+`<polyline points="${pts}" class="an-line"/>`+dots);
+}
+
+// Горизонтальные полосы — для списков (статусы, типы задач, админы)
+function chartHBars(rows){
+  if(!rows.length) return '<div class="empty">Данных за период нет</div>';
+  const max=Math.max(1,...rows.map(r=>r.value));
+  return `<div class="an-hb">`+rows.map(r=>`
+    <div class="an-hb-row">
+      <span class="an-hb-l">${esc(r.label)}</span>
+      <span class="an-hb-t"><span class="an-hb-f ${r.cls||''}" style="width:${Math.max(2,r.value/max*100)}%"></span></span>
+      <span class="an-hb-v">${esc(r.note||String(r.value))}</span>
+    </div>`).join('')+`</div>`;
+}
+
+const kpi = (n,l,hint) => `<div class="kpi"${hint?` title="${esc(hint)}"`:''}><div class="n">${n}</div><div class="l">${l}</div></div>`;
+
+// Вывод под сравнением групп. Сначала проверяем, есть ли на чём делать вывод вообще:
+// на десятке человек разница в процентах — случайность, и подавать её как достижение
+// программы нечестно. Порог грубый, но он спасает от уверенных заявлений на пустом месте.
+const MIN_GROUP = 30;
+function anConclusion(c){
+  if(c.lift_pp==null) return '';
+  if(c.called.people < MIN_GROUP || c.control.people < MIN_GROUP){
+    return `<div class="an-concl bad">Пока не на чем делать вывод: обзвонено
+      ${c.called.people}, в контрольной группе ${c.control.people}. На таких числах
+      разница между группами — случайность. Цифры выше показываю как есть, но считать
+      их результатом программы рано: нужно хотя бы по ${MIN_GROUP} человек в каждой группе.</div>`;
+  }
+  if(c.lift_pp > 0) return `<div class="an-concl">Обзвонённые возвращаются на
+    <b>${c.lift_pp} п.п.</b> чаще. В пересчёте на людей это примерно
+    <b>${plural(c.extra_people,'клиент','клиента','клиентов')}</b> сверх тех, кто пришёл бы сам,
+    и порядка <b>${rub(c.extra_revenue)}</b> за период.</div>`;
+  return `<div class="an-concl bad">Прироста возврата нет: обзвонённые возвращаются
+    не чаще тех, кому не звонили. Либо звонят не тем, либо звонок не про то.</div>`;
+}
+
+let anLoaded=false;
+async function loadAnalytics(){
+  if(!anLoaded){ anLoaded=true; $('#anMonths').onchange=loadAnalytics; }
+  const months=$('#anMonths').value;
+  const r=await api('/api/analytics?months='+months);
+
+  // с какого дня вообще есть чем мерить работу программы
+  const p=r.program;
+  $('#anSince').innerHTML = p.started
+    ? `Программой пользуются с <b>${fmtDate(p.started)}</b> · сделано ${plural(p.calls,'отметка звонка','отметки звонка','отметок звонков')} по ${plural(p.clients,'клиенту','клиентам','клиентам')}`
+    : 'Отметок звонков пока нет — раздел «Работа программы» наполнится, когда админы начнут отмечать результаты.';
+
+  // --- клиентская база ---
+  const bm=r.base.by_month, last=bm[bm.length-1];
+  const newSum=bm.reduce((s,x)=>s+x.new_clients,0), retSum=bm.reduce((s,x)=>s+x.returning,0);
+  const done=r.base.cohorts.filter(c=>!c.partial);
+  const avgRet=done.length?Math.round(done.reduce((s,c)=>s+c.pct,0)/done.length):0;
+  $('#anBaseKpis').innerHTML =
+    kpi(newSum,'новых клиентов за период')+
+    kpi(retSum,'визитов вернувшихся')+
+    kpi(avgRet+'%','новых пришли снова','Доля новых клиентов, вернувшихся в салон в течение 60 дней после первого визита. Месяцы, где 60 дней ещё не прошли, не учитываются.')+
+    kpi(last?last.clients:0,'клиентов в последнем месяце');
+  $('#anNewRet').innerHTML = chartStacked(bm,'new_clients','returning')+
+    `<div class="an-leg"><span><i class="an-b1"></i>новые</span><span><i class="an-b2"></i>вернувшиеся</span></div>`;
+  const ST={active:'Активные',due:'Пора записать',churn:'Уходят',new:'Без визитов'};
+  const stTotal=r.base.statuses.reduce((s,x)=>s+x.n,0)||1;
+  $('#anStatus').innerHTML = chartHBars(r.base.statuses
+    .sort((a,b)=>b.n-a.n)
+    .map(s=>({label:ST[s.st]||s.st, value:s.n, cls:'st-'+s.st,
+              note:`${s.n} · ${Math.round(s.n/stTotal*100)}%`})));
+
+  // --- работа программы ---
+  const c=r.crm;
+  if(!c.called.people){
+    $('#anCrmKpis').innerHTML='';
+    ['anLift','anCalls'].forEach(id=>
+      $('#'+id).innerHTML='<div class="empty">Звонков за период не отмечено</div>');
+    return;
+  }
+  const liftTxt = c.lift_pp==null ? '—' : (c.lift_pp>0?'+':'')+c.lift_pp+' п.п.';
+  $('#anCrmKpis').innerHTML =
+    kpi(c.called.people,'обзвонено клиентов')+
+    kpi(c.called.pct+'%','вернулись за 30 дней')+
+    kpi(liftTxt,'сверх контрольной группы','Насколько чаще возвращаются обзвонённые по сравнению с теми, кому задачу поставили, но не позвонили')+
+    kpi(rub(c.called.revenue),'выручка вернувшихся');
+  $('#anLift').innerHTML = chartHBars([
+    {label:'Позвонили', value:c.called.pct, cls:'st-active',
+     note:`${c.called.pct}% · ${c.called.returned} из ${c.called.people}`},
+    {label:'Не звонили', value:c.control.pct, cls:'st-churn',
+     note:`${c.control.pct}% · ${c.control.returned} из ${c.control.people}`},
+  ]) + anConclusion(c);
+  $('#anCalls').innerHTML = chartBarsLine(c.by_month,'calls','conv')+
+    `<div class="an-leg"><span><i class="an-b1"></i>отметок звонков</span><span><i class="an-lin"></i>записались, %</span></div>`;
 }
 
 // --- СКРИПТЫ (шаблоны сообщений) ---
