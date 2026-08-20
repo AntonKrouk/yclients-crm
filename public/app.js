@@ -1345,21 +1345,63 @@ async function checkScAi(){
   try{ scAiOn=(await api('/api/scripts/ai')).enabled; }catch{ scAiOn=false; }
   return scAiOn;
 }
-$('#scAiGo').onclick=async ()=>{
+// Переписка с моделью живёт, пока открыта форма. На сервере её не храним: разговор
+// нужен ровно для одного шаблона и заканчивается вместе с ним.
+let scAiHistory=[];
+function renderScAiLog(pending){
+  const log=$('#scAiLog');
+  $('#scAiReset').style.display = scAiHistory.length ? '' : 'none';
+  log.innerHTML = scAiHistory.map((m,i)=>
+    m.role==='user'
+      ? `<div class="sc-msg me">${esc(m.text)}</div>`
+      : `<div class="sc-msg ai">${esc(m.text)}<button type="button" class="sc-take" onclick="takeScAi(${i})">Вставить в шаблон</button></div>`
+  ).join('') + (pending?'<div class="sc-msg ai pending">пишет…</div>':'');
+  // именно 'flex', а не '': в стилях у блока display:none, и пустая строка вернула бы его
+  log.style.display = (scAiHistory.length||pending) ? 'flex' : 'none';
+  log.scrollTop = log.scrollHeight;
+}
+function takeScAi(i){
+  const m=scAiHistory[i]; if(!m) return;
+  $('#scBody').value=m.text;
+  $('#scBody').focus();
+  toast('Текст перенесён в шаблон');
+}
+function resetScAi(){
+  scAiHistory=[];
+  $('#scAiTask').value='';
+  $('#scAiTask').placeholder='Опишите задачу: напр. «позвать на окрашивание тех, кто не был полгода»';
+  $('#scAiNote').textContent='Ответ сразу попадёт в поле «Текст сообщения» ниже. Дальше можно просить правки словами или дописать руками.';
+  renderScAiLog(false);
+}
+$('#scAiReset').onclick=resetScAi;
+async function sendScAi(){
   const task=$('#scAiTask').value.trim();
   const note=$('#scAiNote'), b=$('#scAiGo');
-  if(!task){ note.textContent='Сначала опишите, какое сообщение нужно'; return; }
-  b.disabled=true; b.textContent='Пишу…';
+  if(!task){ note.textContent='Напишите, что нужно'; return; }
+  scAiHistory.push({role:'user',text:task});
+  $('#scAiTask').value='';
+  renderScAiLog(true);
+  b.disabled=true;
   note.textContent='YandexGPT думает, это займёт несколько секунд…';
   try{
-    const r=await api('/api/scripts/generate',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({task, title:$('#scTitle').value.trim()})});
-    $('#scBody').value=r.text;
-    $('#scBody').focus();
-    note.textContent='Готово — проверьте текст и подстановки, при необходимости поправьте.';
-  }catch(e){ note.textContent=e.message||'Не удалось сгенерировать'; }
-  b.disabled=false; b.textContent='Сгенерировать';
-};
+    const r=await api('/api/scripts/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({messages:scAiHistory, title:$('#scTitle').value.trim()})});
+    scAiHistory.push({role:'assistant',text:r.text});
+    renderScAiLog(false);
+    $('#scBody').value=r.text;   // свежий ответ сразу в поле шаблона
+    $('#scAiTask').placeholder='Что поправить? напр. «короче», «убери про сертификат», «дай другой вариант»';
+    note.textContent='Не то? Напишите, что поправить — он помнит разговор.';
+  }catch(e){
+    scAiHistory.pop();           // неудачную реплику из истории убираем, иначе она уедет в следующий запрос
+    renderScAiLog(false);
+    $('#scAiTask').value=task;   // и возвращаем текст в поле, чтобы не набирать заново
+    note.textContent=e.message||'Не удалось сгенерировать';
+  }
+  b.disabled=false;
+}
+$('#scAiGo').onclick=sendScAi;
+// Enter отправляет, Shift+Enter — перенос строки: в чате так привычнее
+$('#scAiTask').onkeydown=e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendScAi(); } };
 
 // --- Создание и правка шаблона ---
 function openScEdit(id){
@@ -1371,9 +1413,7 @@ function openScEdit(id){
   $('#scBody').value=s?s.body:'';
   $('#scEditError').textContent='';
   $('#scCatList').innerHTML=scCats.map(c=>`<option value="${esc(c.category)}">`).join('');
-  // помощник — с чистого листа при каждом открытии формы
-  $('#scAiTask').value='';
-  $('#scAiNote').textContent='Черновик попадёт в поле «Текст сообщения» — правьте как угодно.';
+  resetScAi();   // помощник — с чистого листа при каждом открытии формы
   checkScAi().then(on=>{ $('#scAi').style.display = on ? '' : 'none'; });
   $('#scEditModal').classList.add('open');
   $('#scTitle').focus();

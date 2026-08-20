@@ -445,11 +445,30 @@
      с полями самого шаблона — он пишет черновик, а не заполняет форму за админа */
   .sc-ai{background:var(--accent-soft);border:1px solid #C9E4E0;border-radius:var(--radius);
     padding:14px 16px;margin:0 0 22px}
-  .sc-ai-hd{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;
+  .sc-ai-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;
+    font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;
     color:var(--accent-2);margin-bottom:9px}
+  .sc-ai-reset{border:none;background:none;padding:0;cursor:pointer;font:inherit;
+    font-size:10px;letter-spacing:.1em;color:var(--muted);border-bottom:1px solid var(--line-strong)}
+  .sc-ai-reset:hover{color:var(--ink)}
   .sc-ai textarea{background:var(--panel);font-size:13px}
-  .sc-ai-row{display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap}
-  .sc-ai-note{font-size:11.5px;color:var(--muted);flex:1;min-width:180px;line-height:1.45}
+  .sc-ai-row{display:flex;align-items:flex-end;gap:10px}
+  .sc-ai-row textarea{flex:1;min-width:0}
+  .sc-ai-row .btn{flex:none}
+  .sc-ai-note{font-size:11.5px;color:var(--muted);margin-top:9px;line-height:1.45}
+  /* Переписка с моделью. Реплики админа прижаты вправо, ответы ИИ — влево:
+     привычная форма чата, сразу видно, где чья фраза. */
+  .sc-ai-log{display:none;flex-direction:column;gap:8px;max-height:230px;overflow-y:auto;
+    margin-bottom:12px;padding-right:4px}
+  .sc-msg{font-size:13px;line-height:1.5;padding:8px 12px;border-radius:var(--radius);
+    max-width:88%;white-space:pre-wrap;word-break:break-word}
+  .sc-msg.me{align-self:flex-end;background:var(--ink);color:var(--paper)}
+  .sc-msg.ai{align-self:flex-start;background:var(--panel);border:1px solid var(--line);
+    color:var(--ink)}
+  .sc-msg.pending{color:var(--muted);font-style:italic}
+  .sc-take{display:block;margin-top:8px;border:none;background:none;padding:0;cursor:pointer;
+    font:inherit;font-size:11px;color:var(--accent-2);border-bottom:1px solid #C9E4E0}
+  .sc-take:hover{color:var(--ink);border-color:var(--ink)}
   .sc-pick{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px;max-height:132px;overflow-y:auto}
   .sc-chip{border:1px solid var(--line-strong);background:transparent;color:var(--ink-2);cursor:pointer;
     font-family:inherit;font-size:12.5px;padding:6px 12px;border-radius:var(--radius);text-align:left}

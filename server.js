@@ -557,11 +557,13 @@ app.delete('/api/scripts/:id', (req, res) => {
 // Объявлено ДО '/api/scripts/:id', иначе 'ai' попал бы в :id.
 app.get('/api/scripts/ai', (req, res) => res.json({ enabled: ai.enabled() }));
 
-// Черновик текста по задаче администратора. Ничего не сохраняет: результат едет в форму,
-// админ его правит и сохраняет сам — модель пишет заготовку, а не готовый шаблон.
-app.post('/api/scripts/generate', async (req, res) => {
+// Диалог с ИИ по тексту шаблона. Ничего не сохраняет: результат едет в форму, админ его
+// правит и сохраняет сам — модель пишет заготовку, а не готовый шаблон.
+// Переписку хранит браузер и присылает целиком: у модели нет памяти между запросами,
+// а держать её на сервере незачем — разговор живёт ровно пока открыта форма.
+app.post('/api/scripts/chat', async (req, res) => {
   try {
-    const r = await ai.generateScript(req.body?.task, req.body?.title);
+    const r = await ai.chat(req.body?.messages, req.body?.title);
     res.json({ ok: true, text: r.text, model: r.model });
   } catch (e) {
     res.status(400).json({ error: e.message });
