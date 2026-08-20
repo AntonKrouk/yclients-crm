@@ -309,7 +309,10 @@ function demoBirthDate(i) {
   if (i < 3) { /* сегодня */ }
   else if (i < 7) d.setDate(d.getDate() + (i - 2));
   else d.setDate(d.getDate() + (i * 13) % 360);
-  const year = 1966 + (i * 7) % 34;
+  // У каждого третьего год не указан — в YClients это законный случай («13 октября»),
+  // и приезжает он заглушкой 1900. Держим такие и в демо, чтобы вкладку «ДР» можно
+  // было проверить на них, а не только на полных датах.
+  const year = i % 3 === 1 ? 1900 : 1966 + (i * 7) % 34;
   return `${year}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 

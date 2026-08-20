@@ -1517,8 +1517,12 @@ let bdLoaded=false;
 
 // 'YYYY-MM-DD' → «17 апреля 1985». Разбираем строку руками: new Date('YYYY-MM-DD')
 // считается UTC-полночью и в минусовых поясах показал бы предыдущий день.
-const bdParse = s => { const [y,m,d]=String(s).split('-').map(Number); return new Date(y,m-1,d); };
-const fmtBd = s => s ? bdParse(s).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'}) : '—';
+// Год 0000 означает «в YClients указаны только день и месяц» — тогда год не печатаем
+// и возраст не считаем. Подставляем 2000 при разборе: годы 0–99 JS сам уводит в 1900-е.
+const bdNoYear = s => String(s||'').startsWith('0000-');
+const bdParse = s => { const [y,m,d]=String(s).split('-').map(Number); return new Date(y||2000,m-1,d); };
+const fmtBd = s => !s ? '—' : bdParse(s).toLocaleDateString('ru-RU',
+  bdNoYear(s) ? {day:'numeric',month:'long'} : {day:'numeric',month:'long',year:'numeric'});
 const fmtBdShort = s => s ? bdParse(s).toLocaleDateString('ru-RU',{day:'numeric',month:'long'}) : '—';
 
 async function loadBday(){
@@ -1678,10 +1682,12 @@ async function renderDrawerBday(id){
   let turns=now.getFullYear()-by;
   // ДР в этом году уже прошёл → следующий круглый возраст будет в следующем
   if(now.getMonth()+1>bm || (now.getMonth()+1===bm && now.getDate()>bd)) turns++;
+  // года в карточке YClients может не быть — тогда про возраст молчим
+  const age = by ? `<span class="ag">${isToday?'исполняется':'исполнится'} ${turns}</span>` : '';
   strip.style.display='';
   strip.innerHTML = `<span class="ic">${ICON.cake}</span>
     <span class="dt">${fmtBdShort(r.birth_date)}${isToday?' — сегодня':''}</span>
-    <span class="ag">${isToday?'исполняется':'исполнится'} ${turns}</span>
+    ${age}
     <span class="nt ${r.note?'':'blank'}">${esc(r.note)||'заметки нет — добавить'}</span>`;
 }
 function openBdNoteFromDrawer(){

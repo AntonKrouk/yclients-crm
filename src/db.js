@@ -305,6 +305,18 @@ if (!db.prepare("SELECT value FROM meta WHERE key='daily_cap_reset'").get()) {
   db.exec("UPDATE tasks SET status='dismissed', closed_at=datetime('now') WHERE status IN ('open','snoozed')");
   db.prepare("INSERT INTO meta(key,value) VALUES('daily_cap_reset','1')").run();
 }
+// Разовая переборка дат рождения. До 20.08.2026 нормализация считала мусором всё, что
+// раньше 1901 года, — а YClients ставит 1900-й как заглушку, когда в карточке указаны
+// только день и месяц («13 октября»). На боевой базе так заполнено больше половины дат,
+// и все они молча превращались в пустую строку. Пустая строка означает «карточку
+// смотрели, даты нет», поэтому фоновый проход такие карточки больше не перечитывал бы.
+// Сбрасываем отметку в NULL — проход заберёт их заново и запишет как 0000-MM-DD.
+if (!db.prepare("SELECT value FROM meta WHERE key='birthday_no_year_v1'").get()) {
+  const n = db.prepare("UPDATE clients SET birth_date = NULL WHERE birth_date = ''").run().changes;
+  if (n) console.log(`[migrate] дат рождения помечено к перечитыванию: ${n}`);
+  db.prepare("INSERT INTO meta(key,value) VALUES('birthday_no_year_v1','1')").run();
+}
+
 db.exec('CREATE INDEX IF NOT EXISTS idx_clients_branch ON clients(branch)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_visits_branch ON visits(branch)');
 
