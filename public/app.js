@@ -1355,25 +1355,9 @@ function chartHBars(rows){
 
 const kpi = (n,l,hint) => `<div class="kpi"${hint?` title="${esc(hint)}"`:''}><div class="n">${n}</div><div class="l">${l}</div></div>`;
 
-// Вывод под сравнением групп. Сначала проверяем, есть ли на чём делать вывод вообще:
-// на десятке человек разница в процентах — случайность, и подавать её как достижение
-// программы нечестно. Порог грубый, но он спасает от уверенных заявлений на пустом месте.
+// Строки с малым числом людей не показываем как выводы: на десятке человек проценты —
+// случайность. Порог грубый, но спасает от уверенных заявлений на пустом месте.
 const MIN_GROUP = 30;
-function anConclusion(c){
-  if(c.lift_pp==null) return '';
-  if(c.called.people < MIN_GROUP || c.control.people < MIN_GROUP){
-    return `<div class="an-concl bad">Пока не на чем делать вывод: обзвонено
-      ${c.called.people}, в контрольной группе ${c.control.people}. На таких числах
-      разница между группами — случайность. Цифры выше показываю как есть, но считать
-      их результатом программы рано: нужно хотя бы по ${MIN_GROUP} человек в каждой группе.</div>`;
-  }
-  if(c.lift_pp > 0) return `<div class="an-concl">Обзвонённые возвращаются на
-    <b>${c.lift_pp} п.п.</b> чаще. В пересчёте на людей это примерно
-    <b>${plural(c.extra_people,'клиент','клиента','клиентов')}</b> сверх тех, кто пришёл бы сам,
-    и порядка <b>${rub(c.extra_revenue)}</b> за период.</div>`;
-  return `<div class="an-concl bad">Прироста возврата нет: обзвонённые возвращаются
-    не чаще тех, кому не звонили. Либо звонят не тем, либо звонок не про то.</div>`;
-}
 
 let anLoaded=false;
 async function loadAnalytics(){
@@ -1410,24 +1394,33 @@ async function loadAnalytics(){
   const c=r.crm;
   if(!c.called.people){
     $('#anCrmKpis').innerHTML='';
-    ['anLift','anCalls'].forEach(id=>
+    ['anTypes','anCalls'].forEach(id=>
       $('#'+id).innerHTML='<div class="empty">Звонков за период не отмечено</div>');
+    $('#anCaveat').innerHTML='';
     return;
   }
-  const liftTxt = c.lift_pp==null ? '—' : (c.lift_pp>0?'+':'')+c.lift_pp+' п.п.';
   $('#anCrmKpis').innerHTML =
     kpi(c.called.people,'обзвонено клиентов')+
-    kpi(c.called.pct+'%','вернулись за 30 дней')+
-    kpi(liftTxt,'сверх контрольной группы','Насколько чаще возвращаются обзвонённые по сравнению с теми, кому задачу поставили, но не позвонили')+
-    kpi(rub(c.called.revenue),'выручка вернувшихся');
-  $('#anLift').innerHTML = chartHBars([
-    {label:'Позвонили', value:c.called.pct, cls:'st-active',
-     note:`${c.called.pct}% · ${c.called.returned} из ${c.called.people}`},
-    {label:'Не звонили', value:c.control.pct, cls:'st-churn',
-     note:`${c.control.pct}% · ${c.control.returned} из ${c.control.people}`},
-  ]) + anConclusion(c);
+    kpi(c.calls_total,'сделано звонков')+
+    kpi(c.conv+'%','записались или согласились')+
+    kpi(rub(c.called.revenue),'принесли обзвонённые','Сумма визитов тех, кто пришёл в течение 30 дней после звонка. Это факт прихода, а не заслуга звонка — часть этих людей вернулась бы и сама.');
+  // Типы задач сравнимы между собой: обе стороны из числа обзвонённых, отбор одинаковый.
+  // Строки с малым числом людей помечаем — на них выводы не строят.
+  $('#anTypes').innerHTML = chartHBars(c.by_type.map(t=>({
+    label:t.label, value:t.pct,
+    cls: t.people<MIN_GROUP ? 'st-new' : (t.pct>=10?'st-active':'st-due'),
+    note:`${t.pct}% · ${t.returned} из ${t.people}${t.people<MIN_GROUP?' · мало данных':''} · ${rub(t.revenue)}`
+  })));
   $('#anCalls').innerHTML = chartBarsLine(c.by_month,'calls','conv')+
     `<div class="an-leg"><span><i class="an-b1"></i>отметок звонков</span><span><i class="an-lin"></i>записались, %</span></div>`;
+  // Прямо на вкладке объясняем, почему здесь НЕТ цифры «программа принесла столько-то».
+  // Без этого владелец решит, что её забыли посчитать, — а её честно посчитать нельзя.
+  $('#anCaveat').innerHTML = `<b>Почему здесь нет цифры «программа принесла N рублей».</b>
+    Чтобы её получить, нужно знать, сколько из этих людей вернулось бы и без звонка.
+    Сравнивать с теми, кому не звонили, нельзя: движок снимает задачу, когда клиент
+    записался сам, и в такой «контрольной» группе оказываются как раз те, кто вернулся
+    своим ходом. Честный ответ даст только эксперимент — часть задач случайным образом
+    помечать «не звонить» и через месяц сравнить группы.`;
 }
 
 // --- СКРИПТЫ (шаблоны сообщений) ---

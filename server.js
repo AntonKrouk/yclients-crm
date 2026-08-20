@@ -674,12 +674,17 @@ app.get('/api/analytics', (req, res) => {
     FROM clients GROUP BY st`).all();
 
   // --- РАБОТА ПРОГРАММЫ ---
-  const CALLED = `SELECT client_id, MIN(created_at) t0 FROM task_actions GROUP BY client_id`;
-  const CONTROL = `SELECT client_id, MIN(created_at) t0 FROM tasks
-                   WHERE client_id NOT IN (SELECT DISTINCT client_id FROM task_actions)
-                   GROUP BY client_id`;
-  const called = measureGroup(CALLED);
-  const control = measureGroup(CONTROL);
+  // Контрольной группы здесь СОЗНАТЕЛЬНО нет. Напрашивающийся вариант — «задачу
+  // поставили, но не позвонили» — не работает: движок снимает задачу, когда клиент
+  // записался САМ (а также по VIP, «не беспокоить» и паузе после звонка). Проверено
+  // на боевой базе: в такой «контрольной» группе все до одного со статусом dismissed,
+  // то есть она целиком состоит из вернувшихся своим ходом. Сравнение с ней давало
+  // −14 п.п. и «звонки вредят» — артефакт отбора, а не факт.
+  // Честный ответ даст только эксперимент: часть задач случайно помечать «не звонить».
+  // Пока показываем то, что измеримо: абсолютный итог и сравнение типов задач между
+  // собой — там обе стороны из одной группы, и отбор их не искажает.
+  const called = measureGroup(`SELECT client_id, MIN(created_at) t0 FROM task_actions
+                               WHERE created_at >= date('now', ?) GROUP BY client_id`, [since]);
 
   const callsByMonth = db.prepare(`
     SELECT substr(created_at,1,7) m, COUNT(*) calls,
@@ -693,26 +698,25 @@ app.get('/api/analytics', (req, res) => {
     SELECT result, COUNT(*) n FROM task_actions
     WHERE created_at >= date('now', ?) GROUP BY result ORDER BY n DESC`).all(since);
 
-  const byAdmin = db.prepare(`
-    SELECT COALESCE(admin,'(не указан)') admin, COUNT(*) calls,
-           SUM(CASE WHEN result IN ('booked','coming') THEN 1 ELSE 0 END) won
-    FROM task_actions WHERE created_at >= date('now', ?)
-    GROUP BY admin ORDER BY calls DESC LIMIT 12`).all(since)
-    .map(r => ({ ...r, conv: r.calls ? Math.round((r.won / r.calls) * 100) : 0 }));
+  // По типам задач — единственное корректное сравнение здесь: обе стороны из числа
+  // обзвонённых, отбор одинаковый. Считаем не только конверсию в запись, но и реальный
+  // возврат: «записал» и «пришёл» — разные вещи.
+  const byType = db.prepare(`SELECT DISTINCT type FROM tasks WHERE type IS NOT NULL`).all()
+    .map(({ type }) => {
+      const m = measureGroup(`
+        SELECT ta.client_id, MIN(ta.created_at) t0
+        FROM task_actions ta JOIN tasks t ON t.id = ta.task_id
+        WHERE t.type = ? AND ta.created_at >= date('now', ?)
+        GROUP BY ta.client_id`, [type, since]);
+      return { type, label: TYPE_LABEL[type] || type, ...m };
+    })
+    .filter(t => t.people > 0)
+    .sort((a, b) => b.people - a.people);
 
-  const byType = db.prepare(`
-    SELECT t.type, COUNT(*) calls,
-           SUM(CASE WHEN ta.result IN ('booked','coming') THEN 1 ELSE 0 END) won
-    FROM task_actions ta JOIN tasks t ON t.id = ta.task_id
-    WHERE ta.created_at >= date('now', ?)
-    GROUP BY t.type ORDER BY calls DESC`).all(since)
-    .map(r => ({ ...r, label: TYPE_LABEL[r.type] || r.type,
-                 conv: r.calls ? Math.round((r.won / r.calls) * 100) : 0 }));
-
-  // Вклад программы: насколько обзвонённые возвращаются чаще контрольных.
-  const liftPp = called.people && control.people ? +(called.pct - control.pct).toFixed(1) : null;
-  const perHead = called.returned ? called.revenue / called.returned : 0;
-  const extraPeople = liftPp != null && liftPp > 0 ? Math.round(called.people * liftPp / 100) : 0;
+  const callsTotal = db.prepare(`SELECT COUNT(*) n FROM task_actions
+    WHERE created_at >= date('now', ?)`).get(since).n;
+  const wonTotal = byResult.filter(r => r.result === 'booked' || r.result === 'coming')
+    .reduce((s, r) => s + r.n, 0);
 
   res.json({
     months,
@@ -720,10 +724,9 @@ app.get('/api/analytics', (req, res) => {
     program: prog,
     base: { by_month: byMonth, cohorts, statuses },
     crm: {
-      called, control, lift_pp: liftPp,
-      extra_people: extraPeople,
-      extra_revenue: Math.round(extraPeople * perHead),
-      by_month: callsByMonth, by_result: byResult, by_admin: byAdmin, by_type: byType,
+      called, calls_total: callsTotal, won_total: wonTotal,
+      conv: callsTotal ? Math.round((wonTotal / callsTotal) * 100) : 0,
+      by_month: callsByMonth, by_result: byResult, by_type: byType,
     },
   });
 });

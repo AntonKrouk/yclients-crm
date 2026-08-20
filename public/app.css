@@ -456,10 +456,11 @@
   .an-hb-f.st-new{background:var(--line-strong)}
   .an-hb-v{color:var(--muted);white-space:nowrap;font-size:12px}
 
-  /* вывод под графиком сравнения — то, ради чего вкладка и делалась */
-  .an-concl{margin-top:16px;padding:12px 14px;font-size:13px;line-height:1.55;
-    border-left:2px solid var(--green);background:var(--green-soft);color:var(--ink-2)}
-  .an-concl.bad{border-left-color:var(--amber);background:var(--amber-soft)}
+  /* Оговорка под блоком: объясняет, почему тут нет цифры «программа принесла N».
+     Намеренно заметная — без неё её отсутствие читается как недоделка. */
+  .an-caveat{margin-top:14px;padding:14px 16px;font-size:12.5px;line-height:1.6;
+    border-left:2px solid var(--amber);background:var(--amber-soft);color:var(--ink-2)}
+  .an-caveat b{color:var(--ink);display:block;margin-bottom:5px}
 
   /* ── скрипты (шаблоны сообщений) ───────────────────────────────────────── */
   .sc-bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
