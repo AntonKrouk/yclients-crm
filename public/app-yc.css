@@ -1,0 +1,165 @@
+/* ── Альтернативная тема: светлый SaaS ───────────────────────────────────────
+   Эксперимент «как бы выглядело в стиле YClients и подобных панелей»:
+   холодный серый фон, белые карточки со скруглением и мягкой тенью, синий
+   акцент, никакой антиквы, спокойный регистр вместо разрядки капсом.
+
+   Подключается ТОЛЬКО при ?theme=yc и идёт ПОСЛЕ app.css, поэтому здесь
+   лежат исключительно переопределения. Основную тему файл не трогает.      */
+
+:root{
+  --paper:#F2F4F7;        /* холодный серый фон вместо тёплой бумаги */
+  --panel:#FFFFFF;
+  --panel2:#F7F8FA;
+  --line:#E4E7EC;
+  --line-strong:#D0D5DD;
+  --ink:#101828;
+  --ink-2:#475467;
+  --muted:#98A2B3;
+  --accent:#2E90FA;       /* синий вместо бирюзовой зелени */
+  --accent-2:#175CD3;
+  --accent-soft:#EFF8FF;
+  --gold:#B54708;
+  --green:#039855; --green-soft:#ECFDF3;
+  --red:#D92D20;   --red-soft:#FEF3F2;
+  --amber:#DC6803; --amber-soft:#FFFAEB;
+  --violet:#6938EF; --violet-soft:#F4F3FF;
+  --blue:#175CD3;  --blue-soft:#EFF8FF;
+  --radius:8px;
+  /* антиквы в этой теме нет вовсе — цифры и заголовки тем же гротеском */
+  --serif:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  --sp:20px;
+}
+
+body{font-size:14px}
+
+/* Разрядка капсом — фирменный приём основной темы. Здесь подписи обычные. */
+.eyebrow,.section-title,th,.tab,.stile .l,.cinfo .k,.kpi .l,.collap>summary,
+.vip-m,.sc-tag,.sc-cat,.bd-dow span,.sc-ai-hd,.fld,.admin-bar-lbl{
+  text-transform:none;letter-spacing:0;font-weight:500}
+.section-title{font-size:15px;font-weight:600;color:var(--ink);margin:28px 0 12px}
+
+/* ── шапка ─────────────────────────────────────────────────────────────── */
+header{background:#fff;border-bottom:1px solid var(--line);padding:12px 24px;
+  box-shadow:0 1px 2px rgba(16,24,40,.04)}
+.brand-tx{font-size:14px;letter-spacing:.02em;font-weight:600;text-transform:none}
+.brand-tx small{letter-spacing:0;text-transform:none;font-weight:400}
+.badge{border-radius:16px;padding:3px 10px;font-size:11px;letter-spacing:0;
+  text-transform:none;background:var(--panel2);border-color:var(--line)}
+.badge.live{background:var(--green-soft);border-color:transparent;color:var(--green)}
+
+/* вкладки — пилюли, а не сегменты в рамке */
+.tabs{border:none;gap:4px;background:transparent}
+.tab{border:none;border-radius:6px;padding:8px 14px;font-size:13px;color:var(--ink-2)}
+.tab:hover{background:var(--panel2);color:var(--ink)}
+.tab.active{background:var(--accent-soft);color:var(--accent-2);font-weight:600}
+
+/* ── кнопки ────────────────────────────────────────────────────────────── */
+.btn{border-radius:6px;padding:8px 14px;font-size:13px;letter-spacing:0;
+  border-color:var(--line-strong);background:#fff;font-weight:500;
+  box-shadow:0 1px 2px rgba(16,24,40,.05)}
+.btn:hover{background:var(--panel2);border-color:var(--line-strong)}
+.btn.primary{background:var(--accent);border-color:var(--accent);
+  box-shadow:0 1px 2px rgba(16,24,40,.08)}
+.btn.primary:hover{background:var(--accent-2);border-color:var(--accent-2)}
+
+/* ── карточки: тень и скругление вместо волосяных линеек ───────────────── */
+.card{border-radius:10px;box-shadow:0 1px 3px rgba(16,24,40,.08);border-color:var(--line)}
+.kpis{border:none;gap:12px;background:transparent}
+.kpi{border-radius:10px;box-shadow:0 1px 3px rgba(16,24,40,.08);border:1px solid var(--line)}
+.kpi .n{font-size:28px;font-weight:600;color:var(--ink)}
+.kpi .l{color:var(--muted);font-size:13px}
+
+/* Строки-списки в основной теме склеены встык (margin -1px). Здесь это
+   отдельные карточки с зазором — так выглядят панели этого типа. */
+.task,.vip-card,.bd-row,.sc-card,.ev{
+  border-radius:10px;margin-bottom:10px;border:1px solid var(--line);
+  box-shadow:0 1px 2px rgba(16,24,40,.05)}
+.task:hover,.vip-card:hover,.bd-row:hover{background:#fff;
+  box-shadow:0 2px 8px rgba(16,24,40,.10)}
+.vip-card,.sc-card{border-left-width:1px}
+.vip-card.dep,.vip-card.bd,.sc-card{border-left:1px solid var(--line)}
+
+/* заголовки имён — гротеск, не антиква */
+.vip-nm,.sc-t,.bd-who .nm,.dname,.modal-title{
+  font-family:var(--serif);font-weight:600;letter-spacing:-.01em}
+.modal-title{font-size:18px}
+.vip-nm,.sc-t{font-size:16px}
+.vip-m b,.stile .n{font-family:var(--serif);font-weight:600;color:var(--ink)}
+
+/* ── таблицы ───────────────────────────────────────────────────────────── */
+table{font-size:13px}
+th{background:var(--panel2);color:var(--muted);font-size:12px;font-weight:500}
+td{padding:12px 14px}
+
+/* ── поля ввода ────────────────────────────────────────────────────────── */
+input.search,textarea,.fld input,.fld select,.jr-filters select,.bd-cal-head select{
+  border-radius:6px;border-color:var(--line-strong);
+  box-shadow:0 1px 2px rgba(16,24,40,.05)}
+input.search:focus,textarea:focus,.fld input:focus,.fld select:focus{
+  border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.fld{color:var(--ink-2);font-size:13px}
+
+/* ── статусы и метки ───────────────────────────────────────────────────── */
+.status-badge,.branch-tag,.pill,.sc-tag,.dep-tag,.disc-tag{
+  border-radius:16px;letter-spacing:0;text-transform:none;font-size:11.5px}
+
+/* ── модальные окна ────────────────────────────────────────────────────── */
+.modal{border-radius:12px;border:none;background:#fff;
+  box-shadow:0 20px 24px -4px rgba(16,24,40,.10),0 8px 8px -4px rgba(16,24,40,.04)}
+.modal-overlay{background:rgba(16,24,40,.5)}
+
+/* ── карточка клиента ──────────────────────────────────────────────────── */
+.drawer{border-radius:12px 0 0 12px}
+.dact{border-radius:6px;letter-spacing:0;text-transform:none;font-size:13px}
+.dact.on{background:var(--accent);border-color:var(--accent)}
+.dtab{letter-spacing:0;text-transform:none;font-size:13px;font-weight:500}
+
+/* ── календарь дней рождения ───────────────────────────────────────────── */
+.bd-cell{border-radius:8px}
+.bd-cell.has{background:var(--accent-soft);border-color:#B2DDFF}
+.bd-cell .c{color:var(--accent-2);font-weight:600}
+.bd-cell.sel{background:var(--accent);border-color:var(--accent)}
+.bd-strip{background:var(--accent-soft);border-color:#B2DDFF;border-radius:8px}
+.bd-strip .ic{color:var(--accent-2)}
+.bd-note,.vip-note{border-radius:6px}
+
+/* ── чат с ИИ ──────────────────────────────────────────────────────────── */
+.sc-ai{background:var(--accent-soft);border-color:#B2DDFF;border-radius:10px}
+.sc-msg{border-radius:10px}
+.sc-msg.me{background:var(--accent);color:#fff}
+.sc-cat.on{background:var(--accent);border-color:var(--accent)}
+
+.empty{border-radius:10px}
+
+/* ── боковое меню ──────────────────────────────────────────────────────────
+   Шапка целиком переезжает в левую колонку. Разметку не трогаем: header уже
+   flex-контейнер, достаточно развернуть его в столбец, прижать к краю экрана
+   и расставить детям порядок. На узких экранах всё возвращается наверх —
+   боковое меню на телефоне съело бы половину ширины.                       */
+@media(min-width:900px){
+  header{position:fixed;left:0;top:0;bottom:0;width:224px;height:100vh;
+    flex-direction:column;align-items:stretch;gap:10px;padding:20px 14px;
+    border-bottom:none;border-right:1px solid var(--line);
+    box-shadow:none;overflow-y:auto}
+
+  .brand{order:0;padding:0 8px 16px;margin-bottom:4px;
+    border-bottom:1px solid var(--line)}
+  .brand-div{display:none}
+  .brand-logo{height:22px}
+
+  #mode{order:1;align-self:flex-start;margin-left:8px}
+  .branch-sel{order:2;width:100%}
+
+  .tabs{order:3;flex-direction:column;margin-left:0;width:100%;gap:2px;
+    overflow:visible}
+  .tab{width:100%;text-align:left;padding:9px 12px;border-right:none;
+    white-space:normal}
+
+  /* «Обновить» и «Подключить» — внизу колонки, отдельно от навигации */
+  #connectBtn{order:4;width:100%;margin-top:auto}
+  #syncBtn{order:5;width:100%}
+
+  main{margin-left:224px;max-width:1060px;padding:28px 32px 64px}
+  /* карточку клиента не трогаем: она выезжает справа и шириной 600px
+     до левого меню не достаёт даже на самом узком экране этой ветки */
+}

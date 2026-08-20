@@ -21,7 +21,7 @@ const DASH_PW = process.env.DASHBOARD_PASSWORD || '';
 const SECRET = process.env.SESSION_SECRET || DASH_PW || 'dev-secret';
 const CRON_SECRET = process.env.CRON_SECRET || '';
 const AUTH_ON = Boolean(DASH_PW);
-const PUBLIC_ASSETS = new Set(['/app.css', '/app.js', '/manifest.webmanifest', '/prive-logo.png',
+const PUBLIC_ASSETS = new Set(['/app.css', '/app-yc.css', '/app.js', '/manifest.webmanifest', '/prive-logo.png',
   '/favicon.ico', '/apple-touch-icon.png', '/apple-touch-icon-precomposed.png']);
 const sessionCookie = () => crypto.createHmac('sha256', SECRET).update('authorized-v1').digest('hex');
 
@@ -70,9 +70,16 @@ const assetHash = (f) => {
 const ASSET_V = assetHash('app.css') + assetHash('app.js');
 const INDEX_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8').split('__V__').join(ASSET_V);
 
+// Экспериментальная тема «светлый SaaS»: включается адресом /?theme=yc и просто
+// доклеивает второй файл стилей поверх основного. Ничего не запоминает и никак не
+// влияет на обычный вход — посмотрели и закрыли.
+const INDEX_HTML_YC = INDEX_HTML.replace('</head>',
+  `<link rel="stylesheet" href="/app-yc.css?v=${ASSET_V}"></head>`);
+
 // Саму страницу не кэшируем никогда — она лёгкая, а внутри лежат ссылки на версии файлов.
 app.get(['/', '/index.html'], (req, res) => {
-  res.set('Cache-Control', 'no-cache').type('html').send(INDEX_HTML);
+  res.set('Cache-Control', 'no-cache').type('html')
+    .send(req.query.theme === 'yc' ? INDEX_HTML_YC : INDEX_HTML);
 });
 app.use(express.static(PUBLIC_DIR, {
   maxAge: '365d',
