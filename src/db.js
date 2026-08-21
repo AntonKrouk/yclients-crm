@@ -141,7 +141,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(date);
 
   -- VIP-клиенты: постоянный ручной список. Живёт, пока админ сам не удалит запись.
-  -- Такие клиенты не должны попадать в выборки конструктора — их ведут персонально.
+  -- Таких клиентов ведут персонально, поэтому автоматические задачи по ним не ставятся
+  -- (см. rules.js). В выборках конструктора они видны и помечены бейджем списка.
   CREATE TABLE IF NOT EXISTS vip_clients (
     id         INTEGER PRIMARY KEY,
     client_id  INTEGER UNIQUE REFERENCES clients(id),
@@ -155,6 +156,16 @@ db.exec(`
   -- человек может быть и в VIP, и в «Депозите», и удаление из одного списка не должно
   -- выкидывать его из второго.
   CREATE TABLE IF NOT EXISTS deposit_clients (
+    id         INTEGER PRIMARY KEY,
+    client_id  INTEGER UNIQUE REFERENCES clients(id),
+    note       TEXT,
+    added_by   TEXT,
+    added_at   TEXT
+  );
+
+  -- «Алиса»: третий ручной список, устроенный так же. Отдельная таблица по той же
+  -- причине, что и у «Депозита»: списки независимы, человек может быть сразу в двух.
+  CREATE TABLE IF NOT EXISTS alice_clients (
     id         INTEGER PRIMARY KEY,
     client_id  INTEGER UNIQUE REFERENCES clients(id),
     note       TEXT,
@@ -331,4 +342,10 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_visits_branch ON visits(branch)');
   db.prepare('UPDATE visits SET company_id=?, branch=? WHERE company_id IS NULL').run(fid, fname);
 })();
 
-module.exports = { db, DATA_DIR };
+// Ручные постоянные списки: ключ попадает в URL (/api/vip), значение — имя таблицы.
+// Список объявлен здесь, рядом с самими таблицами, потому что нужен в двух местах:
+// server.js собирает по нему маршруты и вкладки, rules.js — исключает этих клиентов
+// из автоматических задач. Новый список = одна строка тут + CREATE TABLE выше.
+const MANUAL_LISTS = { vip: 'vip_clients', deposit: 'deposit_clients', alice: 'alice_clients' };
+
+module.exports = { db, DATA_DIR, MANUAL_LISTS };

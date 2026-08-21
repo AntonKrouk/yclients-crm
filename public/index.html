@@ -13,7 +13,19 @@
 <meta name="theme-color" content="#F6F4F0">
 </head>
 <body>
-<header>
+<!-- Мобильная шапка. Боковое меню на телефоне уезжает за левый край, и открывает его
+     бургер отсюда же. На десктопе этот блок скрыт: меню и так стоит слева. -->
+<div class="topbar">
+  <button class="burger" id="navBtn" aria-label="Меню" aria-expanded="false" aria-controls="nav">
+    <span></span><span></span><span></span>
+  </button>
+  <img class="brand-logo" src="/prive-logo.png" alt="Privé7">
+  <span class="topbar-tx">SPB CRM</span>
+  <span class="topbar-view" id="topbarView">Задачи</span>
+</div>
+<div class="nav-backdrop" id="navBackdrop"></div>
+
+<header id="nav">
   <div class="brand">
     <img class="brand-logo" src="/prive-logo.png" alt="Privé7">
     <span class="brand-div"></span>
@@ -29,6 +41,7 @@
     <button class="tab" data-view="clients">Клиенты</button>
     <button class="tab" data-view="vip">VIP</button>
     <button class="tab" data-view="deposit">Депозит</button>
+    <button class="tab" data-view="alice">Алиса</button>
     <button class="tab" data-view="bday">ДР</button>
     <button class="tab" data-view="scripts">Скрипты</button>
     <button class="tab" data-view="segments">Конструктор</button>
@@ -423,7 +436,8 @@
   <section id="view-vip" style="display:none">
     <div class="card">
       <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
-        Постоянный список. Клиент остаётся здесь, пока его не удалит администратор, и не попадает в выборки конструктора.
+        Постоянный список. Клиент остаётся здесь, пока его не удалит администратор. Автоматические задачи по нему
+        не ставятся — его ведут персонально; в выборках конструктора он виден и помечен бейджем списка.
       </div>
       <div class="vip-add">
         <input class="search" id="vipSearch" style="max-width:none" placeholder="Найти клиента по имени или телефону, чтобы добавить в VIP…">
@@ -434,12 +448,13 @@
     <div id="vipList" style="margin-top:14px"></div>
   </section>
 
-  <!-- ДЕПОЗИТ. Устроен ровно как VIP (см. MANUAL_LISTS в server.js и LIST_UI в app.js):
-       тот же поиск, та же карточка с заметкой, то же исключение из конструктора. -->
+  <!-- ДЕПОЗИТ. Устроен ровно как VIP (см. MANUAL_LISTS в src/db.js и LIST_UI в app.js):
+       тот же поиск, та же карточка с заметкой, то же снятие автоматических задач. -->
   <section id="view-deposit" style="display:none">
     <div class="card">
       <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
-        Постоянный список. Клиент остаётся здесь, пока его не удалит администратор, и не попадает в выборки конструктора.
+        Постоянный список. Клиент остаётся здесь, пока его не удалит администратор. Автоматические задачи по нему
+        не ставятся — его ведут персонально; в выборках конструктора он виден и помечен бейджем списка.
       </div>
       <div class="vip-add">
         <input class="search" id="depSearch" style="max-width:none" placeholder="Найти клиента по имени или телефону, чтобы добавить в «Депозит»…">
@@ -448,6 +463,23 @@
       <div class="seg-summary muted" id="depSummary" style="margin-top:12px"></div>
     </div>
     <div id="depList" style="margin-top:14px"></div>
+  </section>
+
+  <!-- АЛИСА. Третий ручной список, устроен ровно как VIP и «Депозит»
+       (см. MANUAL_LISTS в src/db.js и LIST_UI в app.js). -->
+  <section id="view-alice" style="display:none">
+    <div class="card">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
+        Постоянный список. Клиент остаётся здесь, пока его не удалит администратор. Автоматические задачи по нему
+        не ставятся — его ведут персонально; в выборках конструктора он виден и помечен бейджем списка.
+      </div>
+      <div class="vip-add">
+        <input class="search" id="aliSearch" style="max-width:none" placeholder="Найти клиента по имени или телефону, чтобы добавить в «Алису»…">
+        <div id="aliSuggest" class="vip-suggest"></div>
+      </div>
+      <div class="seg-summary muted" id="aliSummary" style="margin-top:12px"></div>
+    </div>
+    <div id="aliList" style="margin-top:14px"></div>
   </section>
 
   <!-- ДНИ РОЖДЕНИЯ: сверху именинники выбранного дня (по умолчанию сегодня),
@@ -563,6 +595,7 @@
     <div class="dacts">
       <button class="dact" id="vipToggle" onclick="toggleListFromDrawer('vip')"></button>
       <button class="dact" id="depToggle" onclick="toggleListFromDrawer('deposit')"></button>
+      <button class="dact" id="aliToggle" onclick="toggleListFromDrawer('alice')"></button>
       <button class="dact" id="scDrawerBtn" onclick="openScUse()"></button>
       <button class="dact dnc" id="dncToggle" onclick="toggleDnc()"></button>
     </div>

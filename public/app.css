@@ -65,9 +65,9 @@
     text-transform:uppercase;padding:2px 7px;color:var(--muted);border:1px solid var(--line);
     margin-left:7px;vertical-align:middle;white-space:nowrap}
 
-  /* Вкладок стало восемь: на узком десктопе они переставали помещаться и последняя
-     обрезалась под правым краем шапки. Панель скроллится по горизонтали, а сами вкладки
-     не сжимаются — иначе подписи ломались бы посреди слова. */
+  /* Вкладки живут в боковом меню столбцом (см. блок «боковое меню» в конце файла).
+     Горизонтальная прокрутка осталась запасным поведением: если тема или узкое окно
+     вернут панель наверх, последняя вкладка не обрежется под краем шапки. */
   .tabs{display:flex;gap:0;margin-left:auto;max-width:100%;border:1px solid var(--line);
     border-radius:var(--radius);overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}
   .tab{padding:9px 15px;background:transparent;color:var(--muted);border:none;cursor:pointer;
@@ -196,6 +196,13 @@
   .disc-tag{display:inline-block;font-size:10px;font-weight:600;padding:2px 7px;color:var(--gold);
     border:1px solid var(--gold);margin-left:6px;white-space:nowrap;vertical-align:middle;
     font-variant-numeric:tabular-nums}
+  /* «Этот человек в ручном списке». В выборках конструктора такие клиенты видны
+     наравне со всеми, но их ведут персонально — метка предупреждает об этом. */
+  .list-tag{display:inline-block;font-size:9.5px;font-weight:600;letter-spacing:.1em;
+    text-transform:uppercase;padding:2px 7px;margin-left:6px;white-space:nowrap;
+    vertical-align:middle;color:var(--gold);border:1px solid var(--gold)}
+  .list-tag.lt-deposit{color:var(--accent-2);border-color:var(--accent-2)}
+  .list-tag.lt-alice{color:var(--violet);border-color:var(--violet)}
 
   /* ── боковая карточка клиента ──────────────────────────────────────────── */
   .overlay{position:fixed;inset:0;background:rgba(23,22,20,.28);display:none;z-index:50}
@@ -416,6 +423,8 @@
      торцевой полосы и иконка у имени, чтобы вкладки не путались между собой. */
   .vip-card.dep{border-left-color:var(--accent)}
   .vip-card.dep .vip-star{color:var(--accent-2)}
+  .vip-card.lc-alice{border-left-color:var(--violet)}
+  .vip-card.lc-alice .vip-star{color:var(--violet)}
 
   /* ── аналитика ─────────────────────────────────────────────────────────── */
   .an-head{display:flex;align-items:center;justify-content:space-between;gap:16px;
@@ -705,8 +714,7 @@
   .act-failed{box-shadow:inset 0 0 0 2px var(--red)!important}
 
   @media(max-width:700px){
-    header{padding:12px 16px;gap:12px}
-    .tabs{margin-left:0;order:3;width:100%;overflow-x:auto}
+    /* шапка и вкладки на телефоне описаны ниже, в блоке бокового меню */
     main{padding:20px 16px 48px}
     .task{flex-direction:column;gap:14px}
     .actions{min-width:0}
@@ -728,6 +736,71 @@
     .bd-row{flex-direction:column;align-items:stretch;gap:10px}
     .bd-note{flex:1 1 auto;margin-left:0}
   }
+
+  /* ── боковое меню ────────────────────────────────────────────────────────
+     Навигация переехала из верхней панели в левую колонку: вкладок стало
+     одиннадцать, горизонтально они уже не помещались. Разметку это не меняет —
+     header просто разворачивается в столбец и прижимается к краю экрана.
+     На телефоне колонка съела бы половину ширины, поэтому там она уезжает
+     за левый край и выдвигается бургером из верхней панели.
+     Цвета и типографика — те же, что во всей теме: меняется только раскладка. */
+  :root{--nav-w:236px}
+  .topbar,.nav-backdrop{display:none}
+
+  @media(min-width:900px){
+    header{position:fixed;left:0;top:0;bottom:0;width:var(--nav-w);height:100vh;
+      flex-direction:column;align-items:stretch;flex-wrap:nowrap;gap:10px;padding:22px 14px;
+      border-bottom:none;border-right:1px solid var(--line);overflow-y:auto}
+    body{padding-left:var(--nav-w)}
+  }
+
+  @media(max-width:899px){
+    .topbar{display:flex;align-items:center;gap:11px;position:fixed;top:0;left:0;right:0;
+      height:56px;padding:0 14px;background:var(--paper);border-bottom:1px solid var(--line);
+      z-index:35}
+    .topbar .brand-logo{height:19px}
+    .topbar-tx{font-family:var(--serif);font-size:12.5px;letter-spacing:.2em;
+      text-transform:uppercase;line-height:1}
+    /* какая вкладка открыта — иначе, свернув меню, это неоткуда узнать */
+    .topbar-view{margin-left:auto;font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+      font-weight:600;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+      max-width:45%}
+    .burger{width:32px;height:32px;flex:none;display:flex;flex-direction:column;
+      justify-content:center;gap:5px;padding:0 5px;background:none;border:none;cursor:pointer}
+    .burger span{display:block;height:1.5px;background:var(--ink);
+      transition:transform .2s,opacity .2s}
+    .burger.on span:nth-child(1){transform:translateY(6.5px) rotate(45deg)}
+    .burger.on span:nth-child(2){opacity:0}
+    .burger.on span:nth-child(3){transform:translateY(-6.5px) rotate(-45deg)}
+
+    body{padding-top:56px}
+    body.nav-open{overflow:hidden}
+    header{position:fixed;left:0;top:0;bottom:0;width:270px;max-width:82vw;
+      height:100vh;height:100dvh;flex-direction:column;align-items:stretch;flex-wrap:nowrap;gap:10px;
+      padding:18px 14px;border-bottom:none;border-right:1px solid var(--line);
+      overflow-y:auto;z-index:40;transform:translateX(-100%);transition:transform .24s ease}
+    header.open{transform:none}
+    .nav-backdrop{display:block;position:fixed;inset:0;background:rgba(23,22,20,.4);
+      opacity:0;pointer-events:none;transition:opacity .24s;z-index:39}
+    .nav-backdrop.open{opacity:1;pointer-events:auto}
+  }
+
+  /* Порядок внутри колонки одинаков в обеих ветках (закреплённое меню и выдвижное):
+     бренд, режим, филиал, вкладки, а кнопки действий прижаты к низу. Медиазапроса
+     здесь намеренно нет — колонка есть на любой ширине, отличается только показ. */
+    .brand{order:0;padding:0 7px 15px;border-bottom:1px solid var(--line)}
+    .brand-div{display:none}
+    .brand-logo{height:22px}
+    #mode{order:1;align-self:flex-start;margin-left:7px}
+    .branch-sel{order:2;width:100%}
+    .tabs{order:3;flex-direction:column;margin-left:0;width:100%;overflow:visible}
+    .tab{width:100%;text-align:left;padding:10px 12px;white-space:nowrap;
+      border-right:none;border-bottom:1px solid var(--line)}
+    .tab:last-child{border-bottom:none}
+    /* «Подключить» и «Обновить» — внизу колонки, отдельно от навигации */
+    #connectBtn{order:4;width:100%;margin-top:auto}
+    #syncBtn{order:5;width:100%}
+
   @media(prefers-reduced-motion:reduce){
     *{transition-duration:.01ms !important;animation-duration:.01ms !important}
   }

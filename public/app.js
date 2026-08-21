@@ -266,18 +266,36 @@ function toast(msg,kind){
   toastTimer=setTimeout(()=>t.classList.remove('show'), kind==='bad'?5000:1800);
 }
 
+// --- Боковое меню ---
+// Навигация стоит слева колонкой. На телефоне колонка уезжает за край экрана и
+// выдвигается бургером из верхней панели; открытое меню блокирует прокрутку страницы
+// и закрывается затемнением, Escape'ом или выбором вкладки.
+function setNav(open){
+  $('#nav').classList.toggle('open',open);
+  $('#navBackdrop').classList.toggle('open',open);
+  $('#navBtn').classList.toggle('on',open);
+  $('#navBtn').setAttribute('aria-expanded',open?'true':'false');
+  document.body.classList.toggle('nav-open',open);
+}
+$('#navBtn').onclick=()=>setNav(!$('#nav').classList.contains('open'));
+$('#navBackdrop').onclick=()=>setNav(false);
+document.addEventListener('keydown',e=>{ if(e.key==='Escape' && $('#nav').classList.contains('open')) setNav(false); });
+
 // --- Вкладки ---
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   t.classList.add('active');
+  setNav(false);                              // на телефоне меню закрывается само
+  $('#topbarView').textContent=t.textContent; // в свёрнутом виде видно, где мы находимся
   const v=t.dataset.view;
-  ['tasks','calls','overview','clients','vip','deposit','bday','scripts','analytics','segments'].forEach(name=>$('#view-'+name).style.display = name===v?'':'none');
+  ['tasks','calls','overview','clients','vip','deposit','alice','bday','scripts','analytics','segments'].forEach(name=>$('#view-'+name).style.display = name===v?'':'none');
   if(v==='tasks') loadTasks();
   if(v==='calls') loadCalls();
   if(v==='overview') loadOverview();
   if(v==='clients') loadClients();
   if(v==='vip') loadList('vip');
   if(v==='deposit') loadList('deposit');
+  if(v==='alice') loadList('alice');
   if(v==='bday') loadBday();
   if(v==='scripts') loadScripts();
   if(v==='analytics') loadAnalytics();
@@ -1173,17 +1191,25 @@ async function loadClients(q=''){
     </tr>`).join('') || '<tr><td colspan="7" class="empty">Ничего не найдено</td></tr>';
 }
 
-// --- РУЧНЫЕ СПИСКИ: VIP и ДЕПОЗИТ ---
-// Постоянные ручные списки. Клиент живёт в списке, пока админ сам не удалит; из выборок
-// конструктора такие клиенты исключены — их ведут персонально.
+// --- РУЧНЫЕ СПИСКИ: VIP, ДЕПОЗИТ, АЛИСА ---
+// Постоянные ручные списки. Клиент живёт в списке, пока админ сам не удалит. Автоматические
+// задачи по таким клиентам не ставятся — их ведут персонально; в выборках конструктора они
+// при этом видны и помечены бейджем (поле lists у строки выборки).
 // Списки отличаются ТОЛЬКО названием и префиксом id-шников в разметке, поэтому вся механика
 // (поиск, добавление, заметка, удаление, кнопка в карточке клиента) написана один раз и
-// параметризуется slug'ом. На сервере ровно так же — см. MANUAL_LISTS в server.js.
+// параметризуется slug'ом. На сервере ровно так же — см. MANUAL_LISTS в src/db.js.
+// Новый список = строка здесь + строка в MANUAL_LISTS + секция в index.html.
 const LIST_UI = {
-  vip:     { pre:'vip', icon:'star',   name:'VIP',       inTx:'В VIP',      addTx:'— в VIP',        delTx:'Убрать из VIP' },
-  deposit: { pre:'dep', icon:'wallet', name:'«Депозит»', inTx:'В Депозите', addTx:'— в «Депозит»',  delTx:'Убрать из «Депозита»' },
+  vip:     { pre:'vip', icon:'star',   name:'VIP',       tag:'VIP',     intoTx:'в VIP',       inTx:'В VIP',      addTx:'— в VIP',       delTx:'Убрать из VIP' },
+  deposit: { pre:'dep', icon:'wallet', name:'«Депозит»', tag:'Депозит', intoTx:'в «Депозит»', inTx:'В Депозите', addTx:'— в «Депозит»', delTx:'Убрать из «Депозита»' },
+  alice:   { pre:'ali', icon:'user',   name:'«Алиса»',   tag:'Алиса',   intoTx:'в «Алису»',   inTx:'В «Алисе»',  addTx:'— в «Алису»',   delTx:'Убрать из «Алисы»' },
 };
-const listIds = { vip:new Set(), deposit:new Set() };
+const listIds = { vip:new Set(), deposit:new Set(), alice:new Set() };
+// Бейджи «этот клиент в ручном списке» для таблицы выборки конструктора.
+// Раньше таких клиентов там не показывали вовсе; теперь показываем, но помечаем,
+// чтобы админ видел, что человека уже ведут персонально.
+const listTags = slugs => (slugs||[]).map(sl => LIST_UI[sl]
+  ? ` <span class="list-tag lt-${sl}" title="Клиент в списке ${LIST_UI[sl].name} — задачи по нему не ставятся">${LIST_UI[sl].tag}</span>` : '').join('');
 
 async function loadList(slug){
   const u=LIST_UI[slug];
@@ -1193,11 +1219,11 @@ async function loadList(slug){
     ? `В списке: <b>${plural(r.count,'клиент','клиента','клиентов')}</b> · суммарно потратили ${rub(r.total_spent)}`
     : '';
   const box=$('#'+u.pre+'List');
-  if(!r.count){ box.innerHTML=`<div class="empty">Пока пусто. Найдите клиента в поле выше и добавьте его в ${u.name}.</div>`; return; }
+  if(!r.count){ box.innerHTML=`<div class="empty">Пока пусто. Найдите клиента в поле выше и добавьте его ${u.intoTx}.</div>`; return; }
   box.innerHTML=r.items.map(v=>{
     const br=(v.branches||[]).map(branchTag).join('');
     const n=v.next_visit;
-    return `<div class="vip-card ${slug==='deposit'?'dep':''}">
+    return `<div class="vip-card lc-${slug} ${slug!=='vip'?'dep':''}">
       <div class="left">
         <div class="vip-nm" onclick="openClient(${v.client_id})"><span class="vip-star">${ICON[u.icon]}</span> ${v.do_not_call?ICON.ban:''}${v.name||'Без имени'}${br}</div>
         <div class="tmeta"><span class="phone">${v.phone||'—'}</span>${v.top_master?' · мастер: '+v.top_master:''} · <span class="status-badge st-${v.status}">${v.status_label}</span></div>
@@ -1244,7 +1270,7 @@ async function addToList(slug,id,name){
 }
 async function removeFromList(slug,id,name){
   const u=LIST_UI[slug];
-  if(!confirm(`Убрать «${name}» из ${u.name}? Клиент снова начнёт попадать в выборки конструктора.`)) return;
+  if(!confirm(`Убрать «${name}» из ${u.name}? По клиенту снова начнут ставиться автоматические задачи.`)) return;
   await api(`/api/${slug}/${id}`,{method:'DELETE'});
   toast('Убран из списка');
   await loadList(slug);
@@ -1876,8 +1902,7 @@ async function openClient(id){
   const dt=$('#dncToggle');
   dt.classList.toggle('on', !!c.do_not_call);
   dt.innerHTML = ICON.ban + 'Не беспокоить';
-  renderListToggle('vip');
-  renderListToggle('deposit');
+  for(const slug of Object.keys(LIST_UI)) renderListToggle(slug);
   $('#scDrawerBtn').innerHTML = ICON.msg + 'Шаблон';
   renderDrawerBday(c.id);
 
@@ -2105,7 +2130,7 @@ async function runSegment(){
   tb.innerHTML = r.clients.map(c=>{
     const br=(c.branches&&c.branches.length>1)?c.branches.map(branchTag).join(''):branchTag(c.branch);
     return `<tr class="crow" onclick="openClient(${c.id})">
-      <td title="${(c.comment||'').replace(/"/g,'&quot;')}">${c.do_not_call?ICON.ban:''}${c.name||'—'}${br}${discTag(c.discount)}${depTag(c.deposit_balance)}</td>
+      <td title="${(c.comment||'').replace(/"/g,'&quot;')}">${c.do_not_call?ICON.ban:''}${c.name||'—'}${br}${listTags(c.lists)}${discTag(c.discount)}${depTag(c.deposit_balance)}</td>
       <td class="phone">${c.phone||'—'}</td>
       <td><b>${c.match_visits}</b></td>
       <td>${c.total_visits||0}</td>
@@ -2265,7 +2290,6 @@ $('#adminNewName').onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); add
 // Старт
 loadAdmins();
 loadBranches();
-// нужны listIds, чтобы кнопки «В VIP» / «В Депозите» в карточке клиента знали своё состояние
-loadList('vip');
-loadList('deposit');
+// нужны listIds, чтобы кнопки ручных списков в карточке клиента знали своё состояние
+for(const slug of Object.keys(LIST_UI)) loadList(slug);
 loadTasks();

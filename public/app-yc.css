@@ -132,34 +132,10 @@ input.search:focus,textarea:focus,.fld input:focus,.fld select:focus{
 .empty{border-radius:10px}
 
 /* ── боковое меню ──────────────────────────────────────────────────────────
-   Шапка целиком переезжает в левую колонку. Разметку не трогаем: header уже
-   flex-контейнер, достаточно развернуть его в столбец, прижать к краю экрана
-   и расставить детям порядок. На узких экранах всё возвращается наверх —
-   боковое меню на телефоне съело бы половину ширины.                       */
-@media(min-width:900px){
-  header{position:fixed;left:0;top:0;bottom:0;width:224px;height:100vh;
-    flex-direction:column;align-items:stretch;gap:10px;padding:20px 14px;
-    border-bottom:none;border-right:1px solid var(--line);
-    box-shadow:none;overflow-y:auto}
-
-  .brand{order:0;padding:0 8px 16px;margin-bottom:4px;
-    border-bottom:1px solid var(--line)}
-  .brand-div{display:none}
-  .brand-logo{height:22px}
-
-  #mode{order:1;align-self:flex-start;margin-left:8px}
-  .branch-sel{order:2;width:100%}
-
-  .tabs{order:3;flex-direction:column;margin-left:0;width:100%;gap:2px;
-    overflow:visible}
-  .tab{width:100%;text-align:left;padding:9px 12px;border-right:none;
-    white-space:normal}
-
-  /* «Обновить» и «Подключить» — внизу колонки, отдельно от навигации */
-  #connectBtn{order:4;width:100%;margin-top:auto}
-  #syncBtn{order:5;width:100%}
-
-  main{margin-left:224px;max-width:1060px;padding:28px 32px 64px}
-  /* карточку клиента не трогаем: она выезжает справа и шириной 600px
-     до левого меню не достаёт даже на самом узком экране этой ветки */
-}
+   Раскладку с левой колонкой и бургером на телефоне теперь задаёт основная
+   тема (app.css) — здесь остаётся только оформление: пилюли вместо сегментов
+   и никаких разделительных линеек между пунктами.                          */
+.tabs{border:none}
+.tab{border-bottom:none;border-radius:6px}
+header{box-shadow:none}
+.topbar{background:#fff;box-shadow:0 1px 2px rgba(16,24,40,.04)}

@@ -5,7 +5,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const express = require('express');
-const { db } = require('./src/db');
+const { db, MANUAL_LISTS } = require('./src/db');
 const sync = require('./src/sync');
 const telegram = require('./src/telegram');
 const yc = require('./src/yclients');
@@ -266,29 +266,36 @@ app.get('/api/services-list', (req, res) => {
   res.json(list);
 });
 
-// --- Ручные постоянные списки: VIP и Депозит ------------------------------------
-// Оба устроены одинаково: клиент лежит в списке, пока админ сам его не удалит.
-// Таких клиентов ведут персонально, поэтому из конструктора выборок они исключаются —
-// вместе со «вторыми» карточками того же человека в другом филиале.
+// --- Ручные постоянные списки: VIP, «Депозит», «Алиса» --------------------------
+// Все устроены одинаково: клиент лежит в списке, пока админ сам его не удалит.
+// Таких клиентов ведут персонально, поэтому АВТОМАТИЧЕСКИЕ ЗАДАЧИ по ним не ставятся
+// (см. rules.js). В выборках конструктора они, наоборот, ВИДНЫ — по прямому решению
+// Антона от 21.08.2026: раньше их выкидывали и оттуда, но админу нужно видеть человека
+// целиком, а помечает его бейдж списка (поле lists у строки выборки).
 // Различаются ТОЛЬКО таблицей и названием вкладки, поэтому маршруты собираются циклом:
 // так расхождение в поведении между списками невозможно в принципе.
-// Ключи объекта попадают в URL (/api/vip, /api/deposit), значения — имена таблиц;
-// и то и другое — константы из кода, в SQL пользовательский ввод не подставляется.
-const MANUAL_LISTS = { vip: 'vip_clients', deposit: 'deposit_clients' };
+// Сам перечень живёт в src/db.js рядом с CREATE TABLE — им пользуется ещё и rules.js.
+// Ключи объекта попадают в URL (/api/vip, /api/deposit, /api/alice), значения — имена
+// таблиц; и то и другое — константы из кода, в SQL пользовательский ввод не подставляется.
 
 const listRows = (table) => db.prepare(`
   SELECT v.client_id, v.note, v.added_by, v.added_at, c.name, c.phone, c.last_visit, c.visits_count
   FROM ${table} v JOIN clients c ON c.id = v.client_id
 `).all();
 
-// Ключи людей (по телефону), которые лежат в любом из ручных списков —
-// чтобы конструктор отсёк и вторую карточку того же человека
-function manualListPersonKeys() {
-  const keys = new Set();
-  for (const table of Object.values(MANUAL_LISTS)) {
-    for (const r of listRows(table)) keys.add(people.personKey({ id: r.client_id, phone: r.phone }));
+// Кто в каких ручных списках. Ключ — personKey (телефон): человек с карточками в двух
+// филиалах помечается целиком, иначе бейдж стоял бы только у одной его строки.
+function manualListsByPerson() {
+  const map = new Map();
+  for (const [slug, table] of Object.entries(MANUAL_LISTS)) {
+    for (const r of listRows(table)) {
+      const key = people.personKey({ id: r.client_id, phone: r.phone });
+      const arr = map.get(key) || [];
+      if (!arr.includes(slug)) arr.push(slug);
+      map.set(key, arr);
+    }
   }
-  return keys;
+  return map;
 }
 
 for (const [slug, table] of Object.entries(MANUAL_LISTS)) {
@@ -857,9 +864,9 @@ function querySegment(f = {}) {
   else if (discount === 'none') conds.push('COALESCE(c.discount_pct,0) = 0');
   if (discountFrom) { conds.push('COALESCE(c.discount_pct,0) >= ?'); params.push(discountFrom); }
 
-  // VIP и депозитных ведут персонально — в выборки конструктора они не попадают вовсе
-  conds.push('c.id NOT IN (SELECT client_id FROM vip_clients)');
-  conds.push('c.id NOT IN (SELECT client_id FROM deposit_clients)');
+  // Клиенты из ручных списков (VIP, «Депозит», «Алиса») из выборки НЕ исключаются:
+  // админу нужно видеть их наравне со всеми. От автоматических задач их защищает
+  // rules.js, а в таблице выборки они помечены бейджем списка.
 
   // Пресет NEW: первички для NPS-обзвана. Человек считается «новым», пока у него ровно один
   // визит И его ещё не обработал админ. Статус снимается сам — вторым визитом или любой
@@ -887,17 +894,17 @@ function querySegment(f = {}) {
   // порядок параметров: подзапросы SELECT → условия ON → условия WHERE
   const rows = db.prepare(sql).all(...goodParams, ...vParams, ...params);
 
-  // Склейка карточек одного человека + отсев тех, у кого VIP/депозитная карточка в другом филиале
-  const vipKeys = manualListPersonKeys();
+  // Склейка карточек одного человека. Ручные списки не отсеиваем, а помечаем.
+  const listsByPerson = manualListsByPerson();
   // «уже обработан админом» — есть хоть одна отметка звонка в ленте клиента
   const handled = isNew
     ? new Set(db.prepare('SELECT DISTINCT client_id FROM task_actions').all().map(r => r.client_id))
     : null;
   const merged = [];
   for (const cards of people.groupByPerson(rows)) {
-    if (vipKeys.has(people.personKey(cards[0]))) continue;
     if (isNew && cards.some(c => handled.has(c.id))) continue;
     const base = { ...cards[0] };
+    base.lists = listsByPerson.get(people.personKey(cards[0])) || [];
     if (cards.length > 1) {
       base.cards = cards.length;
       base.branches = [...new Set(cards.map(c => c.branch).filter(Boolean))];
