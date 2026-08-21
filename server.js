@@ -98,7 +98,28 @@ const TYPE_LABEL = {
 
 // --- Служебное ---------------------------------------------------------------
 
-app.get('/api/health', (req, res) => res.json({ ok: true, mode: yc.isDemo() ? 'demo' : 'live' }));
+// Какая версия кода сейчас работает. Считается ОДИН раз при старте — значит, показывает
+// именно то, что было выкачено на момент последнего рестарта, а не то, что лежит в папке
+// прямо сейчас. Нужно, чтобы после `git pull` можно было убедиться, что приехало ожидаемое:
+// /api/health открыт без пароля, а все прочие пути за логином отдают 401 даже для
+// несуществующих маршрутов — по ним версию на сервере не определить.
+// Если git недоступен (выкачено архивом, вырезана .git) — просто 'unknown', не падаем.
+const VERSION = (() => {
+  try {
+    const run = (a) => require('node:child_process')
+      .execSync(`git ${a}`, { cwd: __dirname, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return { commit: run('rev-parse --short HEAD'), committed_at: run('log -1 --format=%cI') };
+  } catch { return { commit: 'unknown', committed_at: null }; }
+})();
+const STARTED_AT = new Date().toISOString();
+
+app.get('/api/health', (req, res) => res.json({
+  ok: true,
+  mode: yc.isDemo() ? 'demo' : 'live',
+  version: VERSION.commit,
+  committed_at: VERSION.committed_at,
+  started_at: STARTED_AT,
+}));
 
 // Синхронизация с YClients (или демо) + генерация задач + уведомление в Telegram
 app.post('/api/sync', async (req, res) => {
