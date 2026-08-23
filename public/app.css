@@ -113,6 +113,8 @@
     border:1px solid var(--red);color:var(--red);background:var(--paper)}
   .cb-badge svg{width:11px;height:11px}
   .cb-badge.later{border-color:var(--line-strong);color:var(--muted);background:var(--panel2)}
+  /* клиент записался сам — зелёным: строка не требует звонка */
+  .cb-badge.booked{border-color:var(--green);color:var(--green);background:var(--green-soft)}
   /* участник списка: срок перезвона наступил — красным, назначен на потом — приглушённо */
   .member.callback-today{background:var(--red-soft);box-shadow:inset 3px 0 0 var(--red)}
   .member.later{opacity:.7}
@@ -445,6 +447,11 @@
   .an-b1.partial{fill:var(--line-strong);opacity:.55}
   .an-line{fill:none;stroke:var(--gold);stroke-width:2}
   .an-dot{fill:var(--gold)}
+  /* Подпись доли у точки. Обводка цветом карточки — чтобы цифра читалась,
+     когда точка приходится на тёмный столбец. */
+  .an-dotv{fill:var(--gold);font-size:10.5px;font-weight:600;font-family:var(--sans);
+    paint-order:stroke;stroke:var(--panel);stroke-width:3px;stroke-linejoin:round}
+  .an-dotv.sm{font-size:9.5px;stroke-width:2.5px}
   .an-leg{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;font-size:11.5px;color:var(--muted)}
   .an-leg i{display:inline-block;width:10px;height:10px;margin-right:6px;vertical-align:-1px}
   .an-leg i.an-b1{background:var(--accent)}
@@ -617,6 +624,8 @@
   .jr-note{font-size:13px;color:var(--ink-2);margin-top:7px}
   .jr-booking{margin-top:9px;font-size:12.5px;border-left:2px solid var(--accent);
     padding:4px 0 4px 12px;color:var(--ink-2)}
+  /* клиент записался, хотя звонок кончился ничем — зелёным, чтобы не путать с итогом звонка */
+  .jr-booking.now{border-left-color:var(--green);color:var(--green)}
   .jr-when{flex:0 0 auto;font-size:11px;color:var(--muted);text-align:right;white-space:nowrap;letter-spacing:.04em}
 
   /* ── панель админа ─────────────────────────────────────────────────────── */

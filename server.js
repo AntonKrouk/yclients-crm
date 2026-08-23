@@ -1065,11 +1065,17 @@ app.get('/api/lists/:id/members', (req, res) => {
              (m.status='snoozed' AND date(m.callback_at) <= date('now','localtime')) DESC,
              (m.status='snoozed') ASC,
              m.match_visits DESC`).all(req.params.id);
+  // Клиент мог записаться САМ уже после звонка — тогда строка «не звонить до …» врёт:
+  // админ видит паузу там, где человек уже в журнале. Подтягиваем его ближайшую запись
+  // (по всем карточкам человека: записаться он мог и в соседнем филиале).
+  const upcoming = upcomingByPerson();
+
   // отложенный на сегодня (или просроченный) участник — как красная задача на дашборде
   const today = new Date().toISOString().slice(0, 10);
   res.json(rows.map(r => ({
     ...r,
     callback_today: !!(r.status === 'snoozed' && r.callback_at && r.callback_at.slice(0, 10) <= today),
+    booking: bookingOf(upcoming, r),
   })));
 });
 
@@ -1645,6 +1651,23 @@ app.get('/api/clients', (req, res) => {
   res.json(rows);
 });
 
+// Ближайшая будущая запись КАЖДОГО человека, по ключу человека (телефон), а не карточки:
+// записаться он мог в соседнем филиале, где у него отдельный client_id. Один запрос на весь
+// экран — журнал и списки перерисовываются часто, и строка-за-строкой здесь была бы дорогой.
+function upcomingByPerson() {
+  const map = new Map();
+  for (const v of db.prepare(`
+    SELECT v.date, v.service, v.staff, v.branch, c.id, c.phone
+    FROM visits v JOIN clients c ON c.id = v.client_id
+    WHERE v.status = 'upcoming' AND v.date >= datetime('now')
+    ORDER BY v.date ASC`).all()) {
+    const k = people.personKey(v);
+    if (!map.has(k)) map.set(k, { date: v.date, service: v.service, staff: v.staff, branch: v.branch });
+  }
+  return map;
+}
+const bookingOf = (map, row) => map.get(people.personKey({ id: row.client_id, phone: row.phone })) || null;
+
 // --- Человек = все его карточки ------------------------------------------------
 // В YClients у клиента отдельная карточка в каждом филиале (разный id, один телефон).
 // Карточка в дашборде должна показывать человека целиком, иначе визиты и деньги
@@ -1909,15 +1932,15 @@ function journalHandler(scope) {
     LIMIT 300
   `).all(...args);
 
-  // ближайшая будущая запись клиента (для тех, кого записали)
-  const upStmt = db.prepare(`
-    SELECT date, service, staff, branch FROM visits
-    WHERE client_id = ? AND status = 'upcoming' AND date >= datetime('now')
-    ORDER BY date ASC LIMIT 1`);
-
+  // Запись подтягиваем к ЛЮБОМУ результату, а не только к «записал». Смысл разный:
+  // у «записал» это итог разговора, у «отказа» и «просил не звонить» — то, что человек
+  // всё-таки в журнале. Второе показываем отдельной пометкой: результат звонка — история,
+  // переписывать его задним числом нельзя, а текущее состояние админу знать надо.
+  const upcoming = upcomingByPerson();
   const items = rows.map(r => {
-    const booking = (r.result === 'booked') ? upStmt.get(r.client_id) : null;
-    return { ...r, booking: booking || null };
+    const up = bookingOf(upcoming, r);
+    const own = r.result === 'booked';
+    return { ...r, booking: own ? up : null, booked_now: own ? null : up };
   });
   res.json({ days, count: items.length, items });
   };

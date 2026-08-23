@@ -724,6 +724,9 @@ let snoozeCtx=null;
 const pad2 = n => String(n).padStart(2,'0');
 const ymd  = d => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
 const DOW  = ['воскресенье','понедельник','вторник','среду','четверг','пятницу','субботу'];
+// «2026-10-17» → «17.10». Для «не звонить до …» день недели из whenLabel не нужен:
+// фраза складывалась в «не звонить до в субботу, 17.10».
+const dateLabel = d => { const [, m, dd] = String(d).split(' ')[0].split('-'); return `${dd}.${m}`; };
 // «2026-08-12 15:00» → «во вторник, 12.08 в 15:00»
 function whenLabel(until){
   const [d,t]=until.split(' ');
@@ -878,10 +881,16 @@ function renderMember(listId,m){
   // отложенный на потом участник помечается сроком; наступил срок — карточка красная
   // у списков, обработанных до появления сроков, callback_at пуст — такие показываем обычными
   const later = m.status==='snoozed' && !!m.callback_at && !m.callback_today;
-  return `<div class="member ${done?'done':''}${m.callback_today?' callback-today':''}${later?' later':''}" id="mem-${m.member_id}">
+  // Клиент мог записаться сам уже после разговора. Тогда бейдж записи вытесняет и «перезвонить»,
+  // и «не звонить до …»: звонить больше незачем, а старая пометка вводила админа в заблуждение.
+  // У строк, где админ сам отметил «записал/придёт», записи не дублируем — это уже видно.
+  const b = m.booking, selfBooked = !!b && !(done && (m.result==='booked'||m.result==='coming'));
+  const cbShown = !selfBooked && m.callback_today;
+  return `<div class="member ${done?'done':''}${cbShown?' callback-today':''}${later&&!selfBooked?' later':''}" id="mem-${m.member_id}">
     <div class="left">
-      ${m.callback_today?`<span class="cb-badge">${ICON.clock}перезвонить${cbTime(m.callback_at)}</span>`:''}
-      ${later?`<span class="cb-badge later">${ICON.clock}${m.result==='no_calls'?'не звонить до':'перезвонить'} ${whenLabel(m.callback_at)}</span>`:''}
+      ${selfBooked?`<span class="cb-badge booked">${ICON.check}записан ${fmtDT(b.date)}${b.staff?' · '+esc(b.staff):''}</span>`:''}
+      ${cbShown?`<span class="cb-badge">${ICON.clock}перезвонить${cbTime(m.callback_at)}</span>`:''}
+      ${later&&!selfBooked?`<span class="cb-badge later">${ICON.clock}${m.result==='no_calls'?`не звонить до ${dateLabel(m.callback_at)}`:`перезвонить ${whenLabel(m.callback_at)}`}</span>`:''}
       <div class="tname" onclick="openClient(${m.client_id})">${m.name||'Без имени'}</div>
       <div class="tmeta"><span class="phone">${m.phone||'—'}</span> · совпадений: ${m.match_visits} · ${rub(m.match_spent)}${m.favorite_staff?' · '+m.favorite_staff:''}</div>
       ${done?`<div class="treason">✓ ${R[m.result]||'обработан'}${m.note?' — «'+m.note+'»':''} · ${m.admin||''}
@@ -993,14 +1002,19 @@ async function renderJournal(base,days,result,box){
   box.innerHTML=r.items.map(it=>{
     const b=it.booking;
     const booking=b?`<div class="jr-booking">Записан: ${b.service||'услуга'} · ${b.staff||'мастер'} · ${fmtDT(b.date)}${b.branch?' · '+b.branch:''}</div>`:'';
+    // Разговор кончился ничем («отказ», «просил не звонить», «не ответил»), а человек всё-таки
+    // в журнале. Результат звонка не трогаем — это история; запись показываем рядом, иначе
+    // владелец видит «просил не звонить» и не знает, что клиент давно записан.
+    const nb=it.booked_now;
+    const nowBooked=nb?`<div class="jr-booking now">Сейчас записан: ${fmtDT(nb.date)}${nb.staff?' · '+esc(nb.staff):''}${nb.branch?' · '+esc(nb.branch):''}</div>`:'';
     return `<div class="jr-item">
       <span class="jr-res ${it.result||'no_answer'}">${JR_RES[it.result]||'звонок'}</span>
       <div class="jr-body">
         <div class="jr-name" onclick="openClient(${it.client_id})">${it.name||'Без имени'}${branchTag(it.branch)}</div>
-        ${it.callback_at?`<div class="jr-callback">${ICON.clock}${it.result==='no_calls'?'не звонить до':'набрать'} ${whenLabel(it.callback_at)}</div>`:''}
+        ${it.callback_at?`<div class="jr-callback">${ICON.clock}${it.result==='no_calls'?`не звонить до ${dateLabel(it.callback_at)}`:`набрать ${whenLabel(it.callback_at)}`}</div>`:''}
         <div class="jr-meta"><span class="phone">${it.phone||'—'}</span> · звонил: <b>${it.admin||'—'}</b></div>
         ${it.note?`<div class="jr-note">«${it.note}»</div>`:''}
-        ${booking}
+        ${booking}${nowBooked}
       </div>
       <div class="jr-when">${fmtDT(it.created_at)}
         <button class="jr-fix" title="Изменить результат — клиент передумал"
@@ -1361,9 +1375,18 @@ function chartBarsLine(rows, barKey, lineKey, lineMax=100){
         <title>${mLabel(r.m)}: ${r[barKey]}${r.partial?' (период не закрыт)':''}</title></rect>
       <text x="${x+w/2}" y="${H-10}" class="an-ax" text-anchor="middle">${mLabel(r.m)}</text>`;
   }).join('');
-  const pts=rows.map((r,i)=>`${44+bw*i+bw/2},${bottom-(r[lineKey]||0)*(bottom-top)/lineMax}`).join(' ');
-  const dots=rows.map((r,i)=>`<circle cx="${44+bw*i+bw/2}" cy="${bottom-(r[lineKey]||0)*(bottom-top)/lineMax}" r="3.5" class="an-dot">
-      <title>${mLabel(r.m)}: ${r[lineKey]||0}%</title></circle>`).join('');
+  const lineY = r => bottom-(r[lineKey]||0)*(bottom-top)/lineMax;
+  const pts=rows.map((r,i)=>`${44+bw*i+bw/2},${lineY(r)}`).join(' ');
+  // Цифру доли пишем прямо у точки: левая шкала отмеряет столбцы (штуки), а не проценты,
+  // и без подписи линию приходится читать на глаз. У верхнего края подпись уводим под точку,
+  // чтобы она не вылезала за пределы графика.
+  const small = rows.length>12 ? ' sm' : '';
+  const dots=rows.map((r,i)=>{
+    const x=44+bw*i+bw/2, y=lineY(r), above = y-top>16;
+    return `<circle cx="${x}" cy="${y}" r="3.5" class="an-dot">
+      <title>${mLabel(r.m)}: ${r[lineKey]||0}%</title></circle>
+      <text x="${x}" y="${above?y-9:y+16}" class="an-dotv${small}" text-anchor="middle">${r[lineKey]||0}%</text>`;
+  }).join('');
   return svgWrap(H, grid(max,top,bottom)+bars+`<polyline points="${pts}" class="an-line"/>`+dots);
 }
 
