@@ -717,14 +717,19 @@ app.get('/api/analytics', (req, res) => {
   const callsByMonth = db.prepare(`
     SELECT substr(created_at,1,7) m, COUNT(*) calls,
            COUNT(DISTINCT client_id) clients,
-           SUM(CASE WHEN result IN ('booked','coming') THEN 1 ELSE 0 END) won
+           SUM(CASE WHEN result IN ('booked','coming') OR COALESCE(auto_booked,0)=1 THEN 1 ELSE 0 END) won
     FROM task_actions WHERE created_at >= date('now', ?)
     GROUP BY m ORDER BY m`).all(since)
     .map(r => ({ ...r, conv: r.calls ? Math.round((r.won / r.calls) * 100) : 0 }));
 
+  // «Записан» здесь — по тому же правилу, что и в журнале: отметка админа или запись
+  // клиента в течение окна после звонка. Иначе разбивка по результатам противоречила бы
+  // и графику рядом, и строкам в «Обзоре».
   const byResult = db.prepare(`
-    SELECT result, COUNT(*) n FROM task_actions
-    WHERE created_at >= date('now', ?) GROUP BY result ORDER BY n DESC`).all(since);
+    SELECT CASE WHEN COALESCE(auto_booked,0)=1 AND result NOT IN ('booked','coming')
+                THEN 'booked' ELSE result END AS result,
+           COUNT(*) n FROM task_actions
+    WHERE created_at >= date('now', ?) GROUP BY 1 ORDER BY n DESC`).all(since);
 
   // По типам задач — единственное корректное сравнение здесь: обе стороны из числа
   // обзвонённых, отбор одинаковый. Считаем не только конверсию в запись, но и реальный
@@ -1657,16 +1662,32 @@ app.get('/api/clients', (req, res) => {
 function upcomingByPerson() {
   const map = new Map();
   for (const v of db.prepare(`
-    SELECT v.date, v.service, v.staff, v.branch, c.id, c.phone
+    SELECT v.date, v.service, v.staff, v.branch, v.booked_at, c.id, c.phone
     FROM visits v JOIN clients c ON c.id = v.client_id
     WHERE v.status = 'upcoming' AND v.date >= datetime('now')
     ORDER BY v.date ASC`).all()) {
     const k = people.personKey(v);
-    if (!map.has(k)) map.set(k, { date: v.date, service: v.service, staff: v.staff, branch: v.branch });
+    if (!map.has(k)) map.set(k, { next: null, made: [] });
+    const e = map.get(k);
+    if (!e.next) e.next = { date: v.date, service: v.service, staff: v.staff, branch: v.branch };
+    // держим ВСЕ моменты записи, а не только ближайший визит: человек мог записаться
+    // на октябрь давно, а на завтра — сегодня после звонка; засчитывать надо второе
+    e.made.push(new Date(v.booked_at || v.date).getTime());
   }
   return map;
 }
-const bookingOf = (map, row) => map.get(people.personKey({ id: row.client_id, phone: row.phone })) || null;
+const personEntry = (map, row) => map.get(people.personKey({ id: row.client_id, phone: row.phone })) || null;
+const bookingOf = (map, row) => personEntry(map, row)?.next || null;
+// Записался ли человек в окне после звонка — по БУДУЩИМ записям, которые уже лежат в базе.
+// Это даёт мгновенный статус: как только запись доехала (синк или создание из дашборда),
+// строка звонка становится «Записан», не дожидаясь пересчёта флага. Прошлые визиты
+// закрывает сам флаг auto_booked — он считается синком и не пропадает после визита.
+function bookedWithinWindow(map, row, callAt) {
+  const e = personEntry(map, row);
+  if (!e || !callAt) return false;
+  const t0 = new Date(callAt).getTime();
+  return e.made.some(t => t >= t0 && t <= t0 + sync.ATTRIBUTION_DAYS * 86400000);
+}
 
 // --- Человек = все его карточки ------------------------------------------------
 // В YClients у клиента отдельная карточка в каждом филиале (разный id, один телефон).
@@ -1861,21 +1882,34 @@ app.get('/api/stats', (req, res) => {
 
   // Обзор — про АВТОЗАДАЧИ. Звонки по спискам конструктора (task_id IS NULL) считаются
   // отдельно, на вкладке «Обзвоны», иначе одна работа размывала бы показатели другой.
-  const todayActions = db.prepare(`
-    SELECT a.result, COUNT(*) n FROM task_actions a JOIN clients c ON c.id = a.client_id
-    WHERE a.task_id IS NOT NULL AND date(a.created_at) = date('now') ${bw} GROUP BY a.result
-  `).all(...bArgs);
-  const resultMap = {};
-  for (const r of todayActions) resultMap[r.result] = r.n;
-
-  const byAdmin = db.prepare(`
-    SELECT COALESCE(a.admin,'—') admin,
-           COUNT(*) total,
-           SUM(CASE WHEN a.result='booked' THEN 1 ELSE 0 END) booked
+  // Считаем в JS, а не в SQL: «записан» здесь — это отметка админа ИЛИ запись клиента
+  // в течение окна после звонка, а второе живёт в будущих визитах и в флаге auto_booked.
+  // Строк за день десятки, так что разница в цене незаметна, зато цифра в таблице
+  // всегда совпадает со статусом в журнале под ней.
+  const upcomingToday = upcomingByPerson();
+  const todayRows = db.prepare(`
+    SELECT a.result, COALESCE(a.auto_booked,0) AS auto_booked, a.created_at,
+           COALESCE(a.admin,'—') AS admin, c.id AS client_id, c.phone
     FROM task_actions a JOIN clients c ON c.id = a.client_id
     WHERE a.task_id IS NOT NULL AND date(a.created_at) = date('now') ${bw}
-    GROUP BY a.admin ORDER BY total DESC
   `).all(...bArgs);
+  const wonNow = (r) => r.result === 'booked' || r.result === 'coming'
+    || r.auto_booked === 1 || bookedWithinWindow(upcomingToday, r, r.created_at);
+
+  const resultMap = {};
+  for (const r of todayRows) {
+    const key = wonNow(r) ? 'booked' : r.result;
+    resultMap[key] = (resultMap[key] || 0) + 1;
+  }
+
+  const admins = new Map();
+  for (const r of todayRows) {
+    if (!admins.has(r.admin)) admins.set(r.admin, { admin: r.admin, total: 0, booked: 0 });
+    const a = admins.get(r.admin);
+    a.total++;
+    if (wonNow(r)) a.booked++;
+  }
+  const byAdmin = [...admins.values()].sort((a, b) => b.total - a.total);
 
   // «Обработано сегодня» = по скольким задачам админ отчитался, включая «перезвонить»
   // и «не ответил»: раньше считались только закрытые, и половина работы пропадала.
@@ -1920,7 +1954,7 @@ function journalHandler(scope) {
   // К «перезвонить» и «не ответил» показываем ДОГОВОРЁННОСТЬ: когда именно набрать снова.
   // Срок живёт в задаче (due_date) или в строке списка (callback_at) — берём тот, что есть.
   const rows = db.prepare(`
-    SELECT a.id, a.created_at, a.admin, a.result, a.note,
+    SELECT a.id, a.created_at, a.admin, a.result, a.note, COALESCE(a.auto_booked,0) AS auto_booked,
            COALESCE(t.due_date, m.callback_at) AS callback_at,
            c.id AS client_id, c.name, c.phone, c.branch
     FROM task_actions a
@@ -1939,8 +1973,20 @@ function journalHandler(scope) {
   const upcoming = upcomingByPerson();
   const items = rows.map(r => {
     const up = bookingOf(upcoming, r);
-    const own = r.result === 'booked';
-    return { ...r, booking: own ? up : null, booked_now: own ? null : up };
+    const own = r.result === 'booked' || r.result === 'coming';
+    // auto — клиент записался сам в течение окна после звонка. result оставляем как есть
+    // (он нужен диалогу «изменить» и показывает, что админ отметил своей рукой),
+    // а показывать и считать велено «Записан».
+    const auto = !own && (r.auto_booked === 1 || bookedWithinWindow(upcoming, r, r.created_at));
+    return {
+      ...r,
+      shown_result: (own || auto) ? 'booked' : r.result,
+      auto_booked: auto ? 1 : 0,
+      booking: own || auto ? up : null,
+      // «сейчас записан» оставляем только для записей ВНЕ окна: внутри окна об этом
+      // уже говорит сам статус, дублировать незачем
+      booked_now: (own || auto) ? null : up,
+    };
   });
   res.json({ days, count: items.length, items });
   };

@@ -1006,9 +1006,9 @@ async function renderJournal(base,days,result,box){
     // в журнале. Результат звонка не трогаем — это история; запись показываем рядом, иначе
     // владелец видит «просил не звонить» и не знает, что клиент давно записан.
     const nb=it.booked_now;
-    const nowBooked=nb?`<div class="jr-booking now">Сейчас записан: ${fmtDT(nb.date)}${nb.staff?' · '+esc(nb.staff):''}${nb.branch?' · '+esc(nb.branch):''}</div>`:'';
+    const nowBooked=nb?`<div class="jr-booking now">Записан позже: ${fmtDT(nb.date)}${nb.staff?' · '+esc(nb.staff):''}${nb.branch?' · '+esc(nb.branch):''}</div>`:'';
     return `<div class="jr-item">
-      <span class="jr-res ${it.result||'no_answer'}">${JR_RES[it.result]||'звонок'}</span>
+      <span class="jr-res ${it.shown_result||it.result||'no_answer'}">${it.auto_booked?'Записан':(JR_RES[it.shown_result||it.result]||'звонок')}</span>
       <div class="jr-body">
         <div class="jr-name" onclick="openClient(${it.client_id})">${it.name||'Без имени'}${branchTag(it.branch)}</div>
         ${it.callback_at?`<div class="jr-callback">${ICON.clock}${it.result==='no_calls'?`не звонить до ${dateLabel(it.callback_at)}`:`набрать ${whenLabel(it.callback_at)}`}</div>`:''}

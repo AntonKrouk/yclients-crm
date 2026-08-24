@@ -3,6 +3,7 @@
 const { db } = require('./db');
 const yc = require('./yclients');
 const rules = require('./rules');
+const people = require('./people');
 
 const DAY = 86400000;
 
@@ -41,6 +42,9 @@ function normalizeRecord(r) {
     staff,
     cost,
     status,
+    // Когда запись СОЗДАЛИ. YClients отдаёт это отдельным полем; по дате визита
+    // отличить «записался после звонка» от «был записан и так» невозможно.
+    booked_at: r.create_date ? iso(r.create_date) : null,
   };
 }
 
@@ -136,18 +140,20 @@ const upsertClient = db.prepare(`
     birth_date=COALESCE(excluded.birth_date, clients.birth_date)
 `);
 const upsertVisitStmt = db.prepare(`
-  INSERT INTO visits (yclients_record_id, client_id, company_id, branch, date, service, staff, cost, status, service_category)
-  VALUES (?,?,?,?,?,?,?,?,?,?)
+  INSERT INTO visits (yclients_record_id, client_id, company_id, branch, date, service, staff, cost, status, service_category, booked_at)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?)
   ON CONFLICT(yclients_record_id) DO UPDATE SET
     client_id=excluded.client_id, company_id=excluded.company_id, branch=excluded.branch,
     date=excluded.date, service=excluded.service, staff=excluded.staff, cost=excluded.cost,
-    status=excluded.status, service_category=excluded.service_category
+    status=excluded.status, service_category=excluded.service_category,
+    -- момент создания не перезаписываем пустотой: старые записи приехали без него
+    booked_at=COALESCE(excluded.booked_at, visits.booked_at)
 `);
 // Обёртка: категорию услуги считаем сами по прайс-листу, вызывающим об этом знать не нужно.
 const upsertVisit = {
-  run(recId, clientId, cid, branch, date, service, staff, cost, status) {
+  run(recId, clientId, cid, branch, date, service, staff, cost, status, bookedAt = null) {
     return upsertVisitStmt.run(recId, clientId, cid, branch, date, service, staff, cost, status,
-      categoriesOf(service));
+      categoriesOf(service), bookedAt);
   },
 };
 
@@ -254,7 +260,7 @@ function syncBranch(clients, records, company, now) {
       c.birth_date ? normBirthDate(c.birth_date) : null, now);
     const local = getClientLocalId.get(c.id);
     for (const v of visits) {
-      upsertVisit.run(v.yclients_record_id, local.id, cid, company.name, v.date, v.service, v.staff, v.cost, v.status);
+      upsertVisit.run(v.yclients_record_id, local.id, cid, company.name, v.date, v.service, v.staff, v.cost, v.status, v.booked_at);
       visitsN++;
     }
     for (const g of goodsByClient.get(c.id) || []) {
@@ -295,11 +301,55 @@ async function importRecord(cid, branch, recordId) {
   const local = getClientLocalId.get(v.client_id);
   if (!local) return { skipped: 'client_not_in_db' };
   upsertVisit.run(v.yclients_record_id, local.id, Number(cid) || null, branch || null,
-    v.date, v.service, v.staff, v.cost, v.status);
+    v.date, v.service, v.staff, v.cost, v.status, v.booked_at);
   // пересчитываем агрегаты клиента по локальным визитам (новая запись — будущая,
   // на статистику завершённых не влияет, но держим строку клиента консистентной)
   recomputeClient(local.id, iso(Date.now()));
+  // запись сделана прямо из дашборда — звонок должен стать «Записан» сразу, не дожидаясь синка
+  recomputeAutoBooked();
   return { ok: true, client_id: local.id, visit: v };
+}
+
+// --- «Звонок сработал»: человек записался в течение окна после разговора ---------
+// Правило согласовано с руководством 24.08.2026: если клиент записался в течение
+// ATTRIBUTION_DAYS дней после звонка, звонок считается результативным ВЕЗДЕ — и в журнале
+// «Обзора», и в конверсии админов, и в аналитике. Флаг держим в task_actions.auto_booked:
+// считать его на лету при каждом запросе значило бы сверять каждый звонок со всей таблицей
+// визитов, а меняется он только после синка — значит, и пересчитывать надо там.
+// Момент записи берём из YClients (booked_at). У записей без него ориентируемся на дату
+// визита: она хотя бы не меняется задним числом. Отменённые записи не в счёт.
+const ATTRIBUTION_DAYS = Number(process.env.CALL_ATTRIBUTION_DAYS) || 21;
+
+function recomputeAutoBooked() {
+  // имена колонок разводим явно: a.id и c.id приехали бы под одним ключом,
+  // и второй затёр бы первый — флаг лёг бы не на тот звонок
+  const actions = db.prepare(`SELECT a.id AS action_id, a.created_at, c.id AS id, c.phone
+                              FROM task_actions a JOIN clients c ON c.id = a.client_id`).all();
+  if (!actions.length) return 0;
+  // моменты записи по ЧЕЛОВЕКУ: у двухфилиального клиента карточки разные, человек один
+  const byPerson = new Map();
+  for (const v of db.prepare(`
+    SELECT COALESCE(v.booked_at, v.date) AS at, c.id, c.phone
+    FROM visits v JOIN clients c ON c.id = v.client_id
+    WHERE COALESCE(v.status,'') <> 'cancelled' AND COALESCE(v.booked_at, v.date) IS NOT NULL`).all()) {
+    const k = people.personKey(v);
+    if (!byPerson.has(k)) byPerson.set(k, []);
+    byPerson.get(k).push(new Date(v.at).getTime());
+  }
+  const upd = db.prepare('UPDATE task_actions SET auto_booked=? WHERE id=?');
+  let hits = 0;
+  db.exec('BEGIN');
+  try {
+    for (const a of actions) {
+      const t0 = new Date(a.created_at).getTime();
+      const list = byPerson.get(people.personKey(a)) || [];
+      const hit = list.some(t => t >= t0 && t <= t0 + ATTRIBUTION_DAYS * DAY) ? 1 : 0;
+      upd.run(hit, a.action_id);
+      hits += hit;
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  return hits;
 }
 
 // Лёгкий синк ТОЛЬКО будущего: окно «сегодня → +N дней» это пара страниц на филиал (секунды
@@ -325,7 +375,7 @@ async function syncUpcoming(opts = {}) {
       if (!v.client_id) continue;                      // блокировка времени без клиента
       const local = getClientLocalId.get(v.client_id);
       if (!local) { unknown++; continue; }             // новый клиент — приедет полным синком
-      upsertVisit.run(v.yclients_record_id, local.id, cid, name, v.date, v.service, v.staff, v.cost, v.status);
+      upsertVisit.run(v.yclients_record_id, local.id, cid, name, v.date, v.service, v.staff, v.cost, v.status, v.booked_at);
       visits++;
     }
     cancelled += reconcileFuture(records, { id: comp.id, name }, iso(end));
@@ -333,6 +383,7 @@ async function syncUpcoming(opts = {}) {
   // Только обслуживание: снять задачи по записавшимся и уже обзвоненным. Новые задачи
   // добирает утренний полный синк — иначе разобранный список тут же наполнялся бы снова.
   rules.generate({ fill: false });
+  recomputeAutoBooked();
   console.log(`[upcoming] визитов ${visits}, отменено ${cancelled}, новых клиентов пропущено ${unknown}`);
   return { visits, cancelled, unknown, tasks: 0, at: iso(Date.now()) };
 }
@@ -659,6 +710,11 @@ async function run(opts = {}) {
   const catN = backfillVisitCategories();
   if (catN) console.log(`[sync] категории услуг проставлены визитам: ${catN}`);
 
+  // Кто из обзвонённых записался в оговорённое окно — пересчитываем после каждого синка:
+  // запись всегда появляется позже разговора, в момент отметки звонка её ещё нет.
+  const autoN = recomputeAutoBooked();
+  console.log(`[sync] звонков с записью в ${ATTRIBUTION_DAYS} дн.: ${autoN}`);
+
   const tasksN = rules.generate();
 
   // Комментарии тянем фоном ПОСЛЕ ответа: первый проход долгий (~350 мс на клиента),
@@ -672,6 +728,7 @@ async function run(opts = {}) {
 
 module.exports = {
   run, syncUpcoming, computeFrequency, toTrips, recomputeClient, rebuildAggregates, importRecord,
+  recomputeAutoBooked, ATTRIBUTION_DAYS,
   syncStandalonePurchases, purchasesFromRecord, backfillVisitCategories,
   syncComments, commentSyncStatus, recomputeFlags, parseDiscount, writeCallToYclients,
   CRM_MARK, originalComment, DNC_RE,
