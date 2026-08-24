@@ -285,7 +285,7 @@
       Активных списков нет. Соберите список в «Конструкторе» и выведите его сюда.
     </div>
     <div class="section-title">Работа администраторов по спискам сегодня</div>
-    <div class="card"><table id="callAdmins"><thead><tr><th>Администратор</th><th>Обработано</th><th title="Записал в YClients или получил согласие прийти">Записал / придут</th><th>Конверсия</th></tr></thead><tbody></tbody></table></div>
+    <div class="card"><table id="callAdmins"><thead><tr><th>Администратор</th><th>Обработано</th><th title="Отметил админ, клиент согласился прийти или записался в течение 21 дня после звонка">Записан / придут</th><th>Конверсия</th></tr></thead><tbody></tbody></table></div>
     <div class="jr-head">
       <div class="section-title" style="margin:0">Журнал звонков по спискам</div>
       <div class="jr-filters">
@@ -296,7 +296,7 @@
         </select>
         <select id="cjResult">
           <option value="">Все результаты</option>
-          <option value="booked">Записал</option>
+          <option value="booked">Записан</option>
           <option value="refused">Отказ</option>
           <option value="callback">Перезвонить</option>
           <option value="no_answer">Не ответил</option>
@@ -314,7 +314,7 @@
     <div class="section-title">Разбивка по типам задач</div>
     <div class="card" id="ovTypes"></div>
     <div class="section-title">Работа администраторов сегодня</div>
-    <div class="card"><table id="ovAdmins"><thead><tr><th>Администратор</th><th>Обработано</th><th>Записал</th><th>Конверсия</th></tr></thead><tbody></tbody></table></div>
+    <div class="card"><table id="ovAdmins"><thead><tr><th>Администратор</th><th>Обработано</th><th title="Отметил админ или клиент записался в течение 21 дня после звонка">Записан</th><th>Конверсия</th></tr></thead><tbody></tbody></table></div>
 
     <div class="jr-head">
       <div class="section-title" style="margin:0">Журнал обзвона</div>
@@ -326,7 +326,7 @@
         </select>
         <select id="jrResult">
           <option value="">Все результаты</option>
-          <option value="booked">Записал</option>
+          <option value="booked">Записан</option>
           <option value="refused">Отказ</option>
           <option value="callback">Перезвонить</option>
           <option value="no_answer">Не ответил</option>

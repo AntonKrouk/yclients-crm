@@ -1949,7 +1949,15 @@ function journalHandler(scope) {
   const args = [`-${days} days`];
   if (branch) { conds.push('c.branch = ?'); args.push(branch); }
   if (filterAdmin) { conds.push('a.admin = ?'); args.push(filterAdmin); }
-  if (filterResult) { conds.push('a.result = ?'); args.push(filterResult); }
+  // Фильтр по результату идёт по тому же правилу, что и статус в строке: «Записан» —
+  // это и отметка админа, и клиент, записавшийся в окно после звонка. Иначе фильтр
+  // «Отказ» показывал бы строки с зелёным «Записан».
+  if (filterResult === 'booked') {
+    conds.push(`(a.result IN ('booked','coming') OR COALESCE(a.auto_booked,0) = 1)`);
+  } else if (filterResult) {
+    conds.push('a.result = ? AND COALESCE(a.auto_booked,0) = 0');
+    args.push(filterResult);
+  }
 
   // К «перезвонить» и «не ответил» показываем ДОГОВОРЁННОСТЬ: когда именно набрать снова.
   // Срок живёт в задаче (due_date) или в строке списка (callback_at) — берём тот, что есть.

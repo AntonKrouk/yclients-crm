@@ -993,7 +993,7 @@ async function loadOverview(){
 
   loadJournal();
 }
-const JR_RES={booked:'Записал',coming:'Придёт',refused:'Отказ',callback:'Перезвонить',no_answer:'Не ответил',no_calls:'Просил не звонить',wrong_number:'Неверный номер',done:'Обработан'};
+const JR_RES={booked:'Записан',coming:'Придёт',refused:'Отказ',callback:'Перезвонить',no_answer:'Не ответил',no_calls:'Просил не звонить',wrong_number:'Неверный номер',done:'Обработан'};
 const loadJournal = () => renderJournal('/api/overview/journal', $('#jrDays').value, $('#jrResult').value, $('#ovJournal'));
 async function renderJournal(base,days,result,box){
   let url=`${base}?days=${days}`+(result?`&result=${result}`:'');
@@ -1008,7 +1008,7 @@ async function renderJournal(base,days,result,box){
     const nb=it.booked_now;
     const nowBooked=nb?`<div class="jr-booking now">Записан позже: ${fmtDT(nb.date)}${nb.staff?' · '+esc(nb.staff):''}${nb.branch?' · '+esc(nb.branch):''}</div>`:'';
     return `<div class="jr-item">
-      <span class="jr-res ${it.shown_result||it.result||'no_answer'}">${it.auto_booked?'Записан':(JR_RES[it.shown_result||it.result]||'звонок')}</span>
+      <span class="jr-res ${it.shown_result||it.result||'no_answer'}">${JR_RES[it.shown_result||it.result]||'звонок'}</span>
       <div class="jr-body">
         <div class="jr-name" onclick="openClient(${it.client_id})">${it.name||'Без имени'}${branchTag(it.branch)}</div>
         ${it.callback_at?`<div class="jr-callback">${ICON.clock}${it.result==='no_calls'?`не звонить до ${dateLabel(it.callback_at)}`:`набрать ${whenLabel(it.callback_at)}`}</div>`:''}
