@@ -994,6 +994,34 @@ function manualMembers(ids) {
   });
 }
 
+// Клиент попал в очередь обзвона — звонок по нему теперь ведётся по списку, и висящая
+// задача означала бы второй звонок по тому же поводу (один админ звонит по списку, другой
+// по задачам). Снимаем сразу, не дожидаясь пересчёта; движок делает то же самое на каждом
+// прогоне — см. queuedPerson в src/rules.js.
+// Снимаем по ВСЕМ карточкам человека: в соседнем филиале у него отдельная карточка,
+// и задача вернулась бы оттуда. Ручные задачи («+ в задачи») тоже снимаем — ровно так же
+// ведёт себя добавление в VIP/«Депозит» выше.
+function dismissTasksForCallList(clientIds) {
+  const want = new Set(clientIds.map(Number).filter(Boolean));
+  if (!want.size) return 0;
+  const ids = new Set(want);
+  const all = db.prepare('SELECT id, phone, visits_count, last_visit FROM clients').all();
+  for (const cards of people.groupByPerson(all)) {
+    if (cards.some(c => want.has(c.id))) for (const c of cards) ids.add(c.id);
+  }
+  const list = [...ids];
+  const now = new Date().toISOString();
+  let n = 0;
+  for (let i = 0; i < list.length; i += 400) {
+    const part = list.slice(i, i + 400);
+    n += db.prepare(`UPDATE tasks SET status='dismissed', closed_at=?
+                     WHERE status IN ('open','snoozed')
+                       AND client_id IN (${part.map(() => '?').join(',')})`)
+      .run(now, ...part).changes;
+  }
+  return n;
+}
+
 // Создать список из фильтра: снимок подходящих клиентов фиксируется в list_members
 app.post('/api/lists', (req, res) => {
   const { name, filter, assignee, client_ids, exclude_ids } = req.body || {};
@@ -1011,7 +1039,8 @@ app.post('/api/lists', (req, res) => {
   const listId = info.lastInsertRowid;
   const ins = db.prepare('INSERT INTO list_members(list_id,client_id,status,match_visits,match_spent,updated_at) VALUES(?,?,?,?,?,?)');
   for (const r of rows) ins.run(listId, r.id, 'pending', r.match_visits, r.match_spent, now);
-  res.json({ ok: true, id: listId, members: rows.length });
+  const dismissed = dismissTasksForCallList(rows.map(r => r.id));
+  res.json({ ok: true, id: listId, members: rows.length, tasks_dismissed: dismissed });
 });
 
 // Активные списки с прогрессом — для главного дашборда
@@ -1037,13 +1066,18 @@ app.post('/api/lists/:id/members', (req, res) => {
   const client = db.prepare('SELECT id, name FROM clients WHERE id = ?').get(Number((req.body || {}).client_id));
   if (!client) return res.status(404).json({ error: 'Клиент не найден' });
 
+  // Задачи по этому человеку снимаем в любом случае — и когда он только что добавлен,
+  // и когда уже ждёт звонка в списке: автоматическая карточка могла появиться позже.
+  const dismissed = dismissTasksForCallList([client.id]);
+
   // Уже ждёт звонка в этом списке — второй строки не заводим. Обработанные строки
   // (по человеку отзвонились) не в счёт: добавить его снова = позвать ещё раз, это нормально.
   const waiting = db.prepare(`SELECT id FROM list_members
                               WHERE list_id=? AND client_id=? AND status IN ('pending','snoozed')`)
     .get(listId, client.id);
   if (waiting) {
-    return res.json({ ok: true, already: true, member_id: waiting.id, list_name: list.name, name: client.name });
+    return res.json({ ok: true, already: true, member_id: waiting.id, list_name: list.name,
+      name: client.name, tasks_dismissed: dismissed });
   }
 
   // Считаем визиты и суммы так же, как при ручной сборке списка: по всем карточкам человека.
@@ -1051,7 +1085,8 @@ app.post('/api/lists/:id/members', (req, res) => {
   const info = db.prepare(`INSERT INTO list_members(list_id,client_id,status,match_visits,match_spent,updated_at)
                            VALUES(?,?,'pending',?,?,?)`)
     .run(listId, client.id, stat.match_visits, stat.match_spent, new Date().toISOString());
-  res.json({ ok: true, added: true, member_id: info.lastInsertRowid, list_name: list.name, name: client.name });
+  res.json({ ok: true, added: true, member_id: info.lastInsertRowid, list_name: list.name,
+    name: client.name, tasks_dismissed: dismissed });
 });
 
 // Участники списка (клиенты) со статусом обработки

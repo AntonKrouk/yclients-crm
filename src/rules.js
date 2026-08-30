@@ -81,6 +81,17 @@ function generate(opts = {}) {
     for (const r of db.prepare(`SELECT client_id FROM ${table}`).all()) manualIds.add(r.client_id);
   }
 
+  // Клиенты, стоящие в очереди списка-кампании обзвона. Звонок по ним уже спланирован и
+  // лежит во вкладке «Обзвон»: автоматическая задача на того же человека — это второй
+  // звонок по тому же поводу, один админ звонил бы по списку, другой по задачам.
+  // В отличие от VIP это НЕ навсегда: считаем только активные списки и строки, по которым
+  // ещё не отзвонились. Отработали строку или список ушёл в архив — человек возвращается
+  // в обычный оборот, уже под обычной паузой после звонка (cooldownLeft ниже).
+  const queuedIds = new Set(db.prepare(`
+    SELECT m.client_id FROM list_members m JOIN lists l ON l.id = m.list_id
+    WHERE l.status = 'active' AND m.status IN ('pending','snoozed')
+  `).all().map(r => r.client_id));
+
   const clients = db.prepare(`
     SELECT id, name, phone, branch, last_visit, avg_interval_days, predicted_next, visits_count
     FROM clients WHERE COALESCE(do_not_call,0) = 0
@@ -112,6 +123,7 @@ function generate(opts = {}) {
   const personBooked = new Set();    // id приоритетного, если человек записан в каком-то филиале
   const personCall = new Map();      // id карточки → последний звонок ЧЕЛОВЕКУ (по всем филиалам)
   const manualPerson = new Set();    // все карточки человека, попавшего хотя бы в один ручной список
+  const queuedPerson = new Set();    // все карточки человека, ждущего звонка в активном списке обзвона
   for (const arr of people.groupByPerson(clients)) {
     let call = null;
     for (const c of arr) {
@@ -120,6 +132,7 @@ function generate(opts = {}) {
     }
     if (call) for (const c of arr) personCall.set(c.id, call);
     if (arr.some(c => manualIds.has(c.id))) for (const c of arr) manualPerson.add(c.id);
+    if (arr.some(c => queuedIds.has(c.id))) for (const c of arr) queuedPerson.add(c.id);
 
     if (arr.length < 2) continue;
     for (let i = 1; i < arr.length; i++) suppressed.add(arr[i].id);
@@ -160,6 +173,14 @@ function generate(opts = {}) {
     if (n) console.log(`[rules] снято задач по клиентам из ручных списков: ${n}`);
   }
 
+  // Клиента поставили в очередь обзвона — задачи по нему снимаем: звонок теперь ведётся
+  // по списку. Маршруты создания списка делают то же самое сразу, здесь подстраховка на
+  // случай, когда строка появилась мимо них (перенос базы, ручная правка, старые списки).
+  if (queuedPerson.size) {
+    const n = dismissFor([...queuedPerson]);
+    if (n) console.log(`[rules] снято задач по клиентам из списков обзвона: ${n}`);
+  }
+
   // Клиент записался (сам, через админа или из дашборда) — снимаем висящие задачи «позвонить
   // и записать». Создание новых мы и так пропускаем ниже, но уже открытые надо закрыть, иначе
   // админ звонит человеку, который сидит в журнале на следующей неделе.
@@ -187,6 +208,7 @@ function generate(opts = {}) {
     if (suppressed.has(c.id)) continue;                 // дубль в неприоритетном филиале
     if (manualOpen.has(c.id)) continue;                 // админ уже добавил его в задачи руками
     if (manualPerson.has(c.id)) continue;               // VIP / «Депозит» / «Алиса» ведут вручную
+    if (queuedPerson.has(c.id)) continue;               // уже ждёт звонка в списке обзвона
     if (upMap.get(c.id) || personBooked.has(c.id)) continue; // записан в этом или другом филиале
 
     const frequent = c.avg_interval_days != null && c.avg_interval_days <= FREQUENT_DAYS ? 1 : 0;
