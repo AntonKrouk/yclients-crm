@@ -416,13 +416,30 @@ for (const [slug, table] of Object.entries(MANUAL_LISTS)) {
 const mskToday = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' });
 const isLeap = (y) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
 
+// Давно ушедших в календаре не показываем: поздравлять человека, который последний раз был
+// в 2023-м или раньше, админам незачем — список именинников от этого только длиннее.
+// Порог — начало года BIRTHDAY_ACTIVE_SINCE_YEAR (по умолчанию 2024): остаются те, у кого
+// есть след в салоне с этой даты.
+// Считаем именно «последний след», а НЕ clients.last_visit: last_visit собирается только из
+// завершённых визитов, а часть прошедших записей админы в YClients не отмечают как «пришёл»
+// (attendance 0/2) — у нас они лежат со статусом upcoming. По одному last_visit мы выкинули бы
+// и живых клиентов. Не в счёт только отменённые записи.
+const BDAY_ACTIVE_SINCE = `${Number(process.env.BIRTHDAY_ACTIVE_SINCE_YEAR) || 2024}-01-01`;
+const LAST_SEEN_SQL = "(SELECT MAX(v.date) FROM visits v WHERE v.client_id = c.id AND v.status <> 'cancelled')";
+
+// Последний след человека по ВСЕМ его карточкам (в каждом филиале своя): '' — следов нет.
+const personLastSeen = (cards) =>
+  cards.map(c => c.last_seen || c.last_visit).filter(Boolean).sort().pop() || '';
+const bdayActive = (cards) => personLastSeen(cards) >= BDAY_ACTIVE_SINCE;
+
 const birthdayRowsFor = (mdList) => db.prepare(`
-  SELECT id, name, phone, branch, birth_date, visits_count, last_visit,
-         COALESCE(yc_spent, spent, 0) AS real_spent,
-         COALESCE(do_not_call, 0) AS do_not_call,
-         COALESCE(yc_balance, 0) AS deposit_balance
-  FROM clients
-  WHERE COALESCE(birth_date,'') <> '' AND substr(birth_date, 6, 5) IN (${mdList.map(() => '?').join(',')})
+  SELECT c.id, c.name, c.phone, c.branch, c.birth_date, c.visits_count, c.last_visit,
+         COALESCE(c.yc_spent, c.spent, 0) AS real_spent,
+         COALESCE(c.do_not_call, 0) AS do_not_call,
+         COALESCE(c.yc_balance, 0) AS deposit_balance,
+         ${LAST_SEEN_SQL} AS last_seen
+  FROM clients c
+  WHERE COALESCE(c.birth_date,'') <> '' AND substr(c.birth_date, 6, 5) IN (${mdList.map(() => '?').join(',')})
 `).all(...mdList);
 
 // Заметки по всем карточкам человека → самая свежая
@@ -435,12 +452,16 @@ function birthdayNoteOf(ids) {
 
 // Список именинников на конкретную календарную дату (YYYY-MM-DD).
 // 29 февраля в невисокосный год отмечают 28-го — иначе такие клиенты выпадали бы на три года.
+// Возвращает и сколько человек скрыто порогом активности — чтобы админ видел, что список
+// не «потерял» людей, а отфильтровал.
 function birthdayItems(dateStr) {
   const [y, mo, d] = dateStr.split('-').map(Number);
   const md = [`${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`];
   if (mo === 2 && d === 28 && !isLeap(y)) md.push('02-29');
   const rows = birthdayRowsFor(md);
-  const items = people.groupByPerson(rows).map(cards => {
+  const groups = people.groupByPerson(rows);
+  const active = groups.filter(bdayActive);
+  const items = active.map(cards => {
     const ids = cards.map(c => c.id);
     const birth = cards.map(c => c.birth_date).filter(Boolean)[0] || '';
     const birthYear = Number(birth.slice(0, 4)) || 0;
@@ -465,14 +486,14 @@ function birthdayItems(dateStr) {
   });
   // сперва те, к кому уже готовились (есть заметка), затем по деньгам
   items.sort((a, b) => (Number(Boolean(b.note)) - Number(Boolean(a.note))) || (b.spent - a.spent));
-  return items;
+  return { items, hidden: groups.length - active.length };
 }
 
 // Именинники дня. Без параметра — сегодняшние (то, ради чего вкладка и открывается).
 app.get('/api/birthdays', (req, res) => {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : mskToday();
-  const items = birthdayItems(date);
-  res.json({ date, today: mskToday(), count: items.length, items });
+  const { items, hidden } = birthdayItems(date);
+  res.json({ date, today: mskToday(), count: items.length, hidden, active_since: BDAY_ACTIVE_SINCE, items });
 });
 
 // Сетка календаря: сколько именинников в каждый день месяца и кто именно (для подсказки).
@@ -487,13 +508,18 @@ app.get('/api/birthdays/month', (req, res) => {
   const mm = String(month).padStart(2, '0');
   const days = new Date(year, month, 0).getDate();
   const rows = db.prepare(`
-    SELECT id, name, phone, branch, birth_date, visits_count, last_visit
-    FROM clients
-    WHERE COALESCE(birth_date,'') <> '' AND substr(birth_date, 6, 2) = ?`).all(mm);
+    SELECT c.id, c.name, c.phone, c.branch, c.birth_date, c.visits_count, c.last_visit,
+           ${LAST_SEEN_SQL} AS last_seen
+    FROM clients c
+    WHERE COALESCE(c.birth_date,'') <> '' AND substr(c.birth_date, 6, 2) = ?`).all(mm);
   const noted = new Set(db.prepare("SELECT client_id FROM birthday_notes WHERE COALESCE(note,'') <> ''")
     .all().map(r => r.client_id));
   const byDay = {};
+  let hidden = 0;
   for (const cards of people.groupByPerson(rows)) {
+    // тот же порог, что и в списке дня: иначе в клетке стояла бы одна цифра, а по клику
+    // открывалась другая
+    if (!bdayActive(cards)) { hidden++; continue; }
     const day = Number((cards.map(c => c.birth_date).filter(Boolean)[0] || '').slice(8, 10));
     if (!day) continue;
     // 29 февраля в невисокосный год показываем 28-го — так же, как отдаёт /api/birthdays
@@ -504,7 +530,7 @@ app.get('/api/birthdays/month', (req, res) => {
     if (b.names.length < 5) b.names.push(cards[0].name || 'Без имени');
     if (cards.some(c => noted.has(c.id))) b.noted++;
   }
-  res.json({ year, month, days, today: mskToday(), by_day: byDay });
+  res.json({ year, month, days, today: mskToday(), hidden, active_since: BDAY_ACTIVE_SINCE, by_day: byDay });
 });
 
 // Заметка ко дню рождения: пишется заранее, видна в списке именинников в сам день.

@@ -1717,6 +1717,12 @@ const fmtBd = s => !s ? '—' : bdParse(s).toLocaleDateString('ru-RU',
   bdNoYear(s) ? {day:'numeric',month:'long'} : {day:'numeric',month:'long',year:'numeric'});
 const fmtBdShort = s => s ? bdParse(s).toLocaleDateString('ru-RU',{day:'numeric',month:'long'}) : '—';
 
+// Давно ушедших сервер в календарь не отдаёт (порог в ответе — active_since). Подписываем,
+// сколько человек скрыто: иначе непонятно, куда делись именинники, которые тут были раньше.
+const bdHiddenNote = r => r.hidden
+  ? `скрыто ${plural(r.hidden,'клиент','клиента','клиентов')} без визитов с ${String(r.active_since||'').slice(0,4)} года`
+  : '';
+
 async function loadBday(){
   if(!bdLoaded){
     bdLoaded=true;
@@ -1733,9 +1739,10 @@ async function loadBdayToday(){
   bdToday=r.today;
   if(!bdCal.year){ const [y,m]=r.date.split('-').map(Number); bdCal={year:y,month:m}; }
   $('#bdDayTitle').textContent = `Сегодня, ${fmtBdShort(r.date)}`;
-  $('#bdSummary').innerHTML = r.count
-    ? `Именинников: <b>${plural(r.count,'клиент','клиента','клиентов')}</b>`
-    : '';
+  $('#bdSummary').innerHTML = [
+    r.count ? `Именинников: <b>${plural(r.count,'клиент','клиента','клиентов')}</b>` : '',
+    bdHiddenNote(r),
+  ].filter(Boolean).join(' · ');
   $('#bdList').innerHTML = r.count
     ? r.items.map(bdRowHtml).join('')
     : '<div class="empty">Сегодня именинников нет. Ближайшие дни рождения — в календаре ниже.</div>';
@@ -1772,9 +1779,11 @@ async function loadBdayMonth(year,month){
   // понедельник — первый столбец: getDay() отдаёт 0 для воскресенья
   const shift=(new Date(r.year,r.month-1,1).getDay()+6)%7;
   const total=Object.values(r.by_day).reduce((s,b)=>s+b.count,0);
-  $('#bdMonthSummary').textContent = total
-    ? `${plural(total,'именинник','именинника','именинников')} в этом месяце`
-    : 'В этом месяце именинников нет';
+  $('#bdMonthSummary').textContent = [
+    total ? `${plural(total,'именинник','именинника','именинников')} в этом месяце`
+          : 'В этом месяце именинников нет',
+    bdHiddenNote(r),
+  ].filter(Boolean).join(' · ');
 
   const cells=[];
   for(let i=0;i<shift;i++) cells.push('<div class="bd-cell empty"></div>');
@@ -1800,9 +1809,10 @@ async function pickBdayDay(iso){
   const r=await api('/api/birthdays?date='+encodeURIComponent(iso));
   $('#bdPick').style.display='';
   $('#bdPickTitle').textContent = iso===r.today ? `Сегодня, ${fmtBdShort(iso)}` : fmtBd(iso);
-  $('#bdPickSummary').innerHTML = r.count
-    ? `Именинников: <b>${plural(r.count,'клиент','клиента','клиентов')}</b>`
-    : '';
+  $('#bdPickSummary').innerHTML = [
+    r.count ? `Именинников: <b>${plural(r.count,'клиент','клиента','клиентов')}</b>` : '',
+    bdHiddenNote(r),
+  ].filter(Boolean).join(' · ');
   $('#bdPickList').innerHTML = r.count
     ? r.items.map(bdRowHtml).join('')
     : '<div class="empty">В этот день именинников нет.</div>';
