@@ -1933,10 +1933,50 @@ app.get('/api/clients/:id/timeline', (req, res) => {
 
 // --- Дашборд владельца -------------------------------------------------------
 
+// Произвольный период на дашборде. Владелец выбирает диапазон дат в календаре «Обзора»,
+// поэтому один разбор запроса обслуживает и сводку, и журнал обзвона.
+// Даты приходят как YYYY-MM-DD в часовом поясе салона (МСК, круглый год UTC+3), а
+// created_at лежит в базе строкой UTC-ISO (new Date().toISOString()). Границы считаем
+// здесь, в JS, и сравниваем строками: ISO-8601 с «Z» упорядочен лексикографически так же,
+// как по времени, — и результат не зависит от того, в каком поясе запущен сервер.
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+// сдвиг дня без часовых поясов: полдень UTC не перескакивает через сутки ни в какую сторону
+const shiftDay = (day, delta) => {
+  const d = new Date(day + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
+};
+// момент московской полуночи указанного дня (+ plusDays суток) в UTC-ISO
+const mskMidnight = (day, plusDays = 0) => {
+  const d = new Date(day + 'T00:00:00+03:00');
+  d.setUTCDate(d.getUTCDate() + plusDays);
+  return d.toISOString();
+};
+// from/to — включительно. Их нет — берём последние `days` дней, считая сегодняшний:
+// так старые ссылки и вкладка «Обзвоны» с их ?days=7 продолжают работать как раньше.
+function rangeOf(req, defDays = 7) {
+  const today = mskToday();
+  let from = DAY_RE.test(req.query.from || '') ? req.query.from : null;
+  let to = DAY_RE.test(req.query.to || '') ? req.query.to : null;
+  if (!from && !to) {
+    const days = Math.min(730, Math.max(1, Number(req.query.days) || defDays));
+    to = today;
+    from = shiftDay(today, -(days - 1));
+  } else {
+    from = from || to;
+    to = to || from;
+    if (from > to) [from, to] = [to, from];
+  }
+  return { from, to, since: mskMidnight(from), until: mskMidnight(to, 1) };
+}
+
 app.get('/api/stats', (req, res) => {
   const branch = (req.query.branch || '').trim();
   const bw = branch ? 'AND c.branch = ?' : '';
   const bArgs = branch ? [branch] : [];
+  // По умолчанию — сегодняшний день, как было. Календарь «Обзора» присылает from/to,
+  // и тогда работа админов и воронка считаются за выбранный отрезок.
+  const period = rangeOf(req, 1);
 
   const open = taskCounts(branch);
   const openTotal = Object.values(open).reduce((a, b) => a + b, 0);
@@ -1952,8 +1992,8 @@ app.get('/api/stats', (req, res) => {
     SELECT a.result, COALESCE(a.auto_booked,0) AS auto_booked, a.created_at,
            COALESCE(a.admin,'—') AS admin, c.id AS client_id, c.phone
     FROM task_actions a JOIN clients c ON c.id = a.client_id
-    WHERE a.task_id IS NOT NULL AND date(a.created_at) = date('now') ${bw}
-  `).all(...bArgs);
+    WHERE a.task_id IS NOT NULL AND a.created_at >= ? AND a.created_at < ? ${bw}
+  `).all(period.since, period.until, ...bArgs);
   const wonNow = (r) => r.result === 'booked' || r.result === 'coming'
     || r.auto_booked === 1 || bookedWithinWindow(upcomingToday, r, r.created_at);
 
@@ -1976,13 +2016,18 @@ app.get('/api/stats', (req, res) => {
   // и «не ответил»: раньше считались только закрытые, и половина работы пропадала.
   const doneToday = db.prepare(`SELECT COUNT(DISTINCT a.task_id) n FROM task_actions a
     JOIN clients c ON c.id = a.client_id
-    WHERE a.task_id IS NOT NULL AND date(a.created_at)=date('now','localtime') ${bw}`).get(...bArgs).n;
+    WHERE a.task_id IS NOT NULL AND a.created_at >= ? AND a.created_at < ? ${bw}`)
+    .get(period.since, period.until, ...bArgs).n;
   const booked = resultMap.booked || 0;
   const contacted = (resultMap.booked || 0) + (resultMap.refused || 0) + (resultMap.callback || 0);
   const conversion = contacted ? Math.round((booked / contacted) * 100) : 0;
 
   res.json({
     mode: yc.isDemo() ? 'demo' : 'live',
+    // период, за который посчитаны done/booked/конверсия и таблица админов;
+    // открытые задачи и всего клиентов — всегда «прямо сейчас», их период не касается
+    period: { from: period.from, to: period.to },
+    today: mskToday(),
     open_total: openTotal,
     open_by_type: { ...open, labels: TYPE_LABEL },
     done_today: doneToday,
@@ -2001,13 +2046,14 @@ app.get('/api/stats', (req, res) => {
 function journalHandler(scope) {
   return (req, res) => {
   const branch = (req.query.branch || '').trim();
-  const days = Math.min(90, Math.max(1, Number(req.query.days) || 7));
+  // Период — либо произвольный from/to из календаря «Обзора», либо прежние ?days=N
+  const period = rangeOf(req, 7);
   const filterAdmin = (req.query.admin || '').trim();
   const filterResult = (req.query.result || '').trim();
 
-  const conds = [`a.created_at >= datetime('now', ?)`,
+  const conds = ['a.created_at >= ? AND a.created_at < ?',
     scope === 'lists' ? 'a.task_id IS NULL' : 'a.task_id IS NOT NULL'];
-  const args = [`-${days} days`];
+  const args = [period.since, period.until];
   if (branch) { conds.push('c.branch = ?'); args.push(branch); }
   if (filterAdmin) { conds.push('a.admin = ?'); args.push(filterAdmin); }
   // Фильтр по результату идёт по тому же правилу, что и статус в строке: «Записан» —
@@ -2057,7 +2103,7 @@ function journalHandler(scope) {
       booked_now: (own || auto) ? null : up,
     };
   });
-  res.json({ days, count: items.length, items });
+  res.json({ from: period.from, to: period.to, count: items.length, items });
   };
 }
 app.get('/api/overview/journal', journalHandler('tasks'));

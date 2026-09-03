@@ -310,20 +310,49 @@
 
   <!-- ОБЗОР -->
   <section id="view-overview" style="display:none">
+    <!-- Период задаётся один раз сверху и действует на всю вкладку: цифры, таблицу
+         админов и журнал. Раньше здесь был выбор «день / 7 / 30» и только для журнала —
+         владелец не мог посмотреть, например, майские праздники или конкретную неделю. -->
+    <div class="ov-head">
+      <div class="section-title" style="margin:0">Период</div>
+      <div class="ov-fields">
+        <label class="ov-fld">с <input id="ovFrom" type="date"></label>
+        <label class="ov-fld">по <input id="ovTo" type="date"></label>
+      </div>
+      <span class="ov-now" id="ovRangeLabel">Сегодня</span>
+    </div>
+
+    <!-- Календарь открыт всегда: период — первое, чем владелец пользуется на вкладке,
+         прятать его под кнопку значит добавлять лишний клик к каждому вопросу «а сколько
+         было в мае». Отрезок задаётся либо кликами по сетке, либо полями «с» и «по». -->
+    <div class="card bd-cal ov-cal" id="ovCal">
+      <div class="bd-cal-head">
+        <button class="bd-nav" id="ovPrev" title="Предыдущий месяц" aria-label="Предыдущий месяц">‹</button>
+        <select id="ovMonthSel" title="Месяц"></select>
+        <select id="ovYearSel" title="Год"></select>
+        <button class="bd-nav" id="ovNext" title="Следующий месяц" aria-label="Следующий месяц">›</button>
+        <span class="muted" id="ovCalHint"></span>
+      </div>
+      <div class="bd-dow"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div>
+      <div class="bd-grid" id="ovGrid"></div>
+      <div class="ov-presets">
+        <button class="btn" data-days="1">Сегодня</button>
+        <button class="btn" data-days="7">7 дней</button>
+        <button class="btn" data-days="30">30 дней</button>
+        <button class="btn" data-days="90">90 дней</button>
+        <button class="btn" id="ovMonthAll">Этот месяц</button>
+      </div>
+    </div>
+
     <div class="grid kpis" id="ovKpis"></div>
     <div class="section-title">Разбивка по типам задач</div>
     <div class="card" id="ovTypes"></div>
-    <div class="section-title">Работа администраторов сегодня</div>
+    <div class="section-title" id="ovAdminsTitle">Работа администраторов сегодня</div>
     <div class="card"><table id="ovAdmins"><thead><tr><th>Администратор</th><th>Обработано</th><th title="Отметил админ или клиент записался в течение 21 дня после звонка">Записан</th><th>Конверсия</th></tr></thead><tbody></tbody></table></div>
 
     <div class="jr-head">
       <div class="section-title" style="margin:0">Журнал обзвона</div>
       <div class="jr-filters">
-        <select id="jrDays">
-          <option value="1">Сегодня</option>
-          <option value="7" selected>7 дней</option>
-          <option value="30">30 дней</option>
-        </select>
         <select id="jrResult">
           <option value="">Все результаты</option>
           <option value="booked">Записан</option>

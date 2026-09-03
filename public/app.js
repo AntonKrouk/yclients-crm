@@ -966,12 +966,40 @@ async function archiveList(id,name){
 }
 
 // --- ОБЗОР ---
+// Период вкладки — произвольный отрезок дат, который задаётся календарём сверху.
+// Он один на всю вкладку: цифры, таблица админов и журнал под ними должны говорить
+// об одном и том же времени, иначе владелец сравнивает несравнимое.
+let ovPeriod=null;    // {from,to} 'YYYY-MM-DD' по времени салона; null — сервер сам подставит сегодня
+let ovToday=null;     // сегодня по серверу (МСК), а не по часам компьютера
+let ovCalYM=null;     // месяц, открытый в календаре
+let ovPickFrom=null;  // первый клик диапазона, ждём второй
+let ovCalReady=false;
+
+// день ± N суток без часовых поясов: полдень UTC не перескакивает через сутки
+const ovShift=(day,delta)=>{ const d=new Date(day+'T12:00:00Z'); d.setUTCDate(d.getUTCDate()+delta); return d.toISOString().slice(0,10); };
+const ovSpan=(a,b)=>Math.round((new Date(b+'T12:00:00Z')-new Date(a+'T12:00:00Z'))/864e5)+1;
+const ovLocalToday=()=>new Date(Date.now()+3*36e5).toISOString().slice(0,10);  // запасной вариант до первого ответа сервера
+// период добавляется ко ВСЕМ запросам вкладки — и к сводке, и к журналу
+const ovUrl=u=>bp(ovPeriod ? u+(u.includes('?')?'&':'?')+`from=${ovPeriod.from}&to=${ovPeriod.to}` : u);
+const ovIsToday=()=>!!(ovPeriod && ovPeriod.from===ovPeriod.to && ovPeriod.to===ovToday);
+function ovPeriodLabel(){
+  if(!ovPeriod) return 'Сегодня';
+  const {from,to}=ovPeriod;
+  if(from===to) return from===ovToday ? 'Сегодня' : fmtBdShort(from);
+  return `${fmtBdShort(from)} — ${fmtBdShort(to)} · ${plural(ovSpan(from,to),'день','дня','дней')}`;
+}
+
 async function loadOverview(){
-  const s = await api(bp('/api/stats'));
+  const s = await api(ovUrl('/api/stats'));
+  if(s.period) ovPeriod=s.period;
+  if(s.today) ovToday=s.today;
+  const per = ovIsToday() ? 'сегодня' : 'за период';
+  $('#ovRangeLabel').textContent = ovPeriodLabel();
+  $('#ovAdminsTitle').textContent = 'Работа администраторов '+per;
   $('#ovKpis').innerHTML = [
     ['Открытых задач', s.open_total],
-    ['Обработано сегодня', s.done_today],
-    ['Записано сегодня', s.booked_today],
+    ['Обработано '+per, s.done_today],
+    ['Записано '+per, s.booked_today],
     ['Конверсия в запись', s.conversion_pct+'%'],
     ['Всего клиентов', s.clients_total],
   ].map(([l,n])=>`<div class="card kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
@@ -989,15 +1017,17 @@ async function loadOverview(){
   tb.innerHTML = s.by_admin.length? s.by_admin.map(a=>{
     const conv=a.total?Math.round(a.booked/a.total*100):0;
     return `<tr><td>${a.admin}</td><td>${a.total}</td><td>${a.booked}</td><td>${conv}%</td></tr>`;
-  }).join('') : '<tr><td colspan="4" class="muted">Сегодня ещё не было звонков</td></tr>';
+  }).join('') : `<tr><td colspan="4" class="muted">${ovIsToday()?'Сегодня ещё не было звонков':'За выбранный период звонков не было'}</td></tr>`;
 
+  renderOvCal();
   loadJournal();
 }
 const JR_RES={booked:'Записан',coming:'Придёт',refused:'Отказ',callback:'Перезвонить',no_answer:'Не ответил',no_calls:'Просил не звонить',wrong_number:'Неверный номер',done:'Обработан'};
-const loadJournal = () => renderJournal('/api/overview/journal', $('#jrDays').value, $('#jrResult').value, $('#ovJournal'));
-async function renderJournal(base,days,result,box){
-  let url=`${base}?days=${days}`+(result?`&result=${result}`:'');
-  const r=await api(bp(url));
+const loadJournal = () => renderJournal(ovUrl('/api/overview/journal'), $('#jrResult').value, $('#ovJournal'));
+// url приходит уже с филиалом и периодом: у «Обзора» период общий на вкладку,
+// у «Обзвонов» — свой выбор глубины в днях
+async function renderJournal(url,result,box){
+  const r=await api(url+(result?(url.includes('?')?'&':'?')+`result=${result}`:''));
   if(!r.items.length){ box.innerHTML='<div class="empty">За выбранный период звонков нет</div>'; return; }
   box.innerHTML=r.items.map(it=>{
     const b=it.booking;
@@ -1023,8 +1053,113 @@ async function renderJournal(base,days,result,box){
     </div>`;
   }).join('');
 }
-$('#jrDays').onchange=loadJournal;
 $('#jrResult').onchange=loadJournal;
+
+// --- Календарь периода «Обзора» ---
+// Тот же месячный календарь, что на вкладке ДР, но выбирается не день, а отрезок:
+// первый клик — начало, второй — конец (клик по тому же дню = один день). Рядом
+// поля «с» и «по» — когда границы известны заранее, их быстрее вписать, чем листать
+// месяцы. Быстрые кнопки под сеткой оставляют прежние привычные 1/7/30 дней.
+const OV_HINT='Кликните первый день периода, затем последний';
+function renderOvCal(){
+  if(!ovCalReady){
+    ovCalReady=true;
+    $('#ovMonthSel').innerHTML=MONTHS_RU.map((m,i)=>`<option value="${i+1}">${m}</option>`).join('');
+  }
+  if(!ovToday) ovToday=ovLocalToday();
+  if(!ovCalYM){
+    const [y,m]=((ovPeriod&&ovPeriod.to)||ovToday).split('-').map(Number);
+    ovCalYM={year:y,month:m};
+  }
+  const {year,month}=ovCalYM;
+  $('#ovMonthSel').value=String(month);
+  // окно лет вокруг текущего: обзор нужен по свежей работе, а не для листания архива
+  const ty=Number(ovToday.slice(0,4));
+  const years=[]; for(let y=ty-3;y<=ty;y++) years.push(y);
+  if(!years.includes(year)) years.push(year);
+  years.sort((a,b)=>a-b);
+  $('#ovYearSel').innerHTML=years.map(y=>`<option value="${y}">${y}</option>`).join('');
+  $('#ovYearSel').value=String(year);
+  ovSyncFields();
+
+  // пока ждём второй клик, подсвечен только уже выбранный день
+  const from = ovPickFrom || (ovPeriod?ovPeriod.from:null);
+  const to   = ovPickFrom ? ovPickFrom : (ovPeriod?ovPeriod.to:null);
+  const days=new Date(year,month,0).getDate();
+  const shift=(new Date(year,month-1,1).getDay()+6)%7;   // понедельник — первый столбец
+  const cells=[];
+  for(let i=0;i<shift;i++) cells.push('<div class="bd-cell empty"></div>');
+  for(let d=1;d<=days;d++){
+    const iso=`${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const cls=['bd-cell'];
+    const future = iso>ovToday;                 // звонков в будущем нет — выбирать нечего
+    if(future) cls.push('off');
+    if(iso===ovToday) cls.push('today');
+    if(from && to && iso>from && iso<to) cls.push('in');
+    if(iso===from || iso===to) cls.push('sel');
+    cells.push(`<div class="${cls.join(' ')}"${future?'':` onclick="ovPickDay('${iso}')"`}><span class="d">${d}</span></div>`);
+  }
+  $('#ovGrid').innerHTML=cells.join('');
+}
+// Поля «с» и «по» всегда показывают текущий период — и когда его выбрали в сетке,
+// и когда нажали быструю кнопку. Дальше будущего пускать некуда: звонков там нет.
+function ovSyncFields(){
+  const f=$('#ovFrom'), t=$('#ovTo');
+  if(document.activeElement!==f) f.value = ovPeriod?ovPeriod.from:'';
+  if(document.activeElement!==t) t.value = ovPeriod?ovPeriod.to:'';
+  f.max=ovToday; t.max=ovToday;
+}
+function ovPickDay(iso){
+  if(iso>ovToday) return;
+  if(!ovPickFrom){
+    ovPickFrom=iso;
+    $('#ovCalHint').textContent=`Начало: ${fmtBdShort(iso)}. Кликните последний день (или этот же — за один день)`;
+    renderOvCal();
+    return;
+  }
+  let from=ovPickFrom, to=iso;
+  if(from>to) [from,to]=[to,from];
+  ovSetPeriod(from,to);
+}
+function ovSetPeriod(from,to){
+  ovPeriod={from,to};
+  ovPickFrom=null;
+  $('#ovCalHint').textContent=OV_HINT;
+  $('#ovRangeLabel').textContent=ovPeriodLabel();
+  renderOvCal();
+  loadOverview();
+}
+function ovPreset(days){
+  if(!ovToday) ovToday=ovLocalToday();
+  ovCalYM=null;                              // вернуть календарь к месяцу, где кончается период
+  ovSetPeriod(ovShift(ovToday,-(days-1)), ovToday);
+}
+// Ручной ввод дат. Пустое поле или дата в будущем — не период, ждём, пока допишут.
+function ovFieldsChanged(){
+  let from=$('#ovFrom').value, to=$('#ovTo').value;
+  if(!from || !to) return;
+  if(from>to) [from,to]=[to,from];
+  if(to>ovToday) to=ovToday;
+  if(from>ovToday) from=ovToday;
+  if(ovPeriod && ovPeriod.from===from && ovPeriod.to===to) return;
+  const [y,m]=to.split('-').map(Number);
+  ovCalYM={year:y,month:m};
+  ovSetPeriod(from,to);
+}
+$('#ovFrom').onchange=ovFieldsChanged;
+$('#ovTo').onchange=ovFieldsChanged;
+$('#ovPrev').onclick=()=>{ let {year,month}=ovCalYM; month--; if(month<1){month=12;year--;} ovCalYM={year,month}; renderOvCal(); };
+$('#ovNext').onclick=()=>{ let {year,month}=ovCalYM; month++; if(month>12){month=1;year++;} ovCalYM={year,month}; renderOvCal(); };
+$('#ovMonthSel').onchange=e=>{ ovCalYM={year:ovCalYM.year,month:Number(e.target.value)}; renderOvCal(); };
+$('#ovYearSel').onchange=e=>{ ovCalYM={year:Number(e.target.value),month:ovCalYM.month}; renderOvCal(); };
+// «Этот месяц» — открытый в календаре месяц целиком, но не заглядывая в будущее
+$('#ovMonthAll').onclick=()=>{
+  const {year,month}=ovCalYM;
+  const first=`${year}-${String(month).padStart(2,'0')}-01`;
+  const last=`${year}-${String(month).padStart(2,'0')}-${String(new Date(year,month,0).getDate()).padStart(2,'0')}`;
+  ovSetPeriod(first, last>ovToday?ovToday:last);
+};
+document.querySelectorAll('#ovCal .ov-presets [data-days]').forEach(b=>b.onclick=()=>ovPreset(Number(b.dataset.days)));
 
 // --- ИСПРАВЛЕНИЕ РЕЗУЛЬТАТА ЗВОНКА ---
 // Звонок уже зафиксирован, но жизнь поменялась: «отказался» → перезвонил и записался.
@@ -1095,9 +1230,9 @@ async function loadCalls(withLists=true){
 
   if(withLists) await loadLists();
   $('#callsEmpty').style.display = s.lists ? 'none' : '';
-  renderJournal('/api/calls/journal', $('#cjDays').value, $('#cjResult').value, $('#callJournal'));
+  loadCallJournal();
 }
-const loadCallJournal = () => renderJournal('/api/calls/journal', $('#cjDays').value, $('#cjResult').value, $('#callJournal'));
+const loadCallJournal = () => renderJournal(bp('/api/calls/journal?days='+$('#cjDays').value), $('#cjResult').value, $('#callJournal'));
 $('#cjDays').onchange=loadCallJournal;
 $('#cjResult').onchange=loadCallJournal;
 
