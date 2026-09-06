@@ -543,6 +543,7 @@ const RESULT_LABEL = {
   booked: 'записал', callback: 'перезвонить', no_answer: 'не ответил',
   refused: 'отказ', wrong_number: 'неверный номер', done: 'обработан',
   no_calls: 'просил не звонить', coming: 'придёт',
+  written: 'написали после первого визита',
 };
 // дозапись строки в CRM-блок (новые сверху), «родной» текст сохраняется
 function appendCallLine(current, line) {

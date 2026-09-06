@@ -28,11 +28,22 @@ const REFUSAL_COOLDOWN_DAYS = 90; // «Отказ» — разговор сос�
 const NO_CALLS_COOLDOWN_DAYS = 60; // «Просил не звонить» — пауза, но не навсегда
 const DEFAULT_COOLDOWN_DAYS = 14;
 
+// Сколько дней после первого визита ещё берём человека в фоллоу-ап. Пишем на СЛЕДУЮЩИЙ
+// день, но окно шире суток — чтобы не потерять тех, у кого утренний синк в свой день
+// не отработал (сеть, перезапуск, выходной сервера).
+const NEW_CLIENT_MAX_DAYS = 7;
+
 // Задачи, добавленные администратором вручную (кнопка «+ в задачи» в «Клиентах» и
 // «Конструкторе»), живут по своим правилам: не занимают дневной лимит и не снимаются
 // автоматической уборкой. Человека выбрали осознанно — карточка висит, пока по ней не позвонят.
 const NOT_MANUAL   = "COALESCE(source,'auto') <> 'manual'";
-const NOT_MANUAL_T = "COALESCE(t.source,'auto') <> 'manual'";
+
+// Ровно те же правила — у фоллоу-апа новому клиенту: он не часть дневной нормы звонков и
+// не снимается автоматикой (записался сам, попал в список обзвона, ушёл в VIP — неважно,
+// написать ему всё равно надо). Карточка висит, пока админ не отметит, что написал.
+// Всё, что НЕ подпадает под эти два случая, движок считает своим и волен убирать.
+const ENGINE_OWNED   = "COALESCE(source,'auto') <> 'manual' AND type <> 'new_client'";
+const ENGINE_OWNED_T = "COALESCE(t.source,'auto') <> 'manual' AND t.type <> 'new_client'";
 
 // Не создаём дубль: если по клиенту уже есть открытая/отложенная задача такого типа
 const hasOpen = db.prepare(
@@ -93,7 +104,8 @@ function generate(opts = {}) {
   `).all().map(r => r.client_id));
 
   const clients = db.prepare(`
-    SELECT id, name, phone, branch, last_visit, avg_interval_days, predicted_next, visits_count
+    SELECT id, name, phone, branch, first_visit, last_visit, avg_interval_days, predicted_next,
+           visits_count, favorite_staff
     FROM clients WHERE COALESCE(do_not_call,0) = 0
   `).all();
 
@@ -124,7 +136,8 @@ function generate(opts = {}) {
   const personCall = new Map();      // id карточки → последний звонок ЧЕЛОВЕКУ (по всем филиалам)
   const manualPerson = new Set();    // все карточки человека, попавшего хотя бы в один ручной список
   const queuedPerson = new Set();    // все карточки человека, ждущего звонка в активном списке обзвона
-  for (const arr of people.groupByPerson(clients)) {
+  const groups = people.groupByPerson(clients);
+  for (const arr of groups) {
     let call = null;
     for (const c of arr) {
       const own = lastCall.get(c.id);
@@ -157,7 +170,7 @@ function generate(opts = {}) {
     for (let i = 0; i < ids.length; i += CH) {
       const part = ids.slice(i, i + CH);
       n += db.prepare(`UPDATE tasks SET status='dismissed', closed_at=?
-                       WHERE status IN ('open','snoozed') AND ${NOT_MANUAL}
+                       WHERE status IN ('open','snoozed') AND ${ENGINE_OWNED}
                          AND client_id IN (${part.map(() => '?').join(',')})`)
         .run(nowIso, ...part).changes;
     }
@@ -262,7 +275,7 @@ function generate(opts = {}) {
   // Снимаем их, пока пауза не вышла. Задачу, по которой звонок и был сделан (создана раньше
   // звонка), не трогаем, «перезвонить/не ответил» (snoozed) — тоже: там пауза задана админом.
   const clientById = new Map(clients.map(c => [c.id, c]));
-  const stale = db.prepare(`SELECT id, client_id, type, created_at FROM tasks WHERE status='open' AND ${NOT_MANUAL}`)
+  const stale = db.prepare(`SELECT id, client_id, type, created_at FROM tasks WHERE status='open' AND ${ENGINE_OWNED}`)
     .all()
     .filter(t => {
       const call = personCall.get(t.client_id);
@@ -275,16 +288,20 @@ function generate(opts = {}) {
     console.log(`[rules] снято вернувшихся задач по недавно обзвоненным: ${stale.length}`);
   }
 
+  // Фоллоу-апы новым клиентам ставим ВСЕГДА, даже в промежуточных прогонах: они не занимают
+  // дневной лимит, а задержка тут дороже — человека надо застать по свежим впечатлениям.
+  const newbies = createNewClientTasks(groups, nowIso);
+
   // Промежуточные прогоны (синк будущего каждые 30 мин, кнопка «Обновить») на этом
-  // заканчиваются: они убирают отработанное, но новых людей не добавляют. Дневной набор
-  // задач формирует утренний полный синк — он и вызывает generate() без опций.
-  if (!fill) return 0;
+  // заканчиваются: они убирают отработанное, но новых людей в обзвон не добавляют. Дневной
+  // набор задач формирует утренний полный синк — он и вызывает generate() без опций.
+  if (!fill) return newbies;
 
   // Свободные слоты по филиалам: цель — DAILY_OPEN_TARGET открытых задач на филиал
   const openBy = new Map(db.prepare(`
     SELECT COALESCE(c.branch,'') AS b, COUNT(*) AS n
     FROM tasks t JOIN clients c ON c.id = t.client_id
-    WHERE t.status = 'open' AND ${NOT_MANUAL_T} GROUP BY COALESCE(c.branch,'')
+    WHERE t.status = 'open' AND ${ENGINE_OWNED_T} GROUP BY COALESCE(c.branch,'')
   `).all().map(r => [r.b, r.n]));
 
   let created = 0;
@@ -313,7 +330,72 @@ function generate(opts = {}) {
     openBy.set(branch, open);
   }
 
+  return created + newbies;
+}
+
+// --- Новые клиенты: фоллоу-ап на следующий день после первого визита ----------
+// Человек впервые побывал в салоне — назавтра администратор пишет ему сообщение:
+// как всё прошло, всё ли понравилось, приглашение прийти снова. Это не звонок и не
+// часть дневной нормы обзвона, поэтому задача создаётся вне слотов и вне пауз после
+// звонков, а снять её может только сам админ, отметив «Написал».
+//
+// «Впервые» считаем по ПЕРВОМУ ЗАВЕРШЁННОМУ визиту человека, а не карточки: в YClients
+// один человек заведён отдельной карточкой в каждом филиале, и визит на Мытнинской после
+// давнего визита на Баскове — не первый. Поэтому берём группу карточек (см. people.js)
+// и самую раннюю дату по ней.
+//
+// Оговорка: если ВСЯ история клиента старше загруженного окна визитов, он выглядит новым.
+// База держит несколько лет, так что случай редкий, а цена ошибки — лишнее дружелюбное
+// сообщение постоянному клиенту.
+// Точка отсчёта раздела: день, когда он впервые отработал на сервере. Всем, кто побывал
+// в салоне впервые ДО этой даты, админы фоллоу-ап уже написали руками — задним числом
+// поднимать их не надо, иначе на выкате в списке разом окажется недельная пачка людей.
+// Дата фиксируется в meta один раз и дальше не меняется (при необходимости её можно
+// поправить руками: UPDATE meta SET value='YYYY-MM-DD' WHERE key='new_client_since').
+function newClientSince() {
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'new_client_since'").get();
+  if (row && row.value) return row.value;
+  const d = today();
+  db.prepare("INSERT INTO meta(key,value) VALUES('new_client_since',?)").run(d);
+  console.log(`[rules] раздел New включён с ${d} — первые визиты раньше этой даты не берём`);
+  return d;
+}
+
+function createNewClientTasks(groups, nowIso) {
+  // Один фоллоу-ап на человека за всю жизнь — проверяем задачи ЛЮБОГО статуса, иначе
+  // отработанная (done) карточка вернулась бы следующим же прогоном.
+  const everHad = new Set(
+    db.prepare(`SELECT DISTINCT client_id FROM tasks WHERE type = 'new_client'`).all().map(r => r.client_id)
+  );
+  const now = today();
+  const since = newClientSince();
+  let created = 0;
+
+  for (const arr of groups) {
+    if (arr.some(c => everHad.has(c.id))) continue;
+
+    // карточка того филиала, где человек побывал в первый раз — туда и ставим задачу
+    const visited = arr.filter(c => c.first_visit);
+    if (!visited.length) continue;
+    const card = visited.reduce((a, b) => (a.first_visit <= b.first_visit ? a : b));
+
+    const day = card.first_visit.slice(0, 10);
+    if (day < since) continue;                            // был у нас до запуска раздела — ему уже написали
+    const age = daysBetween(day, now);
+    if (age < 1 || age > NEW_CLIENT_MAX_DAYS) continue;   // сегодняшних ещё рано, старых уже поздно
+
+    const when = new Date(card.first_visit).toLocaleDateString('ru-RU');
+    const staff = card.favorite_staff ? `, мастер ${card.favorite_staff}` : '';
+    insertTask.run(card.id, 'new_client', now, 1,
+      `Первый визит ${when}${staff}. Написать фоллоу-ап: как всё прошло, пригласить снова.`, nowIso);
+    created++;
+  }
+  if (created) console.log(`[rules] фоллоу-апов новым клиентам создано: ${created}`);
   return created;
 }
+
+// Фиксируем точку отсчёта сразу при старте сервера, а не при первом прогоне генерации:
+// иначе выкат вечером, а первый синк утром — и те, кто пришёл в день выката, пропали бы.
+newClientSince();
 
 module.exports = { generate };

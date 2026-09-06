@@ -148,6 +148,11 @@
   .t-no_show{color:var(--red);border-color:var(--red);background:var(--red-soft)}
   .t-reactivation{color:var(--violet);border-color:var(--violet);background:var(--violet-soft)}
   .t-manual{color:var(--green);border-color:var(--green);background:var(--green-soft)}
+  /* «New» — фирменный акцент: раздел про первое впечатление клиента, его видно первым */
+  .t-new_client{color:var(--accent-2);border-color:var(--accent-2);background:var(--accent-soft)}
+  /* Карточки первого визита отбиты полосой — их видно даже при быстром пролистывании */
+  #newList .task{box-shadow:inset 3px 0 0 var(--accent)}
+  #newList .task.callback-today{box-shadow:inset 3px 0 0 var(--red)}
   .phone{font-variant-numeric:tabular-nums;letter-spacing:.02em}
   .actions{display:flex;flex-direction:column;gap:9px;min-width:232px}
   /* 2×2: четыре кнопки одного размера, подписи не переносятся */

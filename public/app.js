@@ -352,39 +352,63 @@ const RES_LIST = [
   {k:'coming',   t:ICON.check+'Придёт',      cls:'booked'},
   ...RES.slice(1),
 ];
+// Раздел «New» — не обзвон, а переписка: новому клиенту пишут в мессенджер на следующий
+// день после первого визита. Поэтому и кнопки другие: главная — «Написал», она и убирает
+// карточку из раздела. «Записать» на случай, если человек в ответ сразу просит время.
+const RES_NEW = [
+  {k:'written',  t:ICON.msg+'Написал',       cls:'booked'},
+  {k:'booked',   t:ICON.cal+'Записать',      cls:''},
+  {k:'callback', t:ICON.clock+'Позже',       cls:'callback'},
+  {k:'refused',  t:ICON.cross+'Отказ',       cls:'refused'},
+];
 
-async function loadTasks(){
-  await api('/api/tasks/reopen-due',{method:'POST'});
-  const tasks = await api(bp('/api/tasks?status=open'));
-  const counts = {};
-  tasks.forEach(t=>counts[t.type]=(counts[t.type]||0)+1);
-  const KL={rebook:'Пора записать',no_show:'Не пришёл',reactivation:'Реактивация'};
-  if(counts.manual) KL.manual='Добавлены вручную';   // плитку показываем, только если такие задачи есть
-  $('#taskKpis').innerHTML = Object.entries(KL).map(([k,l])=>
-    `<div class="card kpi"><div class="n">${counts[k]||0}</div><div class="l">${l}</div></div>`).join('');
-
-  const list=$('#taskList');
-  if(!tasks.length){list.innerHTML='<div class="empty">На сегодня задач нет</div>';return;}
-  list.innerHTML = tasks.map(t=>`
+// Одна карточка задачи. Отличаются только набор кнопок и подпись поля заметки:
+// в «New» админ пишет сообщение, в остальных разделах — звонит.
+function taskCard(t, res, write){
+  const note = write ? 'Заметка о переписке…' : 'Заметка о звонке…';
+  return `
     <div class="task${t.callback_at?' callback-today':''}" data-id="${t.id}">
       <div class="left">
         <span class="type-badge t-${t.type}">${t.type_label}</span>
-        ${t.callback_at?`<span class="cb-badge">${ICON.clock}перезвонить${cbTime(t.callback_at)}</span>`:''}
+        ${t.callback_at&&!write?`<span class="cb-badge">${ICON.clock}перезвонить${cbTime(t.callback_at)}</span>`:''}
         <div class="tname" onclick="openClient(${t.client_id})">${t.name||'Без имени'}${branchTag(t.branch)}</div>
         <div class="tmeta"><span class="phone">${t.phone||'—'}</span> · визитов: ${t.visits_count||0}${t.favorite_staff?` · мастер: ${t.favorite_staff}`:''}</div>
         <div class="treason">${t.reason||''}</div>
       </div>
       <div class="actions">
         <div class="res-row">
-          ${RES.map(r=>`<button class="res ${r.cls}" onclick="${r.k==='booked'
+          ${res.map(r=>`<button class="res ${r.cls}" onclick="${r.k==='booked'
               ? `openBooking({client_id:${t.client_id},name:'${q1(t.name)}',task_id:${t.id},noteEl:'#note-${t.id}'})`
-              : `act(${t.id},'${r.k}',this)`}">${r.t}</button>`).join('')}
+              : `act(${t.id},'${r.k}',this,${write?'true':'false'})`}">${r.t}</button>`).join('')}
         </div>
-        <textarea placeholder="Заметка о звонке…" id="note-${t.id}"
+        <textarea placeholder="${note}" id="note-${t.id}"
           oninput="saveDraft('/api/tasks/${t.id}/note',this)"
           onblur="saveDraft('/api/tasks/${t.id}/note',this,true)">${esc(t.draft_note||'')}</textarea>
       </div>
-    </div>`).join('');
+    </div>`;
+}
+
+async function loadTasks(){
+  await api('/api/tasks/reopen-due',{method:'POST'});
+  const tasks = await api(bp('/api/tasks?status=open'));
+  const counts = {};
+  tasks.forEach(t=>counts[t.type]=(counts[t.type]||0)+1);
+  const KL={new_client:'New — первый визит',rebook:'Пора записать',no_show:'Не пришёл',reactivation:'Реактивация'};
+  if(counts.manual) KL.manual='Добавлены вручную';   // плитку показываем, только если такие задачи есть
+  $('#taskKpis').innerHTML = Object.entries(KL).map(([k,l])=>
+    `<div class="card kpi"><div class="n">${counts[k]||0}</div><div class="l">${l}</div></div>`).join('');
+
+  // Новички идут отдельным блоком наверху: это другая работа (написать, а не позвонить),
+  // и она привязана ко вчерашнему визиту — на общем фоне такие карточки терялись бы.
+  const newbies = tasks.filter(t=>t.type==='new_client');
+  const rest    = tasks.filter(t=>t.type!=='new_client');
+  $('#newSection').style.display = newbies.length ? '' : 'none';
+  $('#newList').innerHTML = newbies.map(t=>taskCard(t,RES_NEW,true)).join('');
+
+  const list=$('#taskList');
+  list.innerHTML = rest.length
+    ? rest.map(t=>taskCard(t,RES,false)).join('')
+    : '<div class="empty">На сегодня задач нет</div>';
 }
 
 // Черновик заметки живёт на сервере: админ печатает, отвлекается на другую вкладку или
@@ -679,9 +703,10 @@ async function bookJustMark(){
 // «Перезвонить» и «Не ответил» — не просто отметка, а договорённость о времени:
 // клиент называет когда («после обеда», «в четверг»), админ ставит этот срок в календаре.
 // До срока задача не мозолит глаза, потом сама возвращается в список.
-async function act(taskId,result,btn){
-  if(result==='callback'||result==='no_answer'){ openSnooze({kind:'task',taskId,result,btn}); return; }
-  await sendAct(taskId,result,btn,null);
+// write=true — задача из раздела «New»: там не звонят, а пишут, и все подписи меняются.
+async function act(taskId,result,btn,write){
+  if(result==='callback'||result==='no_answer'){ openSnooze({kind:'task',taskId,result,btn,write}); return; }
+  await sendAct(taskId,result,btn,null,write);
 }
 // Пока запрос в пути, вторая кнопка не срабатывает: иначе быстрый двойной клик уходил
 // двумя запросами (сервер их всё равно склеит, но лишний звонок в YClients ни к чему).
@@ -699,13 +724,13 @@ function actFailed(e,btn){
   toast('НЕ СОХРАНИЛОСЬ: '+(e instanceof ApiError ? e.message : 'попробуйте нажать ещё раз'),'bad');
   console.error('[act]', e);
 }
-async function sendAct(taskId,result,btn,until){
+async function sendAct(taskId,result,btn,until,write){
   if(actBusy) return; actBusy=true; if(btn) btn.disabled=true;
-  try{ await doSendAct(taskId,result,btn,until); }
+  try{ await doSendAct(taskId,result,btn,until,write); }
   catch(e){ actFailed(e,btn); }
   finally { actBusy=false; if(btn) btn.disabled=false; }
 }
-async function doSendAct(taskId,result,btn,until){
+async function doSendAct(taskId,result,btn,until,write){
   const note = $('#note-'+taskId)?.value || '';
   const admin = await needAdmin(); if(!admin) return;
   await api(`/api/tasks/${taskId}/action`,{method:'POST',headers:{'Content-Type':'application/json'},
@@ -714,8 +739,9 @@ async function doSendAct(taskId,result,btn,until){
   if(card){card.style.transition='opacity .25s';card.style.opacity='0';}
   setTimeout(loadTasks,260);
   toast(result==='booked'?'Записан'
+    : result==='written'?'Написали — карточка убрана из «New»'
     : result==='no_calls'?`Не звоним ${NO_CALLS_DAYS} дней — вернётся ${whenLabel(until)}`
-    : until?`Перезвонить ${whenLabel(until)}`
+    : until?`${write?'Написать':'Перезвонить'} ${whenLabel(until)}`
     : result==='callback'?'Отложено на завтра':'Отмечено');
 }
 
@@ -758,10 +784,14 @@ function openSnooze(ctx){
   const {result,btn}=ctx;
   // берём только имя, без бейджа филиала, который лежит в том же .tname
   const name=ctx.name||(btn?.closest('.task,.member')?.querySelector('.tname')?.firstChild?.textContent||'').trim();
-  $('#snoozeTitle').textContent = result==='no_answer'?'Когда набрать снова?':'Когда перезвонить?';
+  $('#snoozeTitle').textContent = ctx.write?'Когда написать?'
+    : result==='no_answer'?'Когда набрать снова?':'Когда перезвонить?';
   $('#snoozeWho').textContent = (name?`${name}. `:'')
-    + (result==='no_answer'?'Не дозвонились — задача вернётся в список к выбранному времени.'
+    + (ctx.write?'Карточка вернётся в раздел «New» к выбранному времени.'
+      : result==='no_answer'?'Не дозвонились — задача вернётся в список к выбранному времени.'
                            :'Клиент просил перезвонить — задача вернётся в список к выбранному времени.');
+  $('#snoozeNoCallsLbl').textContent = ctx.write
+    ? 'Клиент просит его не беспокоить?' : 'Клиент просит вообще не звонить?';
   const opts=snoozeQuickOptions();
   $('#snoozeQuick').innerHTML=opts.map((o,i)=>
     `<button type="button" data-i="${i}">${o.lbl}<span class="d">${o.sub}</span></button>`).join('');
@@ -790,8 +820,9 @@ function syncSnooze(){
     b.classList.toggle('on', !!o && o.date===d && (o.time||'')===(t||''));
   });
   // отложенное на сегодня из списка не исчезает — карточка остаётся, но красной
+  const verb = snoozeCtx?.write ? 'написать' : 'перезвонить';
   $('#snoozeWhen').innerHTML = !v ? 'Выберите дату'
-    : d===ymd(new Date()) ? `Останется в списке красной карточкой — <b>перезвонить${t?' в '+t:' сегодня'}</b>`
+    : d===ymd(new Date()) ? `Останется в списке красной карточкой — <b>${verb}${t?' в '+t:' сегодня'}</b>`
     : `Вернём в задачи <b>${whenLabel(v)}</b>${t?'':' — с утра'}`;
   $('#snoozeSubmit').disabled = !v;
 }
@@ -803,7 +834,7 @@ async function submitSnooze(result,until){
   const ctx=snoozeCtx; closeSnooze();
   if(ctx.kind==='fix') await sendFix(ctx.actionId,result,$('#fixNote').value,ctx.listId,until);
   else if(ctx.kind==='member') await sendMemAct(ctx.listId,ctx.memberId,result,ctx.btn,until);
-  else await sendAct(ctx.taskId,result,ctx.btn,until);
+  else await sendAct(ctx.taskId,result,ctx.btn,until,ctx.write);
 }
 $('#snoozeSubmit').onclick=async()=>{
   if(!snoozeCtx) return;
@@ -1022,7 +1053,7 @@ async function loadOverview(){
   renderOvCal();
   loadJournal();
 }
-const JR_RES={booked:'Записан',coming:'Придёт',refused:'Отказ',callback:'Перезвонить',no_answer:'Не ответил',no_calls:'Просил не звонить',wrong_number:'Неверный номер',done:'Обработан'};
+const JR_RES={booked:'Записан',coming:'Придёт',refused:'Отказ',callback:'Перезвонить',no_answer:'Не ответил',no_calls:'Просил не звонить',wrong_number:'Неверный номер',done:'Обработан',written:'Написали'};
 const loadJournal = () => renderJournal(ovUrl('/api/overview/journal'), $('#jrResult').value, $('#ovJournal'));
 // url приходит уже с филиалом и периодом: у «Обзора» период общий на вкладку,
 // у «Обзвонов» — свой выбор глубины в днях
@@ -2188,8 +2219,10 @@ async function openClient(id){
       </div>`;
     }
     const e=g.ev;
-    if(g.kind==='call'){const R={booked:'записал',callback:'перезвонить',no_answer:'не ответил',refused:'отказ',no_calls:'просил не звонить',coming:'придёт'};
-      return `<div class="ev call"><div class="d">${fmtDT(e.date)} · ${e.admin||''}</div><div class="t">Звонок${e.result?` — ${R[e.result]||e.result}`:''}</div>${e.note?`<div class="s">«${e.note}»</div>`:''}</div>`;}
+    if(g.kind==='call'){const R={booked:'записал',callback:'перезвонить',no_answer:'не ответил',refused:'отказ',no_calls:'просил не звонить',coming:'придёт',written:'фоллоу-ап после первого визита'};
+      // фоллоу-ап новичку — это сообщение в мессенджер, а не звонок: в ленте так и подписываем
+      const head = e.result==='written' ? 'Сообщение' : 'Звонок';
+      return `<div class="ev call"><div class="d">${fmtDT(e.date)} · ${e.admin||''}</div><div class="t">${head}${e.result?` — ${R[e.result]||e.result}`:''}</div>${e.note?`<div class="s">«${e.note}»</div>`:''}</div>`;}
     return `<div class="ev task"><div class="d">${fmtDT(e.date)}</div><div class="t">Задача: ${e.type_label} <span class="pill">${e.status}</span></div><div class="s">${e.reason||''}</div></div>`;
   }).join('') || '<div class="muted">Событий пока нет</div>';
   $('#cntTimeline').textContent = trips||'';
