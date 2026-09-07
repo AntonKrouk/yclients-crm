@@ -71,6 +71,21 @@ db.exec(`
     created_at          TEXT
   );
 
+  -- Задача, снятая потому, что человек записался ПОМИМО CRM: сам через онлайн-запись или
+  -- администратор завёл запись прямо в YClients. Раньше это происходило молча — карточка
+  -- просто исчезала из списка задач, и в «Обзоре» от неё не оставалось следа: список за день
+  -- таял, а по журналу выходило, что по этим людям никто не работал. Одна строка на снятую
+  -- задачу. Звонки, после которых человек записался в окно атрибуции, сюда НЕ попадают —
+  -- они и так живут в журнале как «Записан» (task_actions.auto_booked).
+  CREATE TABLE IF NOT EXISTS task_closures (
+    id          INTEGER PRIMARY KEY,
+    task_id     INTEGER UNIQUE REFERENCES tasks(id),
+    client_id   INTEGER REFERENCES clients(id),
+    visit_date  TEXT,           -- запись, из-за которой задача снята (ISO)
+    created_at  TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_closures_created ON task_closures(created_at);
+
   CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT

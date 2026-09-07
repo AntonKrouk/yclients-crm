@@ -1032,6 +1032,9 @@ async function loadOverview(){
     ['Обработано '+per, s.done_today],
     ['Записано '+per, s.booked_today],
     ['Конверсия в запись', s.conversion_pct+'%'],
+    // задача закрылась записью, а звонка не было: человек записался сам или его завели
+    // в YClients мимо CRM. Не работа администратора, но и не «ничего не произошло»
+    ['Записались без звонка', s.self_booked ?? 0],
     ['Всего клиентов', s.clients_total],
   ].map(([l,n])=>`<div class="card kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
 
@@ -1053,7 +1056,7 @@ async function loadOverview(){
   renderOvCal();
   loadJournal();
 }
-const JR_RES={booked:'Записан',coming:'Придёт',refused:'Отказ',callback:'Перезвонить',no_answer:'Не ответил',no_calls:'Просил не звонить',wrong_number:'Неверный номер',done:'Обработан',written:'Написали'};
+const JR_RES={booked:'Записан',coming:'Придёт',refused:'Отказ',callback:'Перезвонить',no_answer:'Не ответил',no_calls:'Просил не звонить',wrong_number:'Неверный номер',done:'Обработан',written:'Написали',self_booked:'Сам записался'};
 const loadJournal = () => renderJournal(ovUrl('/api/overview/journal'), $('#jrResult').value, $('#ovJournal'));
 // url приходит уже с филиалом и периодом: у «Обзора» период общий на вкладку,
 // у «Обзвонов» — свой выбор глубины в днях
@@ -1061,6 +1064,20 @@ async function renderJournal(url,result,box){
   const r=await api(url+(result?(url.includes('?')?'&':'?')+`result=${result}`:''));
   if(!r.items.length){ box.innerHTML='<div class="empty">За выбранный период звонков нет</div>'; return; }
   box.innerHTML=r.items.map(it=>{
+    // Задача, снятая записью без звонка. Разговора не было — значит, нет ни администратора,
+    // ни результата, ни кнопки «изменить»: править тут нечего, это просто факт.
+    if(it.shown_result==='self_booked'){
+      const k=it.booking;
+      return `<div class="jr-item">
+        <span class="jr-res self_booked">Сам записался</span>
+        <div class="jr-body">
+          <div class="jr-name" onclick="openClient(${it.client_id})">${it.name||'Без имени'}${branchTag(it.branch)}</div>
+          <div class="jr-meta"><span class="phone">${it.phone||'—'}</span> · задача «${esc(it.task_label||'')}» снята: клиент записан мимо CRM</div>
+          ${k?`<div class="jr-booking">Запись: ${k.service?esc(k.service)+' · ':''}${k.staff?esc(k.staff)+' · ':''}${fmtDT(k.date)}${k.branch?' · '+esc(k.branch):''}</div>`:''}
+        </div>
+        <div class="jr-when">${fmtDT(it.created_at)}</div>
+      </div>`;
+    }
     const b=it.booking;
     const booking=b?`<div class="jr-booking">Записан: ${b.service||'услуга'} · ${b.staff||'мастер'} · ${fmtDT(b.date)}${b.branch?' · '+b.branch:''}</div>`:'';
     // Разговор кончился ничем («отказ», «просил не звонить», «не ответил»), а человек всё-таки
@@ -2223,6 +2240,8 @@ async function openClient(id){
       // фоллоу-ап новичку — это сообщение в мессенджер, а не звонок: в ленте так и подписываем
       const head = e.result==='written' ? 'Сообщение' : 'Звонок';
       return `<div class="ev call"><div class="d">${fmtDT(e.date)} · ${e.admin||''}</div><div class="t">${head}${e.result?` — ${R[e.result]||e.result}`:''}</div>${e.note?`<div class="s">«${e.note}»</div>`:''}</div>`;}
+    if(g.kind==='selfbook')
+      return `<div class="ev call"><div class="d">${fmtDT(e.date)}</div><div class="t">Записался без звонка</div><div class="s">Задача «${esc(e.type_label||'')}» снята: клиент записан мимо CRM${e.visit_date?' — на '+fmtDT(e.visit_date):''}</div></div>`;
     return `<div class="ev task"><div class="d">${fmtDT(e.date)}</div><div class="t">Задача: ${e.type_label} <span class="pill">${e.status}</span></div><div class="s">${e.reason||''}</div></div>`;
   }).join('') || '<div class="muted">Событий пока нет</div>';
   $('#cntTimeline').textContent = trips||'';

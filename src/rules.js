@@ -17,6 +17,14 @@ const NO_SHOW_RECENT_DAYS = 30;   // неявку зовём перезапис�
 const CHURN_MAX_DAYS = 180;       // не был дольше — считаем потерянным, задачу не создаём (не заваливаем список)
 const REACTIVATION_MIN_VISITS = 2; // реактивируем только тех, кто ходил не разово
 
+// «Пора записать» опирается на среднюю периодичность, а по двум визитам это не периодичность,
+// а просто расстояние между ними. Клиент, зашедший дважды с разницей в полтора года, получал
+// задачу «обычно ходит раз в ~560 дн., пора уже 15 дн. назад» — и такие карточки занимали
+// больше половины дневного лимита, вытесняя тех, кто действительно ходит регулярно.
+// Поэтому рутинный дозвон делаем только по клиентам с внятным ритмом.
+const REBOOK_MIN_VISITS = 3;          // по двум точкам ритма не бывает
+const REBOOK_MAX_INTERVAL_DAYS = 180; // ходит реже двух раз в год — это не рутина, а ручной обзвон
+
 // Пауза после звонка. Без неё обработанный клиент возвращался в список на СЛЕДУЮЩЕМ ЖЕ
 // прогоне генерации (кнопка «Обновить», крон каждые 30 мин): задача уходит в статус done,
 // а причина — неявка или просрочка записи — никуда не девается, и человек снова первый
@@ -44,6 +52,11 @@ const NOT_MANUAL   = "COALESCE(source,'auto') <> 'manual'";
 // Всё, что НЕ подпадает под эти два случая, движок считает своим и волен убирать.
 const ENGINE_OWNED   = "COALESCE(source,'auto') <> 'manual' AND type <> 'new_client'";
 const ENGINE_OWNED_T = "COALESCE(t.source,'auto') <> 'manual' AND t.type <> 'new_client'";
+
+// Окно, в котором запись клиента засчитывается предыдущему звонку (то же число, что в
+// sync.js). Константу дублируем, а не импортируем: sync.js сам требует rules.js, и ссылка
+// назад замкнула бы модули в кольцо.
+const BOOKING_ATTRIBUTION_DAYS = Number(process.env.CALL_ATTRIBUTION_DAYS) || 21;
 
 // Не создаём дубль: если по клиенту уже есть открытая/отложенная задача такого типа
 const hasOpen = db.prepare(
@@ -134,16 +147,26 @@ function generate(opts = {}) {
   const suppressed = new Set();      // id неприоритетных дублей — задачи не ставим
   const personBooked = new Set();    // id приоритетного, если человек записан в каком-то филиале
   const personCall = new Map();      // id карточки → последний звонок ЧЕЛОВЕКУ (по всем филиалам)
+  const personNext = new Map();      // id карточки → ближайшая запись ЧЕЛОВЕКА (в любом филиале)
+  const personLast = new Map();      // id карточки → последний визит ЧЕЛОВЕКА (в любом филиале)
   const manualPerson = new Set();    // все карточки человека, попавшего хотя бы в один ручной список
   const queuedPerson = new Set();    // все карточки человека, ждущего звонка в активном списке обзвона
   const groups = people.groupByPerson(clients);
   for (const arr of groups) {
-    let call = null;
+    let call = null, next = null, last = null;
     for (const c of arr) {
       const own = lastCall.get(c.id);
       if (own && (!call || own.at > call.at)) call = own;
+      const up = upMap.get(c.id);
+      if (up && (!next || up < next)) next = up;
+      // last_visit лежит в КАРТОЧКЕ, а человек ходит в оба филиала: у постоянного клиента
+      // Мытнинской визит на Баскове иначе остаётся невидимым, и движок считает, что человек
+      // пропал. Даты — ISO-строки в UTC, они сравнимы лексикографически.
+      if (c.last_visit && (!last || c.last_visit > last)) last = c.last_visit;
     }
     if (call) for (const c of arr) personCall.set(c.id, call);
+    if (next) for (const c of arr) personNext.set(c.id, next);
+    if (last) for (const c of arr) personLast.set(c.id, last);
     if (arr.some(c => manualIds.has(c.id))) for (const c of arr) manualPerson.add(c.id);
     if (arr.some(c => queuedIds.has(c.id))) for (const c of arr) queuedPerson.add(c.id);
 
@@ -199,6 +222,7 @@ function generate(opts = {}) {
   // админ звонит человеку, который сидит в журнале на следующей неделе.
   const booked = [...new Set([...upMap.keys(), ...personBooked])];
   if (booked.length) {
+    logSelfBookings(booked, personNext, personCall, nowIso);
     const n = dismissFor(booked);
     if (n) console.log(`[rules] снято задач по уже записавшимся клиентам: ${n}`);
   }
@@ -207,6 +231,23 @@ function generate(opts = {}) {
     SELECT client_id, MAX(date) AS d FROM visits WHERE status = 'no_show' GROUP BY client_id
   `).all();
   const noShowMap = new Map(lastNoShow.map(r => [r.client_id, r.d]));
+
+  // Неявка «рассасывается» сама, когда человек приходит снова: звать его перезаписываться
+  // после того, как он побывал в салоне, — прямая ошибка. Такие задачи могли и висеть с
+  // прошлых прогонов (создали до визита), поэтому снимаем их наравне с проверкой ниже.
+  // Отложенные не трогаем: там администратор договорился о времени звонка.
+  const settledNoShow = db.prepare(`SELECT id, client_id FROM tasks
+    WHERE status = 'open' AND type = 'no_show' AND ${NOT_MANUAL}`).all()
+    .filter(t => {
+      const ns = noShowMap.get(t.client_id);
+      const last = personLast.get(t.client_id);
+      return ns && last && last > ns;
+    });
+  if (settledNoShow.length) {
+    const upd = db.prepare(`UPDATE tasks SET status='dismissed', closed_at=? WHERE id=?`);
+    for (const t of settledNoShow) upd.run(nowIso, t.id);
+    console.log(`[rules] снято неявок, после которых клиент уже приходил: ${settledNoShow.length}`);
+  }
 
   // Клиенты, которых админ уже добавил в задачи вручную: движок их не дублирует —
   // иначе на одного человека висели бы две карточки, ручная и автоматическая.
@@ -227,9 +268,16 @@ function generate(opts = {}) {
     const frequent = c.avg_interval_days != null && c.avg_interval_days <= FREQUENT_DAYS ? 1 : 0;
     const base = { clientId: c.id, branch: c.branch || '', frequent, visits: c.visits_count || 0 };
 
-    // 1) Свежая неявка без последующей записи → перезаписать (старые неявки не трогаем — это шум)
+    // 1) Свежая неявка, ПОСЛЕ КОТОРОЙ человек так и не появился → перезаписать
+    // (старые неявки не трогаем — это шум).
+    // Проверка «был ли визит после неявки» обязательна: без неё одна неявка порождала задачу
+    // снова и снова, пока не истекут 30 дней. Живой случай — Алина Теплицкая: неявка 11.08,
+    // визиты 30.08 и 06.09, и всё равно задача «не пришёл 11.08» создавалась 11.08, 26.08 и
+    // 07.09, то есть администратор звал перезаписаться человека, который был в салоне вчера.
+    // Визит считаем по ЧЕЛОВЕКУ: он мог прийти в соседний филиал, где у него своя карточка.
     const ns = noShowMap.get(c.id);
-    if (ns && daysBetween(ns, now) <= NO_SHOW_RECENT_DAYS) {
+    const lastAnywhere = personLast.get(c.id) || c.last_visit;
+    if (ns && daysBetween(ns, now) <= NO_SHOW_RECENT_DAYS && !(lastAnywhere && lastAnywhere > ns)) {
       // continue в любом случае: если по неявке пауза — не подсовываем этого же человека
       // под другим предлогом (реактивация/пора записать), это тот же звонок.
       if (!cooldownLeft(c, 'no_show')) {
@@ -255,8 +303,13 @@ function generate(opts = {}) {
       continue;
     }
 
-    // 3) Пора записаться (прошёл прогноз next + grace, но ещё не «ушёл»)
+    // 3) Пора записаться (прошёл прогноз next + grace, но ещё не «ушёл»).
+    // Только по клиентам, у которых есть что называть периодичностью: три визита и больше,
+    // и ритм не реже двух раз в год. Остальных — «был дважды за полтора года» — рутинным
+    // обзвоном не берём, их место в конструкторе выборок, где список собирают руками.
     if (overdue !== null && overdue >= REBOOK_GRACE_DAYS && overdue <= REBOOK_MAX_OVERDUE
+        && c.visits_count >= REBOOK_MIN_VISITS
+        && c.avg_interval_days <= REBOOK_MAX_INTERVAL_DAYS
         && !cooldownLeft(c, 'rebook')) {
       candidates.push({ ...base, type: 'rebook', priority: 2,
         reason: `Обычно ходит раз в ~${Math.round(c.avg_interval_days)} дн., пора уже ${overdue} дн. назад. Позвонить, записать.` });
@@ -331,6 +384,38 @@ function generate(opts = {}) {
   }
 
   return created + newbies;
+}
+
+// --- «Записался без звонка» ----------------------------------------------------
+// Задача снимается, когда человек оказывается записан: звонить тому, кто уже в журнале,
+// незачем. Но снятие было молчаливым, и работа пропадала из виду — самый наглядный случай:
+// Павел Паскарь, задача создана утром 07.09, к обеду запись на 08.09 появилась в YClients,
+// задача ушла в dismissed, и в «Обзоре» о нём не осталось ни строки.
+// Теперь каждое такое снятие остаётся строкой в task_closures: её считает сводка и
+// показывает журнал «Обзора».
+// Звонки, после которых человек записался в окно атрибуции, сюда НЕ пишем — они уже видны
+// в журнале как «Записан», и вторая строка была бы двойным счётом одной и той же записи.
+const insertClosure = db.prepare(`
+  INSERT OR IGNORE INTO task_closures (task_id, client_id, visit_date, created_at) VALUES (?,?,?,?)
+`);
+
+function logSelfBookings(ids, personNext, personCall, nowIso) {
+  const nowDay = today();
+  const CH = 400;
+  let n = 0;
+  for (let i = 0; i < ids.length; i += CH) {
+    const part = ids.slice(i, i + CH);
+    const rows = db.prepare(`SELECT id, client_id FROM tasks
+      WHERE status IN ('open','snoozed') AND ${ENGINE_OWNED}
+        AND client_id IN (${part.map(() => '?').join(',')})`).all(...part);
+    for (const t of rows) {
+      const call = personCall.get(t.client_id);
+      if (call && daysBetween(call.at.slice(0, 10), nowDay) <= BOOKING_ATTRIBUTION_DAYS) continue;
+      n += insertClosure.run(t.id, t.client_id, personNext.get(t.client_id) || null, nowIso).changes;
+    }
+  }
+  if (n) console.log(`[rules] записались без звонка (задача снята): ${n}`);
+  return n;
 }
 
 // --- Новые клиенты: фоллоу-ап на следующий день после первого визита ----------

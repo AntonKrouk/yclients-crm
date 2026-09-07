@@ -1928,7 +1928,15 @@ app.get('/api/clients/:id/timeline', (req, res) => {
   const tasks = db.prepare(`SELECT id, type, status, reason, created_at AS date FROM tasks WHERE client_id IN (${ph})`).all(...p.ids)
     .map(t => ({ kind: 'task', date: t.date, type: t.type, type_label: TYPE_LABEL[t.type] || t.type, status: t.status, reason: t.reason }));
 
-  const timeline = [...visits, ...actions, ...tasks].sort((a, b) => new Date(b.date) - new Date(a.date));
+  // Задача снялась сама, потому что человек оказался записан мимо CRM. В ленте это важное
+  // событие: иначе видно только «задача — dismissed», и непонятно, почему по ней не звонили.
+  const closures = db.prepare(`SELECT k.created_at AS date, k.visit_date, t.type
+    FROM task_closures k LEFT JOIN tasks t ON t.id = k.task_id
+    WHERE k.client_id IN (${ph})`).all(...p.ids)
+    .map(k => ({ kind: 'selfbook', date: k.date, visit_date: k.visit_date,
+                 type_label: TYPE_LABEL[k.type] || k.type || 'задача' }));
+
+  const timeline = [...visits, ...actions, ...tasks, ...closures].sort((a, b) => new Date(b.date) - new Date(a.date));
   res.json({ client: p.client, stats: computeClientStats(p.client.id, p.client, p.ids), timeline });
 });
 
@@ -2023,6 +2031,14 @@ app.get('/api/stats', (req, res) => {
   const contacted = (resultMap.booked || 0) + (resultMap.refused || 0) + (resultMap.callback || 0);
   const conversion = contacted ? Math.round((booked / contacted) * 100) : 0;
 
+  // Задачи, закрывшиеся записью БЕЗ звонка: человек записался сам онлайн или администратор
+  // завёл запись прямо в YClients, мимо CRM. Раньше такие карточки просто исчезали из списка,
+  // и по «Обзору» выходило, что по ним никто не работал. В конверсию не берём — разговора
+  // не было, приписывать его результат администратору нечестно; это отдельный исход дня.
+  const selfBooked = db.prepare(`SELECT COUNT(*) n FROM task_closures k
+    JOIN clients c ON c.id = k.client_id
+    WHERE k.created_at >= ? AND k.created_at < ? ${bw}`).get(period.since, period.until, ...bArgs).n;
+
   res.json({
     mode: yc.isDemo() ? 'demo' : 'live',
     // период, за который посчитаны done/booked/конверсия и таблица админов;
@@ -2034,6 +2050,7 @@ app.get('/api/stats', (req, res) => {
     done_today: doneToday,
     booked_today: booked,
     conversion_pct: conversion,
+    self_booked: selfBooked,
     results_today: resultMap,
     by_admin: byAdmin,
     clients_total: db.prepare(`SELECT COUNT(*) n FROM clients ${branch ? 'WHERE branch = ?' : ''}`).get(...bArgs).n,
@@ -2104,6 +2121,37 @@ function journalHandler(scope) {
       booked_now: (own || auto) ? null : up,
     };
   });
+
+  // Задачи, снятые записью без звонка, — тоже работа дня, просто не разговор. Показываем их
+  // в «Обзоре» отдельными строками вперемешку со звонками, по времени. Не показываем, когда
+  // журнал отфильтрован по администратору или по результату разговора: ни того, ни другого
+  // у этих строк нет, и в отфильтрованном списке они выглядели бы как мусор.
+  if (scope === 'tasks' && !filterResult && !filterAdmin) {
+    const cArgs = [period.since, period.until];
+    if (branch) cArgs.push(branch);
+    for (const k of db.prepare(`
+      SELECT k.id, k.created_at, k.visit_date, t.type,
+             c.id AS client_id, c.name, c.phone, c.branch
+      FROM task_closures k
+      JOIN clients c ON c.id = k.client_id
+      LEFT JOIN tasks t ON t.id = k.task_id
+      WHERE k.created_at >= ? AND k.created_at < ? ${branch ? 'AND c.branch = ?' : ''}
+      ORDER BY k.created_at DESC LIMIT 300
+    `).all(...cArgs)) {
+      items.push({
+        id: null, created_at: k.created_at, admin: null, result: null, note: null,
+        auto_booked: 0, callback_at: null, client_id: k.client_id, name: k.name,
+        phone: k.phone, branch: k.branch,
+        shown_result: 'self_booked',
+        task_label: TYPE_LABEL[k.type] || k.type || 'задача',
+        // ближайшая запись человека сейчас; visit_date — какой она была в момент снятия
+        booking: bookingOf(upcoming, k) || (k.visit_date ? { date: k.visit_date } : null),
+        booked_now: null,
+      });
+    }
+    items.sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0));
+  }
+
   res.json({ from: period.from, to: period.to, count: items.length, items });
   };
 }

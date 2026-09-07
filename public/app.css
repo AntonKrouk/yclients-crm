@@ -641,6 +641,9 @@
   .jr-res.booked,.jr-res.coming{color:var(--green);border-color:var(--green);background:var(--green-soft)}
   .jr-res.refused{color:var(--red);border-color:var(--red);background:var(--red-soft)}
   .jr-res.callback{color:var(--amber);border-color:var(--amber);background:var(--amber-soft)}
+  /* запись без звонка: не результат разговора, поэтому и не зелёный «Записан» —
+     нейтральный акцент, чтобы строка читалась как факт, а не как заслуга администратора */
+  .jr-res.self_booked{color:var(--accent);border-color:var(--accent);background:var(--panel2)}
   .jr-body{flex:1;min-width:0}
   .jr-name{font-family:var(--serif);font-size:16px;cursor:pointer;color:var(--ink)}
   .jr-name:hover{text-decoration:underline;text-underline-offset:3px}
