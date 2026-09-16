@@ -644,6 +644,7 @@ function recomputeFlags() {
 async function run(opts = {}) {
   const now = iso(Date.now());
   let totalC = 0, totalV = 0, totalG = 0;
+  const failed = [];   // филиалы, которые не синкнулись — см. цикл ниже
 
   if (yc.isDemo()) {
     const raw = yc.demoData();
@@ -674,18 +675,31 @@ async function run(opts = {}) {
 
     for (const comp of comps) {
       const name = comp.name || titles[comp.id] || comp.id;
-      const records = await yc.fetchRecords(comp.id, fmt(start), fmt(end),
-        (loaded, total) => { if (loaded % 1000 === 0 || loaded === total) console.log(`[sync] ${name}: записей ${loaded}/${total}`); });
-      const clients = clientsFromRecords(records);
-      const res = syncBranch(clients, records, { id: comp.id, name }, now);
-      totalC += res.clients; totalV += res.visits; totalG += res.goods;
-      const cancelled = reconcileFuture(records, { id: comp.id, name }, iso(end));
-      // товарных строк обработано (одна продажа, привязанная к нескольким записям
-      // параллельных мастеров, приходит несколько раз — в базе схлопнётся по yc_id)
-      console.log(`[sync] ${name}: клиентов ${res.clients}, визитов ${res.visits}, товарных строк ${res.goods}`
-        + (explicit ? ` (окно ${fmt(start)} → ${fmt(end)})` : ` (окно ${months} мес. назад + ${futureDays} дн. вперёд)`)
-        + (cancelled ? `, отменено записей: ${cancelled}` : ''));
-      records.length = 0; // отпускаем память до следующего филиала: на историческом окне это сотни МБ
+      // Сбой на ОДНОМ филиале не должен уносить весь синк. Раньше исключение отсюда вылетало
+      // из run(), и rules.generate() в конце не вызывался вовсе — без задач на день оставались
+      // ОБА филиала, причём молча: крон получал 500, а администратор — пустой дашборд, и по
+      // нему не отличить сбой от «всё обзвонено». Мелкие шаги ниже (прайс, покупки) так уже
+      // защищены; здесь то же самое для трёх главных.
+      let records = null;
+      try {
+        records = await yc.fetchRecords(comp.id, fmt(start), fmt(end),
+          (loaded, total) => { if (loaded % 1000 === 0 || loaded === total) console.log(`[sync] ${name}: записей ${loaded}/${total}`); });
+        const clients = clientsFromRecords(records);
+        const res = syncBranch(clients, records, { id: comp.id, name }, now);
+        totalC += res.clients; totalV += res.visits; totalG += res.goods;
+        const cancelled = reconcileFuture(records, { id: comp.id, name }, iso(end));
+        // товарных строк обработано (одна продажа, привязанная к нескольким записям
+        // параллельных мастеров, приходит несколько раз — в базе схлопнётся по yc_id)
+        console.log(`[sync] ${name}: клиентов ${res.clients}, визитов ${res.visits}, товарных строк ${res.goods}`
+          + (explicit ? ` (окно ${fmt(start)} → ${fmt(end)})` : ` (окно ${months} мес. назад + ${futureDays} дн. вперёд)`)
+          + (cancelled ? `, отменено записей: ${cancelled}` : ''));
+      } catch (e) {
+        failed.push(name);
+        console.error(`[sync] ${name}: ФИЛИАЛ НЕ СИНКНУЛСЯ — ${e.message}. Остальные синкаю дальше, задачи создам по имеющимся данным.`);
+        continue;   // прайс и покупки этого филиала тоже пропускаем: данных всё равно нет
+      } finally {
+        if (records) records.length = 0; // отпускаем память: на историческом окне это сотни МБ
+      }
       try {
         const svcN = await syncServices({ id: comp.id, name }, now);
         console.log(`[sync] ${name}: услуг в прайсе ${svcN}`);
@@ -716,6 +730,10 @@ async function run(opts = {}) {
   const autoN = recomputeAutoBooked();
   console.log(`[sync] звонков с записью в ${ATTRIBUTION_DAYS} дн.: ${autoN}`);
 
+  // Задачи создаём в любом случае — даже если филиал не синкнулся: по вчерашним данным
+  // список всё равно осмысленнее пустого экрана. Но факт сбоя не прячем: он в логе, в ответе
+  // на /api/sync и, значит, в том, что видит крон.
+  if (failed.length) console.error(`[sync] ВНИМАНИЕ: не синкнулись филиалы: ${failed.join(', ')}`);
   const tasksN = rules.generate();
 
   // Комментарии тянем фоном ПОСЛЕ ответа: первый проход долгий (~350 мс на клиента),
@@ -724,7 +742,8 @@ async function run(opts = {}) {
     setImmediate(() => syncComments().catch(e => console.error('[comments]', e.message)));
   }
 
-  return { mode: yc.isDemo() ? 'demo' : 'live', clients: totalC, visits: totalV, goods: totalG, tasks: tasksN, at: now };
+  return { mode: yc.isDemo() ? 'demo' : 'live', clients: totalC, visits: totalV, goods: totalG,
+    tasks: tasksN, at: now, ...(failed.length ? { failed } : {}) };
 }
 
 module.exports = {
