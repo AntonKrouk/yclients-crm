@@ -95,6 +95,8 @@
   .kpi .n{font-family:var(--serif);font-size:34px;line-height:1;color:var(--accent-2)}
   .kpi .l{margin-top:9px}
   .section-title{margin:34px 0 12px}
+  /* пояснение под заголовком раздела: зачем этот блок и чем отличается от соседнего */
+  .section-hint{margin:-4px 0 12px;color:var(--muted);font-size:12.5px;line-height:1.45;max-width:62ch}
   .muted{color:var(--muted)}
   .empty{text-align:center;color:var(--muted);padding:56px 20px;font-size:13px;
     letter-spacing:.06em;background:var(--panel);border:1px solid var(--line)}

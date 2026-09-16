@@ -95,6 +95,7 @@ const TYPE_LABEL = {
   reactivation: 'Реактивация',
   manual: 'Добавлен вручную',
   new_client: 'Новый клиент',
+  deep_sleep: 'Глубокий сон',
 };
 
 // --- Служебное ---------------------------------------------------------------
@@ -1997,14 +1998,24 @@ app.get('/api/stats', (req, res) => {
   // Строк за день десятки, так что разница в цене незаметна, зато цифра в таблице
   // всегда совпадает со статусом в журнале под ней.
   const upcomingToday = upcomingByPerson();
-  const todayRows = db.prepare(`
+  const allRows = db.prepare(`
     SELECT a.result, COALESCE(a.auto_booked,0) AS auto_booked, a.created_at,
-           COALESCE(a.admin,'—') AS admin, c.id AS client_id, c.phone
+           COALESCE(a.admin,'—') AS admin, c.id AS client_id, c.phone,
+           COALESCE(t.type,'') AS task_type
     FROM task_actions a JOIN clients c ON c.id = a.client_id
+    LEFT JOIN tasks t ON t.id = a.task_id
     WHERE a.task_id IS NOT NULL AND a.created_at >= ? AND a.created_at < ? ${bw}
   `).all(period.since, period.until, ...bArgs);
   const wonNow = (r) => r.result === 'booked' || r.result === 'coming'
     || r.auto_booked === 1 || bookedWithinWindow(upcomingToday, r, r.created_at);
+
+  // «Глубокий сон» считаем ОТДЕЛЬНО и в общую конверсию не берём. Это холодный звонок
+  // человеку, который не был у нас полгода-два: доля записей там заведомо ниже, чем по
+  // обычным задачам. Смешать — значит уронить проценты администратора за работу, которую
+  // он проделал добросовестно, и отбить у него желание в этот раздел заглядывать.
+  const todayRows = allRows.filter(r => r.task_type !== 'deep_sleep');
+  const deepRows  = allRows.filter(r => r.task_type === 'deep_sleep');
+  const deepBooked = deepRows.filter(wonNow).length;
 
   const resultMap = {};
   for (const r of todayRows) {
@@ -2023,9 +2034,13 @@ app.get('/api/stats', (req, res) => {
 
   // «Обработано сегодня» = по скольким задачам админ отчитался, включая «перезвонить»
   // и «не ответил»: раньше считались только закрытые, и половина работы пропадала.
+  // Спящих сюда тоже не берём — «обработано» должно совпадать с тем, из чего считается
+  // конверсия, иначе знаменатель и числитель живут по разным правилам.
   const doneToday = db.prepare(`SELECT COUNT(DISTINCT a.task_id) n FROM task_actions a
     JOIN clients c ON c.id = a.client_id
-    WHERE a.task_id IS NOT NULL AND a.created_at >= ? AND a.created_at < ? ${bw}`)
+    LEFT JOIN tasks t ON t.id = a.task_id
+    WHERE a.task_id IS NOT NULL AND COALESCE(t.type,'') <> 'deep_sleep'
+      AND a.created_at >= ? AND a.created_at < ? ${bw}`)
     .get(period.since, period.until, ...bArgs).n;
   const booked = resultMap.booked || 0;
   const contacted = (resultMap.booked || 0) + (resultMap.refused || 0) + (resultMap.callback || 0);
@@ -2051,6 +2066,8 @@ app.get('/api/stats', (req, res) => {
     booked_today: booked,
     conversion_pct: conversion,
     self_booked: selfBooked,
+    // своя строка в «Обзоре»: сколько спящих разбудили и скольких вернули
+    deep_sleep: { calls: deepRows.length, booked: deepBooked },
     results_today: resultMap,
     by_admin: byAdmin,
     clients_total: db.prepare(`SELECT COUNT(*) n FROM clients ${branch ? 'WHERE branch = ?' : ''}`).get(...bArgs).n,

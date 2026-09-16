@@ -25,13 +25,26 @@ const REACTIVATION_MIN_VISITS = 2; // реактивируем только те
 const REBOOK_MIN_VISITS = 3;          // по двум точкам ритма не бывает
 const REBOOK_MAX_INTERVAL_DAYS = 180; // ходит реже двух раз в год — это не рутина, а ручной обзвон
 
+// --- «Глубокий сон» ------------------------------------------------------------
+// Отдельная очередь для тех, кого правила выше отсекают как шум: был один-два раза, ходит
+// реже двух раз в год, пропал дольше полугода. Своя дневная норма, в DAILY_OPEN_TARGET не
+// входит и с обычным обзвоном за слоты не конкурирует — основной список остаётся чистым,
+// а это лежит рядом как необязательная работа «когда разобрано главное».
+// Зачем понадобилось: 16.09.2026 по Баскову движок не создал НИ ОДНОЙ задачи. Филиал
+// обзвонен плотно, все недавние — на паузе, а ужесточение «пора записать» от 07.09
+// (коммит 84eff80) срезало остаток: 10-12 задач в день до 08.09, затем 2-5, потом ноль.
+// Пул спящих на порядок больше дневной нормы и не кончится.
+const DEEP_SLEEP_TARGET = 10;         // своя норма на филиал, отдельно от DAILY_OPEN_TARGET
+const DEEP_SLEEP_MIN_DAYS = 90;       // раньше трёх месяцев человек ещё не «спит»
+const DEEP_SLEEP_MAX_DAYS = 730;      // глубже двух лет не будим: звонок уже неуместен
+
 // Пауза после звонка. Без неё обработанный клиент возвращался в список на СЛЕДУЮЩЕМ ЖЕ
 // прогоне генерации (кнопка «Обновить», крон каждые 30 мин): задача уходит в статус done,
 // а причина — неявка или просрочка записи — никуда не девается, и человек снова первый
 // в очереди. Админы видели, как разобранный список тут же наполняется теми же людьми.
 // Теперь звонок «закрывает» клиента на срок ниже — и по ВСЕМ его карточкам (Басков +
 // Мытнинская), чтобы второй филиал не звонил следом.
-const CALL_COOLDOWN_DAYS = { no_show: 14, rebook: 14, reactivation: 60 };
+const CALL_COOLDOWN_DAYS = { no_show: 14, rebook: 14, reactivation: 60, deep_sleep: 180 };
 const REFUSAL_COOLDOWN_DAYS = 90; // «Отказ» — разговор состоялся, повторять его скоро незачем
 const NO_CALLS_COOLDOWN_DAYS = 60; // «Просил не звонить» — пауза, но не навсегда
 const DEFAULT_COOLDOWN_DAYS = 14;
@@ -51,7 +64,11 @@ const NOT_MANUAL   = "COALESCE(source,'auto') <> 'manual'";
 // написать ему всё равно надо). Карточка висит, пока админ не отметит, что написал.
 // Всё, что НЕ подпадает под эти два случая, движок считает своим и волен убирать.
 const ENGINE_OWNED   = "COALESCE(source,'auto') <> 'manual' AND type <> 'new_client'";
-const ENGINE_OWNED_T = "COALESCE(t.source,'auto') <> 'manual' AND t.type <> 'new_client'";
+// Тот же признак с префиксом таблицы — И БЕЗ «глубокого сна». Разница намеренная: уборку
+// (запись клиента, пауза после звонка) спящие проходят наравне со всеми, а вот в подсчёт
+// дневного лимита обычного обзвона не попадают — у них своя норма DEEP_SLEEP_TARGET.
+// Иначе десять спящих забивали бы все слоты и обычные задачи перестали бы создаваться.
+const ENGINE_OWNED_T = "COALESCE(t.source,'auto') <> 'manual' AND t.type NOT IN ('new_client','deep_sleep')";
 
 // Окно, в котором запись клиента засчитывается предыдущему звонку (то же число, что в
 // sync.js). Константу дублируем, а не импортируем: sync.js сам требует rules.js, и ссылка
@@ -118,7 +135,7 @@ function generate(opts = {}) {
 
   const clients = db.prepare(`
     SELECT id, name, phone, branch, first_visit, last_visit, avg_interval_days, predicted_next,
-           visits_count, favorite_staff
+           visits_count, spent, favorite_staff
     FROM clients WHERE COALESCE(do_not_call,0) = 0
   `).all();
 
@@ -383,7 +400,68 @@ function generate(opts = {}) {
     openBy.set(branch, open);
   }
 
-  return created + newbies;
+  return created + newbies + fillDeepSleep(clients, {
+    now, nowIso, suppressed, manualOpen, manualPerson, queuedPerson, upMap,
+    personBooked, personLast, cooldownLeft,
+    taken: new Set(candidates.map(c => c.clientId)),
+  });
+}
+
+// --- «Глубокий сон» ------------------------------------------------------------
+// Добираем отдельную десятку на филиал из тех, кого обычные правила не берут. Очередь своя,
+// слоты свои, на обычный обзвон не влияет. Вызывается только из полного утреннего прогона.
+//
+// Порядок внутри очереди — по ценности клиента: сперва сколько человек у нас оставил, затем
+// сколько раз приходил, и лишь потом свежесть. Без ранжирования первыми в обзвон попадали бы
+// случайные люди из хвоста базы, админ бы решил, что раздел бесполезен, и перестал в него
+// заглядывать. `taken` — те, кого уже зовём по обычному поводу: двух задач на человека не ставим.
+function fillDeepSleep(clients, ctx) {
+  const { now, nowIso, suppressed, manualOpen, manualPerson, queuedPerson,
+          upMap, personBooked, personLast, cooldownLeft, taken } = ctx;
+
+  const byBranch = new Map();
+  for (const c of clients) {
+    if (suppressed.has(c.id) || taken.has(c.id)) continue;
+    if (manualOpen.has(c.id) || manualPerson.has(c.id) || queuedPerson.has(c.id)) continue;
+    if (upMap.get(c.id) || personBooked.has(c.id)) continue;   // уже записан — будить незачем
+
+    // Визит считаем по ЧЕЛОВЕКУ: у клиента может быть карточка во втором филиале, и там он
+    // был месяц назад. Ни одного визита вообще — звонить не о чем, повода нет.
+    const last = personLast.get(c.id) || c.last_visit;
+    if (!last) continue;
+    const sinceLast = daysBetween(last, now);
+    if (sinceLast < DEEP_SLEEP_MIN_DAYS || sinceLast > DEEP_SLEEP_MAX_DAYS) continue;
+    if (cooldownLeft(c, 'deep_sleep')) continue;
+
+    const visits = c.visits_count || 0;
+    const branch = c.branch || '';
+    if (!byBranch.has(branch)) byBranch.set(branch, []);
+    byBranch.get(branch).push({
+      clientId: c.id, spent: c.spent || 0, visits, sinceLast,
+      reason: `Не был ${sinceLast} дн., визитов ${visits}. Глубокий сон: напомнить о себе, вернуть.`,
+    });
+  }
+
+  const openBy = new Map(db.prepare(`
+    SELECT COALESCE(c.branch,'') AS b, COUNT(*) AS n
+    FROM tasks t JOIN clients c ON c.id = t.client_id
+    WHERE t.status = 'open' AND t.type = 'deep_sleep' GROUP BY COALESCE(c.branch,'')
+  `).all().map(r => [r.b, r.n]));
+
+  let created = 0;
+  for (const [branch, queue] of byBranch) {
+    queue.sort((a, b) => (b.spent - a.spent) || (b.visits - a.visits) || (a.sinceLast - b.sinceLast));
+    let open = openBy.get(branch) || 0;
+    for (const cand of queue) {
+      if (open >= DEEP_SLEEP_TARGET) break;
+      if (hasOpen.get(cand.clientId, 'deep_sleep')) continue;
+      // priority 3 — низкий: в общей сортировке списка спящие идут после обычных задач
+      insertTask.run(cand.clientId, 'deep_sleep', today(), 3, cand.reason, nowIso);
+      open++; created++;
+    }
+  }
+  if (created) console.log(`[rules] «глубокий сон»: создано задач ${created}`);
+  return created;
 }
 
 // --- «Записался без звонка» ----------------------------------------------------

@@ -394,6 +394,7 @@ async function loadTasks(){
   const counts = {};
   tasks.forEach(t=>counts[t.type]=(counts[t.type]||0)+1);
   const KL={new_client:'New — первый визит',rebook:'Пора записать',no_show:'Не пришёл',reactivation:'Реактивация'};
+  if(counts.deep_sleep) KL.deep_sleep='Deep Sleep';   // плитка только когда спящие есть
   if(counts.manual) KL.manual='Добавлены вручную';   // плитку показываем, только если такие задачи есть
   $('#taskKpis').innerHTML = Object.entries(KL).map(([k,l])=>
     `<div class="card kpi"><div class="n">${counts[k]||0}</div><div class="l">${l}</div></div>`).join('');
@@ -401,14 +402,39 @@ async function loadTasks(){
   // Новички идут отдельным блоком наверху: это другая работа (написать, а не позвонить),
   // и она привязана ко вчерашнему визиту — на общем фоне такие карточки терялись бы.
   const newbies = tasks.filter(t=>t.type==='new_client');
-  const rest    = tasks.filter(t=>t.type!=='new_client');
+  const deep    = tasks.filter(t=>t.type==='deep_sleep');
+  const rest    = tasks.filter(t=>t.type!=='new_client' && t.type!=='deep_sleep');
   $('#newSection').style.display = newbies.length ? '' : 'none';
   $('#newList').innerHTML = newbies.map(t=>taskCard(t,RES_NEW,true)).join('');
 
+  // Спящие живут отдельным блоком внизу: работа та же (позвонить и записать), но повод
+  // холодный, и мешать их с дневной нормой нельзя — иначе непонятно, что обязательно, а что нет.
+  $('#deepSection').style.display = deep.length ? '' : 'none';
+  $('#deepList').innerHTML = deep.map(t=>taskCard(t,RES,false)).join('');
+
+  // Пустой список объясняем: раньше «задач нет» читалось как поломка, хотя движок просто
+  // не нашёл кого звать. Показываем, сколько человек ждёт перезвона и когда ближайший.
   const list=$('#taskList');
   list.innerHTML = rest.length
     ? rest.map(t=>taskCard(t,RES,false)).join('')
-    : '<div class="empty">На сегодня задач нет</div>';
+    : `<div class="empty">${await emptyTasksHint(deep.length)}</div>`;
+}
+
+// Текст для пустого списка задач. Отложенные задачи на дашборде не видны до самого дня
+// перезвона, и из-за этого пустой экран выглядел сбоем выгрузки (случай 16.09.2026 по
+// Баскову: 16 задач лежали отложенными на 17.09 и позже, а админ видел пустоту).
+async function emptyTasksHint(deepCount){
+  const base='На сегодня задач нет — всё обзвонено.';
+  const tail = deepCount ? ' Ниже — Deep Sleep, если есть время.' : '';
+  let snoozed=[];
+  try{ snoozed = await api(bp('/api/tasks?status=snoozed')) || []; }catch{ return base+tail; }
+  // Отложенные на сегодня дашборд и так показывает в общем списке — считаем только те,
+  // что лежат дальше по календарю и потому не видны нигде.
+  const today = new Date().toLocaleDateString('sv-SE');   // YYYY-MM-DD в местном времени
+  const later = snoozed.filter(t=>(t.due_date||'').slice(0,10) > today);
+  if(!later.length) return base+tail;
+  const next = later.map(t=>t.due_date).sort()[0];
+  return `${base} Ждут перезвона: ${later.length}, ближайший — ${dateLabel(next)}.`+tail;
 }
 
 // Черновик заметки живёт на сервере: админ печатает, отвлекается на другую вкладку или
