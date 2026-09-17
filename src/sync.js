@@ -6,6 +6,7 @@ const rules = require('./rules');
 const people = require('./people');
 
 const DAY = 86400000;
+const BIRTHDAY_COLOR = '9c27b0';   // цвет записей-напоминаний о ДР в журнале YClients
 
 function iso(d) { return new Date(d).toISOString(); }
 
@@ -27,6 +28,14 @@ function normalizeRecord(r) {
   else if (att === -1) status = 'no_show';
   else if (isFuture || att === 0 || att === 2) status = 'upcoming';
 
+  // Напоминание о дне рождения: админы ставят в журнал запись-заглушку на день ДР клиента —
+  // без услуг, фиолетовым цветом, в комментарии «др». Посещаемость ей никто не отмечает, но
+  // и визитом это не является. Отличаем такие записи от настоящих визитов, которые просто
+  // не закрыли (бесплатные клиенты: услуга с ценой написана в комментарии, оплаты нет).
+  const comment = String(r.comment || '');
+  const birthday = !services.length
+    && (r.custom_color === BIRTHDAY_COLOR || /^\s*др(?![а-яё])/i.test(comment));
+
   const client = clientObj ? {
     id: clientObj.id,
     name: clientObj.display_name || [clientObj.name, clientObj.surname].filter(Boolean).join(' ') || 'Без имени',
@@ -45,6 +54,8 @@ function normalizeRecord(r) {
     // Когда запись СОЗДАЛИ. YClients отдаёт это отдельным полем; по дате визита
     // отличить «записался после звонка» от «был записан и так» невозможно.
     booked_at: r.create_date ? iso(r.create_date) : null,
+    comment,
+    kind: birthday ? 'birthday' : 'visit',
   };
 }
 
@@ -95,10 +106,23 @@ function toTrips(visits) {
   return [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
 }
 
+// Визит, который был, но не закрыт в YClients: запись в прошлом без отметки посещаемости.
+// Так ведут бесплатных клиентов (семья, модели для портфолио) — оплаты нет, и визит никто не
+// закрывает, а услуга с ценой написана в комментарии. Без этого у Михаила Плеханова, который
+// ходит каждый месяц, последним визитом числился декабрь 2024 и он попадал в «Глубокий сон».
+// Берём только записи, разобранные новым синком (kind = 'visit'): у старых строк без kind
+// нельзя отличить визит от напоминания о ДР.
+const isUnmarkedVisit = (v, nowMs = Date.now()) =>
+  v.status === 'upcoming' && v.kind === 'visit' && new Date(v.date).getTime() < nowMs;
+
 function computeFrequency(visits) {
   const completed = visits.filter(v => v.status === 'completed');
-  if (completed.length === 0) return null;
-  const trips = toTrips(completed);
+  const nowMs = Date.now();
+  const unmarked = visits.filter(v => isUnmarkedVisit(v, nowMs));
+  // attended — был в салоне (для дат, ритма, мастеров); деньги — только по закрытым
+  const attended = completed.concat(unmarked);
+  if (attended.length === 0) return null;
+  const trips = toTrips(attended);
   const first = trips[0].date;
   const last = trips[trips.length - 1].date;
   let avg = null;
@@ -111,14 +135,14 @@ function computeFrequency(visits) {
   // любимый мастер/услуга — по частоте оказанных услуг
   const top = (key) => {
     const m = {};
-    completed.forEach(v => { if (v[key]) m[v[key]] = (m[v[key]] || 0) + 1; });
+    attended.forEach(v => { if (v[key]) m[v[key]] = (m[v[key]] || 0) + 1; });
     return Object.entries(m).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
   };
   return {
     first_visit: first,
     last_visit: last,
     visits_count: trips.length,              // походов в салон
-    services_count: completed.length,        // строк-записей (услуг) — для справки в карточке
+    services_count: attended.length,         // строк-записей (услуг) — для справки в карточке
     spent: completed.reduce((s, v) => s + (v.cost || 0), 0),
     avg_interval_days: avg,
     predicted_next: predicted,
@@ -140,20 +164,21 @@ const upsertClient = db.prepare(`
     birth_date=COALESCE(excluded.birth_date, clients.birth_date)
 `);
 const upsertVisitStmt = db.prepare(`
-  INSERT INTO visits (yclients_record_id, client_id, company_id, branch, date, service, staff, cost, status, service_category, booked_at)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?)
+  INSERT INTO visits (yclients_record_id, client_id, company_id, branch, date, service, staff, cost, status, service_category, booked_at, comment, kind)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
   ON CONFLICT(yclients_record_id) DO UPDATE SET
     client_id=excluded.client_id, company_id=excluded.company_id, branch=excluded.branch,
     date=excluded.date, service=excluded.service, staff=excluded.staff, cost=excluded.cost,
     status=excluded.status, service_category=excluded.service_category,
     -- момент создания не перезаписываем пустотой: старые записи приехали без него
-    booked_at=COALESCE(excluded.booked_at, visits.booked_at)
+    booked_at=COALESCE(excluded.booked_at, visits.booked_at),
+    comment=COALESCE(excluded.comment, visits.comment), kind=COALESCE(excluded.kind, visits.kind)
 `);
 // Обёртка: категорию услуги считаем сами по прайс-листу, вызывающим об этом знать не нужно.
 const upsertVisit = {
-  run(recId, clientId, cid, branch, date, service, staff, cost, status, bookedAt = null) {
+  run(recId, clientId, cid, branch, date, service, staff, cost, status, bookedAt = null, comment = null, kind = null) {
     return upsertVisitStmt.run(recId, clientId, cid, branch, date, service, staff, cost, status,
-      categoriesOf(service), bookedAt);
+      categoriesOf(service), bookedAt, comment, kind);
   },
 };
 
@@ -212,7 +237,7 @@ const getClientLocalId = db.prepare('SELECT id FROM clients WHERE yclients_id = 
 // (окно 12 мес.) затирал агрегаты урезанными числами — суммы в конструкторе выходили
 // в разы меньше настоящих, а у клиентов, не заходивших год, обнулялись вовсе.
 // Теперь окно синка определяет только то, ЧТО докачали; счёт идёт по таблице visits.
-const clientVisitsStmt = db.prepare('SELECT date, service, staff, cost, status FROM visits WHERE client_id = ?');
+const clientVisitsStmt = db.prepare('SELECT date, service, staff, cost, status, kind FROM visits WHERE client_id = ?');
 const updAggregates = db.prepare(`
   UPDATE clients SET first_visit=?, last_visit=?, visits_count=?, services_count=?, spent=?,
     avg_interval_days=?, predicted_next=?, favorite_staff=?, favorite_service=?, updated_at=? WHERE id=?
@@ -260,7 +285,7 @@ function syncBranch(clients, records, company, now) {
       c.birth_date ? normBirthDate(c.birth_date) : null, now);
     const local = getClientLocalId.get(c.id);
     for (const v of visits) {
-      upsertVisit.run(v.yclients_record_id, local.id, cid, company.name, v.date, v.service, v.staff, v.cost, v.status, v.booked_at);
+      upsertVisit.run(v.yclients_record_id, local.id, cid, company.name, v.date, v.service, v.staff, v.cost, v.status, v.booked_at, v.comment, v.kind);
       visitsN++;
     }
     for (const g of goodsByClient.get(c.id) || []) {
@@ -301,7 +326,7 @@ async function importRecord(cid, branch, recordId) {
   const local = getClientLocalId.get(v.client_id);
   if (!local) return { skipped: 'client_not_in_db' };
   upsertVisit.run(v.yclients_record_id, local.id, Number(cid) || null, branch || null,
-    v.date, v.service, v.staff, v.cost, v.status, v.booked_at);
+    v.date, v.service, v.staff, v.cost, v.status, v.booked_at, v.comment, v.kind);
   // пересчитываем агрегаты клиента по локальным визитам (новая запись — будущая,
   // на статистику завершённых не влияет, но держим строку клиента консистентной)
   recomputeClient(local.id, iso(Date.now()));
@@ -375,7 +400,7 @@ async function syncUpcoming(opts = {}) {
       if (!v.client_id) continue;                      // блокировка времени без клиента
       const local = getClientLocalId.get(v.client_id);
       if (!local) { unknown++; continue; }             // новый клиент — приедет полным синком
-      upsertVisit.run(v.yclients_record_id, local.id, cid, name, v.date, v.service, v.staff, v.cost, v.status, v.booked_at);
+      upsertVisit.run(v.yclients_record_id, local.id, cid, name, v.date, v.service, v.staff, v.cost, v.status, v.booked_at, v.comment, v.kind);
       visits++;
     }
     cancelled += reconcileFuture(records, { id: comp.id, name }, iso(end));
@@ -641,6 +666,53 @@ function recomputeFlags() {
   return { clients: rows.length, dnc_changed: dnc, discount_changed: disc };
 }
 
+// --- «Ходит, но не платит» ------------------------------------------------------
+// Семья владельцев, модели для портфолио, друзья салона: в салон ходят, а оплаты нет.
+// Обзванивать их «пора записаться» или «давно не были» бессмысленно — такие люди приходят
+// по договорённости, и движок задач их пропускает (см. rules.js, как VIP-список).
+//
+// Признак оплаты — закрытый визит. Платящему клиенту визит закрывают через кассу, и он
+// приходит к нам как completed. Бесплатному закрывать нечего: запись остаётся без отметки,
+// а услуга с ценой написана в комментарии. Сумма в карточке YClients тут не помогает — она
+// за всю жизнь (у Михаила Плеханова там 129 тыс. из давних лет), а цена в записи бывает
+// нулевой и у платящих: у Кристины Мироновой 255 закрытых визитов с нулём, но оплат на 1,3 млн.
+// Признаки, по ЧЕЛОВЕКУ (все его карточки вместе):
+//  - в имени карточки пометка «без оплаты» / «б/о» / «бесплатно» — админы пишут прямо в имя.
+//    Кроме заметок вида «предложить ингаляцию без оплаты»: это про разовую услугу, а не про
+//    клиента;
+//  - или за последний год у него не меньше FREE_MIN_TRIPS походов без отметки, и их хотя бы
+//    вдвое больше, чем закрытых. Пара незакрытых записей у платящего клиента — забывчивость
+//    админа, а не бесплатное обслуживание, поэтому «2 без отметки на 2 закрытых» не берём.
+const FREE_NAME_RE = /без\s*оплат|бесплатн|(^|[^а-яё])б\s*\/\s*о([^а-яё]|$)/i;
+const FREE_WINDOW_DAYS = 365;
+const FREE_MIN_TRIPS = 2;
+
+function recomputeFreeClients() {
+  const cards = db.prepare('SELECT id, name, phone, visits_count, last_visit, COALESCE(free_client,0) AS f FROM clients').all();
+  const since = iso(Date.now() - FREE_WINDOW_DAYS * DAY);
+  const visitsOf = db.prepare(`SELECT date, status, kind FROM visits
+    WHERE client_id = ? AND date >= ? AND status IN ('completed','upcoming')`);
+  const upd = db.prepare('UPDATE clients SET free_client=? WHERE id=?');
+  let changed = 0;
+  db.exec('BEGIN');
+  try {
+    for (const arr of people.groupByPerson(cards)) {
+      let free = arr.some(c => FREE_NAME_RE.test(c.name || '') && !/предлож/i.test(c.name || ''));
+      if (!free) {
+        const rows = arr.flatMap(c => visitsOf.all(c.id, since));
+        const nowMs = Date.now();
+        const closed = toTrips(rows.filter(v => v.status === 'completed')).length;
+        const unmarked = toTrips(rows.filter(v => isUnmarkedVisit(v, nowMs))).length;
+        free = unmarked >= FREE_MIN_TRIPS && unmarked >= closed * 2;
+      }
+      const flag = free ? 1 : 0;
+      for (const c of arr) if (c.f !== flag) { upd.run(flag, c.id); changed++; }
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  return changed;
+}
+
 async function run(opts = {}) {
   const now = iso(Date.now());
   let totalC = 0, totalV = 0, totalG = 0;
@@ -719,6 +791,8 @@ async function run(opts = {}) {
   // «Не беспокоить» ловим и в имени клиента: в этом салоне админы пишут заметки прямо в имя
   // («писать в WA», «не звонить» и т.п.). Имя обновляется каждым синком — пересчитываем флаг.
   recomputeFlags();
+  const freeN = recomputeFreeClients();
+  if (freeN) console.log(`[sync] отметка «ходит без оплаты» изменилась у карточек: ${freeN}`);
 
   // Категории визитов: при первом синке прайс приезжает уже ПОСЛЕ визитов, а вся
   // историческая догрузка легла в базу до появления колонки — доставляем здесь.
@@ -747,7 +821,7 @@ async function run(opts = {}) {
 }
 
 module.exports = {
-  run, syncUpcoming, computeFrequency, toTrips, recomputeClient, rebuildAggregates, importRecord,
+  run, syncUpcoming, computeFrequency, toTrips, isUnmarkedVisit, recomputeFreeClients, recomputeClient, rebuildAggregates, importRecord,
   recomputeAutoBooked, ATTRIBUTION_DAYS,
   syncStandalonePurchases, purchasesFromRecord, backfillVisitCategories,
   syncComments, commentSyncStatus, recomputeFlags, parseDiscount, writeCallToYclients,

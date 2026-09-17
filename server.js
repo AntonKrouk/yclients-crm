@@ -1768,7 +1768,7 @@ function personCards(client) {
 // Подробная статистика по клиенту. ids — все карточки человека (обычно одна, у «двухфилиальных» две)
 function computeClientStats(id, client, ids = [id]) {
   const ph = ids.map(() => '?').join(',');
-  const visits = db.prepare(`SELECT date, service, staff, cost, status FROM visits WHERE client_id IN (${ph})`).all(...ids);
+  const visits = db.prepare(`SELECT date, service, staff, cost, status, kind FROM visits WHERE client_id IN (${ph})`).all(...ids);
   const completed = visits.filter(v => v.status === 'completed');
   const cancelled = visits.filter(v => v.status === 'cancelled').length;
   // «Записан» — ТОЛЬКО будущая запись. Записи с прошедшей датой, которым в YClients так и не
@@ -1778,7 +1778,7 @@ function computeClientStats(id, client, ids = [id]) {
   const nowMs = Date.now();
   const isFuture = v => new Date(v.date).getTime() >= nowMs;
   const upcoming = visits.filter(v => v.status === 'upcoming' && isFuture(v)).length;
-  const unmarked = visits.filter(v => v.status === 'upcoming' && !isFuture(v)).length;
+  const unmarked = visits.filter(v => v.status === 'upcoming' && !isFuture(v) && v.kind !== 'birthday').length;
 
   // Визит = поход в салон (календарный день): за один поход клиент берёт несколько услуг
   // у разных мастеров, и каждая приезжает из YClients отдельной записью.
@@ -1912,13 +1912,19 @@ app.get('/api/clients/:id/timeline', (req, res) => {
   const ph = p.ids.map(() => '?').join(',');
   const nowMs = Date.now();
 
-  const visits = db.prepare(`SELECT date, service, staff, cost, status, branch FROM visits WHERE client_id IN (${ph})`).all(...p.ids)
-    .map(v => ({
-      kind: 'visit', date: v.date,
-      // прошедшая запись, которой не проставили посещаемость в YClients — не «предстоит»
-      status: (v.status === 'upcoming' && new Date(v.date).getTime() < nowMs) ? 'unmarked' : v.status,
-      title: v.service || 'Визит', staff: v.staff, cost: v.cost, branch: v.branch,
-    }));
+  const visits = db.prepare(`SELECT date, service, staff, cost, status, branch, comment, kind AS vkind FROM visits WHERE client_id IN (${ph})`).all(...p.ids)
+    .map(v => {
+      const past = v.status === 'upcoming' && new Date(v.date).getTime() < nowMs;
+      // прошедшая запись без отметки посещаемости — не «предстоит»: это либо напоминание о ДР,
+      // либо визит, который не закрыли (у бесплатных клиентов услуга только в комментарии)
+      const status = past ? (v.vkind === 'birthday' ? 'birthday' : 'unmarked') : v.status;
+      const note = (v.comment || '').split('\n').map(x => x.trim()).find(Boolean) || '';
+      return {
+        kind: 'visit', date: v.date, status,
+        title: status === 'birthday' ? 'Напоминание о дне рождения' : (v.service || note || 'Визит'),
+        staff: v.staff, cost: v.cost, branch: v.branch,
+      };
+    });
 
   const actions = db.prepare(`
     SELECT a.created_at AS date, a.admin, a.result, a.note, t.type

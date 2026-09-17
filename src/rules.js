@@ -135,7 +135,7 @@ function generate(opts = {}) {
 
   const clients = db.prepare(`
     SELECT id, name, phone, branch, first_visit, last_visit, avg_interval_days, predicted_next,
-           visits_count, spent, favorite_staff
+           visits_count, spent, favorite_staff, COALESCE(free_client,0) AS free_client
     FROM clients WHERE COALESCE(do_not_call,0) = 0
   `).all();
 
@@ -184,7 +184,8 @@ function generate(opts = {}) {
     if (call) for (const c of arr) personCall.set(c.id, call);
     if (next) for (const c of arr) personNext.set(c.id, next);
     if (last) for (const c of arr) personLast.set(c.id, last);
-    if (arr.some(c => manualIds.has(c.id))) for (const c of arr) manualPerson.add(c.id);
+    // «Ходит без оплаты» (семья, портфолио) ведём так же, как ручные списки: не обзваниваем
+    if (arr.some(c => manualIds.has(c.id) || c.free_client)) for (const c of arr) manualPerson.add(c.id);
     if (arr.some(c => queuedIds.has(c.id))) for (const c of arr) queuedPerson.add(c.id);
 
     if (arr.length < 2) continue;
@@ -220,7 +221,7 @@ function generate(opts = {}) {
   // Снимаем ранее созданные задачи по неприоритетным дублям (чтобы не висели после включения дедупа)
   if (suppressed.size) dismissFor([...suppressed]);
 
-  // Клиента добавили в ручной список — его задачи снимаем сразу, не дожидаясь звонка
+  // Клиента добавили в ручной список или он ходит без оплаты — его задачи снимаем сразу
   if (manualPerson.size) {
     const n = dismissFor([...manualPerson]);
     if (n) console.log(`[rules] снято задач по клиентам из ручных списков: ${n}`);

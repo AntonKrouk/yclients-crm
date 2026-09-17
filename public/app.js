@@ -2227,7 +2227,7 @@ async function openClient(id){
     ['Персональная скидка', c.discount_pct ? `−${c.discount_pct}%` : '—'],
   ].map(([k,v])=>`<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
 
-  const STAT={completed:'выполнен',upcoming:'предстоит',no_show:'не пришёл',cancelled:'отменён',unmarked:'не отмечен в YClients'};
+  const STAT={completed:'выполнен',upcoming:'предстоит',no_show:'не пришёл',cancelled:'отменён',unmarked:'не отмечен в YClients',birthday:'🎂 не визит'};
 
   // Один поход в салон = один блок. За визит клиент берёт несколько услуг у разных
   // мастеров, и каждая приезжает из YClients отдельной записью — раньше они шли
