@@ -1687,20 +1687,29 @@ app.post('/api/booking/create', async (req, res) => {
 // value: true — принудительно ДА, false — принудительно НЕТ, null — снять ручную отметку (вернуть авто).
 app.post('/api/clients/:id/dnc', (req, res) => {
   const id = Number(req.params.id);
-  const c = db.prepare('SELECT id, name, comment FROM clients WHERE id=?').get(id);
+  const c = db.prepare('SELECT id, name, phone, comment FROM clients WHERE id=?').get(id);
   if (!c) return res.status(404).json({ error: 'client not found' });
   const v = req.body?.value;
   const manual = v === true ? 1 : v === false ? 0 : null;
-  // при снятии ручной отметки возвращаемся к авто-детекту по имени/комментарию
-  const auto = (sync.DNC_RE.test(c.name || '') || sync.DNC_RE.test(sync.originalComment(c.comment))) ? 1 : 0;
+
+  // «Не беспокоить» — свойство ЧЕЛОВЕКА, а не карточки. В YClients он заведён отдельной
+  // карточкой в каждом филиале, а тумблер ставил флаг только в ту, что открыта в дашборде.
+  // Вторая оставалась чистой — и движок звонил человеку оттуда: Юлия Панова, запрет на
+  // Баскове (30.08), 18.09 «глубокий сон» с Мытнинской. Ставим и снимаем по всем карточкам.
+  const cards = personCards(c);
+  // при снятии ручной отметки возвращаемся к авто-детекту по имени/комментарию —
+  // тоже по человеку: пометка «не звонить» бывает написана только в одной карточке
+  const auto = cards.some(k => sync.DNC_RE.test(k.name || '') || sync.DNC_RE.test(sync.originalComment(k.comment))) ? 1 : 0;
   const eff = manual != null ? manual : auto;
-  db.prepare('UPDATE clients SET dnc_manual=?, do_not_call=? WHERE id=?').run(manual, eff, id);
-  // если теперь «не беспокоить» — снимаем его открытые задачи
-  if (eff) {
-    db.prepare(`UPDATE tasks SET status='dismissed', closed_at=? WHERE client_id=? AND status IN ('open','snoozed')`)
-      .run(new Date().toISOString(), id);
+  const upd = db.prepare('UPDATE clients SET dnc_manual=?, do_not_call=? WHERE id=?');
+  // если теперь «не беспокоить» — снимаем открытые задачи по всем карточкам
+  const dismiss = db.prepare(`UPDATE tasks SET status='dismissed', closed_at=? WHERE client_id=? AND status IN ('open','snoozed')`);
+  const now = new Date().toISOString();
+  for (const k of cards) {
+    upd.run(manual, eff, k.id);
+    if (eff) dismiss.run(now, k.id);
   }
-  res.json({ ok: true, do_not_call: eff, manual });
+  res.json({ ok: true, do_not_call: eff, manual, cards: cards.length });
 });
 
 // --- Клиенты / история -------------------------------------------------------

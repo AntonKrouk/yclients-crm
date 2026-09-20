@@ -632,6 +632,9 @@ async function syncComments({ full = false } = {}) {
       if (commentSync.done % 200 === 0) console.log(`[comments] ${commentSync.done}/${commentSync.total}`);
       await new Promise(rs => setTimeout(rs, THROTTLE_MS));
     }
+    // флаг проставлен по карточкам — разравниваем его по людям, иначе запрет в карточке
+    // одного филиала не закроет задачи по карточке соседнего
+    spreadDncByPerson();
     // «не беспокоить» — снимаем открытые задачи по таким клиентам
     const dismissed = db.prepare(`
       UPDATE tasks SET status='dismissed', closed_at=?
@@ -646,6 +649,35 @@ async function syncComments({ full = false } = {}) {
 }
 
 function commentSyncStatus() { return { ...commentSync }; }
+
+// «Не беспокоить» — признак ЧЕЛОВЕКА, а не карточки. В YClients человек заведён отдельной
+// карточкой в каждом филиале, а флаг ставился только в ту, где админ нажал тумблер (или где
+// в комментарии нашлось «не звонить»). Вторая карточка оставалась чистой, и движок задач
+// спокойно звал человека оттуда: у Юлии Пановой 30.08 стоял запрет на Баскове, а 18.09 ей
+// прилетел «глубокий сон» с Мытнинской. Отдельная беда в том, что помеченную карточку
+// rules.js отсекает ДО группировки по людям — вторая переставала быть дублем и получала
+// слот как самостоятельный клиент.
+//
+// Поэтому флаг разравниваем по всем карточкам человека:
+//   хоть одна помечена вручную «да» → да (запрет сильнее разрешения);
+//   иначе хоть одна помечена вручную «нет» → нет (админ снимал отметку осознанно);
+//   иначе — ИЛИ по автодетекту из имени и комментария.
+// Дальше всё работает само: и движок задач, и конструктор выборок фильтруют по карточке,
+// а карточки теперь согласованы.
+function spreadDncByPerson() {
+  const rows = db.prepare(`SELECT id, phone, name, comment, dnc_manual,
+    COALESCE(do_not_call,0) AS f FROM clients`).all();
+  const upd = db.prepare('UPDATE clients SET do_not_call=? WHERE id=?');
+  let changed = 0;
+  for (const cards of people.groupByPerson(rows)) {
+    if (cards.length < 2) continue;   // одна карточка = человек целиком, разравнивать нечего
+    const manual = cards.map(c => c.dnc_manual).filter(v => v != null).map(Number);
+    const derived = cards.some(c => DNC_RE.test(c.name || '') || DNC_RE.test(originalComment(c.comment)));
+    const flag = manual.includes(1) ? 1 : manual.includes(0) ? 0 : (derived ? 1 : 0);
+    for (const c of cards) if (flag !== c.f) { upd.run(flag, c.id); changed++; }
+  }
+  return changed;
+}
 
 // «Не беспокоить» и персональную скидку админы пишут прямо в имя клиента, а имя
 // обновляется каждым синком — поэтому оба признака пересчитываем по всей базе.
@@ -663,7 +695,9 @@ function recomputeFlags() {
     const pct = effectiveDiscount(r);
     if (pct !== r.d) { updDisc.run(pct || null, r.id); disc++; }
   }
-  return { clients: rows.length, dnc_changed: dnc, discount_changed: disc };
+  // и сразу разравниваем «не беспокоить» по карточкам одного человека
+  const spread = spreadDncByPerson();
+  return { clients: rows.length, dnc_changed: dnc + spread, discount_changed: disc, dnc_spread: spread };
 }
 
 // --- «Ходит, но не платит» ------------------------------------------------------
@@ -824,6 +858,6 @@ module.exports = {
   run, syncUpcoming, computeFrequency, toTrips, isUnmarkedVisit, recomputeFreeClients, recomputeClient, rebuildAggregates, importRecord,
   recomputeAutoBooked, ATTRIBUTION_DAYS,
   syncStandalonePurchases, purchasesFromRecord, backfillVisitCategories,
-  syncComments, commentSyncStatus, recomputeFlags, parseDiscount, writeCallToYclients,
+  syncComments, commentSyncStatus, recomputeFlags, spreadDncByPerson, parseDiscount, writeCallToYclients,
   CRM_MARK, originalComment, DNC_RE,
 };

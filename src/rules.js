@@ -139,6 +139,15 @@ function generate(opts = {}) {
     FROM clients WHERE COALESCE(do_not_call,0) = 0
   `).all();
 
+  // «Не беспокоить» — свойство ЧЕЛОВЕКА, а флаг лежит в карточке, и карточку с флагом
+  // выборка выше уже отсекла. Пока карточки не разровняли (это делает синк,
+  // sync.spreadDncByPerson), вторая карточка человека выглядит здесь самостоятельным
+  // клиентом: дублем её никто не считает, и она получает слот в обзвоне. Так Юлия Панова
+  // вернулась в задачи «глубоким сном» с Мытнинской, когда запрет стоял на Баскове.
+  // Ключи, а не id: карточка с флагом в выборку не попала, сверяем человека по телефону.
+  const dncKeys = new Set(db.prepare(`SELECT id, phone FROM clients WHERE COALESCE(do_not_call,0) = 1`)
+    .all().map(people.personKey));
+
   const upcomingByClient = db.prepare(`
     SELECT client_id, MIN(date) AS next_date
     FROM visits WHERE status = 'upcoming' AND date >= datetime('now')
@@ -184,8 +193,10 @@ function generate(opts = {}) {
     if (call) for (const c of arr) personCall.set(c.id, call);
     if (next) for (const c of arr) personNext.set(c.id, next);
     if (last) for (const c of arr) personLast.set(c.id, last);
-    // «Ходит без оплаты» (семья, портфолио) ведём так же, как ручные списки: не обзваниваем
-    if (arr.some(c => manualIds.has(c.id) || c.free_client)) for (const c of arr) manualPerson.add(c.id);
+    // «Ходит без оплаты» (семья, портфолио) ведём так же, как ручные списки: не обзваниваем.
+    // Сюда же — человек, у которого «не беспокоить» стоит в соседней карточке.
+    if (arr.some(c => manualIds.has(c.id) || c.free_client || dncKeys.has(people.personKey(c))))
+      for (const c of arr) manualPerson.add(c.id);
     if (arr.some(c => queuedIds.has(c.id))) for (const c of arr) queuedPerson.add(c.id);
 
     if (arr.length < 2) continue;
