@@ -7,6 +7,7 @@
   --ink:#171614; --ink-2:#4A4640; --muted:#8B857B;
   --accent:#12B3A6; --accent-ink:#0B776D; --accent-soft:#E4F3F1; --on-accent:#FFFFFF;
   --red:#A33A2F; --red-soft:#F8E8E5;
+  --gold:#A97C2F; --gold-soft:#F5ECDC;
   --serif:Georgia,'Times New Roman',serif;
   --sans:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
   --r:3px;
@@ -19,6 +20,7 @@
     --ink:#EEEAE3; --ink-2:#C6C0B6; --muted:#958F85;
     --accent:#2FC2B5; --accent-ink:#62D6CB; --accent-soft:#16302D; --on-accent:#0B1716;
     --red:#E0877C; --red-soft:#3A1F1B;
+    --gold:#D9B26A; --gold-soft:#33291A;
     color-scheme:dark;
   }
 }
@@ -28,6 +30,7 @@
   --ink:#EEEAE3; --ink-2:#C6C0B6; --muted:#958F85;
   --accent:#2FC2B5; --accent-ink:#62D6CB; --accent-soft:#16302D; --on-accent:#0B1716;
   --red:#E0877C; --red-soft:#3A1F1B;
+  --gold:#D9B26A; --gold-soft:#33291A;
   color-scheme:dark;
 }
 
@@ -160,6 +163,28 @@ button.tile{cursor:zoom-in}
 .lines div{display:grid;grid-template-columns:90px 1fr;gap:10px}
 .lines dt{color:var(--muted);font-size:13px}
 .lines dd{margin:0}
+
+/* ── отзывы ──────────────────────────────────────────────────────────────── */
+.sec-h{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:6px}
+.sec-h .eyebrow{margin:0}
+.link{border:0;background:none;padding:4px 0;cursor:pointer;color:var(--accent-ink);font-size:14px;font-weight:600}
+.rev{padding-block:16px;border-bottom:1px solid var(--line);display:grid;gap:6px}
+.rev:last-child{border-bottom:0}
+.rev-h{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.rev-d{font-size:12.5px;color:var(--muted)}
+.rev p{margin:0;max-width:60ch}
+.rev-a{font-size:13px;color:var(--ink-2)}
+.stars{color:var(--gold);letter-spacing:2px;font-size:14px}
+.stars span{color:var(--line-strong)}
+.gold,.bar-sum b.gold{color:var(--gold)}
+.picker{display:flex;gap:4px;padding-top:18px}
+.star{border:0;background:none;padding:4px;cursor:pointer;color:var(--line-strong);transition:color .15s,transform .15s}
+.star[data-on]{color:var(--gold)}
+.star:active{transform:scale(.9)}
+.picker-l{margin:2px 0 0 4px;font-size:14px;color:var(--ink-2);min-height:1.5em}
+.ok-warm{background:var(--gold-soft)!important;color:var(--gold)!important}
+.done .stars{font-size:20px}
+@media (prefers-reduced-motion: reduce){.star{transition:none}}
 
 /* ── готово ──────────────────────────────────────────────────────────────── */
 .done{padding-block:40px 10px;display:grid;gap:14px;justify-items:start}

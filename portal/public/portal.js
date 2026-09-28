@@ -45,7 +45,11 @@
     dates: [], date: '', times: [], slot: null,
     form: { name: '', phone: '', comment: '', consent: false },
     result: null, error: '', busy: false,
+    reviews: null,                      // опубликованные отзывы о мастере
+    rform: { rating: 0, text: '', author: '', phone: '', consent: false },
+    reviewResult: null,
   };
+  const RATING_WORDS = ['', 'Очень плохо', 'Плохо', 'Нормально', 'Хорошо', 'Отлично'];
 
   const svcList = () => (S.master ? S.masterServices : S.services);
   const pickedSvcs = () => svcList().filter(s => S.picked.has(s.id));
@@ -90,11 +94,39 @@
     S.master = S.staff.find(m => String(m.id) === String(id)) || (S.candidates || []).find(m => String(m.id) === String(id));
     const fromServices = S.picked.size > 0 && S.screen === 'pick';
     if (!fromServices) S.picked.clear();
-    S.masterServices = [];
+    S.masterServices = []; S.reviews = null;
     go('master');
-    try { S.masterServices = await call('GET', '/p/api/services', { salon: S.salon.id, staff: S.master.id }); }
-    catch (e) { S.error = e.message; }
+    try {
+      const [svc, rev] = await Promise.all([
+        call('GET', '/p/api/services', { salon: S.salon.id, staff: S.master.id }),
+        call('GET', '/p/api/reviews', { salon: S.salon.id, staff: S.master.id }).catch(() => []),
+      ]);
+      S.masterServices = svc; S.reviews = rev;
+    } catch (e) { S.error = e.message; S.reviews = S.reviews || []; }
     render();
+  }
+
+  function openReview() {
+    S.rform = { rating: 0, text: '', author: S.form.name || '', phone: S.form.phone || '', publish: false, consent: false };
+    go('review');
+  }
+
+  async function submitReview() {
+    const f = S.rform;
+    S.error = '';
+    if (!f.rating) S.error = 'Поставьте оценку: нажмите на звёзды.';
+    else if (f.author.trim().length < 2) S.error = 'Напишите, как подписать отзыв.';
+    else if (f.phone.replace(/\D/g, '').length !== 11) S.error = 'Проверьте номер телефона: нужно 10 цифр после +7.';
+    else if (!f.consent) S.error = 'Отметьте согласие на обработку данных.';
+    if (S.error) return render();
+    S.busy = true; render();
+    try {
+      S.reviewResult = await call('POST', '/p/api/review', {}, {
+        salon: S.salon.id, staff_id: S.master.id, rating: f.rating, text: f.text,
+        author: f.author, phone: f.phone, publish: f.publish, consent: f.consent, website: $('website')?.value || '',
+      });
+      S.busy = false; S.screen = 'reviewDone'; render(); window.scrollTo(0, 0);
+    } catch (e) { S.busy = false; S.error = e.message; render(); }
   }
 
   async function openPick() {
@@ -213,6 +245,10 @@
             </span>
           </button>`;
 
+  const stars = (n) => `<span class="stars" aria-label="${n} из 5">${'★'.repeat(n)}<span>${'★'.repeat(5 - n)}</span></span>`;
+  const shortDate = (ymd) => { const d = dayOf(ymd); return `${d.getDate()} ${MON[d.getMonth()]}`; };
+  const STAR_SVG = '<svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true"><path d="M12 2.8l2.7 5.9 6.4.7-4.8 4.3 1.4 6.3L12 16.8 6.3 20l1.4-6.3L2.9 9.4l6.4-.7z" fill="currentColor"/></svg>';
+
   const errBox = () => (S.error ? `<p class="err" role="alert">${esc(S.error)}</p>` : '');
   const skel = (n) => Array.from({ length: n }, () => '<div class="skel"></div>').join('');
 
@@ -251,7 +287,13 @@
       <section class="sec"><span class="eyebrow">Работы</span>
         ${m.works?.length ? `<div class="works">${m.works.map((w, i) => tile(w, i, true)).join('')}</div>` : '<p class="empty">Мастер ещё не добавил работы.</p>'}</section>
       <section class="sec"><span class="eyebrow">Услуги и цены</span>${errBox()}
-        ${S.masterServices.length ? svcGroups(S.masterServices, true).replace(/<section class="cat">/g, '<section class="cat" style="padding-top:10px">') : skel(3)}</section>`;
+        ${S.masterServices.length ? svcGroups(S.masterServices, true).replace(/<section class="cat">/g, '<section class="cat" style="padding-top:10px">') : skel(3)}</section>
+      <section class="sec" id="reviews"><div class="sec-h"><span class="eyebrow">Отзывы</span>
+        <button class="link" type="button" data-act="review">Оставить отзыв</button></div>
+        ${S.reviews === null ? skel(2) : S.reviews.length ? S.reviews.map(r => `
+          <article class="rev"><div class="rev-h">${stars(r.rating)}<span class="rev-d">${shortDate(r.date)}</span></div>
+            ${r.text ? `<p>${esc(r.text)}</p>` : ''}<span class="rev-a">${esc(r.author)}</span></article>`).join('')
+        : '<p class="empty">Отзывов пока нет. Ваш может стать первым.</p>'}</section>`;
   }
 
   function pick() {
@@ -311,6 +353,48 @@
       </form>${errBox()}`;
   }
 
+  function review() {
+    const f = S.rform, m = S.master;
+    return `<section class="intro"><span class="eyebrow">Отзыв о мастере · ${esc(m.name)}</span><h1>Как прошёл визит?</h1>
+      <p>Отзыв прочитают мастер и руководство салона.</p></section>
+      <div class="picker" role="radiogroup" aria-label="Оценка">
+        ${[1, 2, 3, 4, 5].map(n => `<button type="button" class="star" role="radio" data-star="${n}" aria-checked="${f.rating === n}"
+          aria-label="${n} из 5 — ${RATING_WORDS[n]}"${n <= f.rating ? ' data-on' : ''}>${STAR_SVG}</button>`).join('')}
+      </div>
+      <p class="picker-l">${f.rating ? RATING_WORDS[f.rating] : 'Нажмите на звезду'}</p>
+      <form class="form" id="rform" novalidate>
+        <div class="field"><label for="rtext">${f.rating && f.rating <= 3 ? 'Что пошло не так? Мы разберёмся' : 'Что понравилось, что стоит улучшить'}</label>
+          <textarea id="rtext" maxlength="1000" placeholder="Например: аккуратная работа, помогла выбрать оттенок">${esc(f.text)}</textarea></div>
+        <div class="field"><label for="rauthor">Как подписать отзыв</label>
+          <input id="rauthor" maxlength="40" autocomplete="given-name" value="${esc(f.author)}" placeholder="Анна или Анна К.">
+          <span class="hint">На сайте покажем только это имя.</span></div>
+        <div class="field"><label for="rphone">Телефон</label>
+          <input id="rphone" type="tel" inputmode="tel" autocomplete="tel" value="${esc(f.phone)}" placeholder="+7 (9__) ___-__-__">
+          <span class="hint">Нужен, чтобы сверить отзыв с визитом. На сайте его не показываем.</span></div>
+        <div class="hp" aria-hidden="true"><label for="website">Сайт</label><input id="website" tabindex="-1" autocomplete="off"></div>
+        <label class="consent"><input type="checkbox" id="rpublish"${f.publish ? ' checked' : ''}>
+          <span>Разрешаю опубликовать отзыв на сайте под указанным именем. Без этой отметки его прочитает только салон.</span></label>
+        <label class="consent"><input type="checkbox" id="rconsent"${f.consent ? ' checked' : ''}>
+          <span>Согласна(ен) на обработку персональных данных, чтобы салон мог связаться со мной по отзыву.</span></label>
+      </form>${errBox()}`;
+  }
+
+  function reviewDone() {
+    const r = S.reviewResult || {}, m = S.master;
+    const low = r.low;
+    return `<section class="done"><div class="ok${low ? ' ok-warm' : ''}"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">${low
+      ? '<path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="1.6"/>'
+      : '<path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2"/>'}</svg></div>
+      <h1>${low ? 'Спасибо, что рассказали' : 'Спасибо за отзыв'}</h1>
+      ${stars(S.rform.rating)}
+      <p>${low
+        ? 'Нам жаль, что визит оставил такое впечатление. Руководство салона свяжется с вами в ближайшее время, чтобы разобраться и всё исправить.'
+        : S.rform.publish
+          ? `Опубликуем его после проверки, обычно в течение дня. Мастер обязательно прочитает.`
+          : `Отзыв получит только салон, на сайте его не будет. Мастер обязательно прочитает.`}</p>
+      <button class="btn-ghost" type="button" id="toMaster">Вернуться к мастеру</button></section>`;
+  }
+
   function done() {
     const r = S.result || {};
     const at = S.date ? `${longDate(S.date)}, ${esc(S.slot?.time || '')}` : '';
@@ -335,6 +419,8 @@
     else if (S.screen === 'master' && S.masterServices.length) { show = true; label = 'Выбрать время'; text = svcSummary; enabled = list.length > 0; }
     else if (S.screen === 'time') { show = true; label = 'Продолжить'; enabled = Boolean(S.slot);
       text = S.slot ? `<b>${esc(S.slot.time)}</b><span>${longDate(S.date)}</span>` : '<span>Выберите время</span>'; }
+    else if (S.screen === 'review') { show = true; label = S.busy ? 'Отправляем…' : 'Отправить отзыв'; enabled = Boolean(S.rform.rating) && !S.busy;
+      text = S.rform.rating ? `<b class="gold">${'★'.repeat(S.rform.rating)}</b><span>${RATING_WORDS[S.rform.rating]}</span>` : '<span>Поставьте оценку</span>'; }
     else if (S.screen === 'contacts') { show = true; label = S.busy ? 'Записываем…' : 'Записаться'; enabled = !S.busy; text = `<b>${t.price}</b><span>${esc(S.slot?.time || '')}, ${S.date ? longDate(S.date) : ''}</span>`; }
     b.hidden = !show; sum.innerHTML = text; btn.textContent = label; btn.disabled = !enabled;
   }
@@ -344,7 +430,7 @@
       `<button type="button" role="tab" data-salon="${s.id}" aria-selected="${String(S.salon?.id) === String(s.id)}">${esc(s.name)}</button>`).join('');
     $('salons').hidden = S.screen !== 'home';
     $('back').hidden = !S.stack.length;
-    const screens = { home, master, pick, time, contacts, done };
+    const screens = { home, master, pick, time, contacts, done, review, reviewDone };
     app.innerHTML = S.salon ? screens[S.screen]() : `<section class="intro">${errBox() || skel(3)}</section>`;
     // полоса фильтров перерисовывается с начала — возвращаем выбранный фильтр в поле зрения
     const on = app.querySelector('.chip[aria-pressed="true"]');
@@ -366,6 +452,9 @@
     if (d.date) return pickDate(d.date);
     if (d.slot) { S.slot = S.times.find(s => s.datetime === d.slot); return render(); }
     if (d.work) return openWork(Number(d.work));
+    if (d.star) { S.rform.rating = Number(d.star); S.error = ''; return render(); }
+    if (d.act === 'review') return openReview();
+    if (el.id === 'toMaster') { S.screen = S.stack.pop() || 'home'; render(); return window.scrollTo(0, 0); }
     if (el.id === 'again') { S.result = null; S.stack = []; S.screen = 'home'; S.master = null; S.picked.clear(); return render(); }
     if (el.id === 'lbClose') return ($('lb').hidden = true);
     if (el.id === 'barBtn') {
@@ -373,6 +462,7 @@
       if (S.screen === 'master') return openTime();
       if (S.screen === 'time') return go('contacts');
       if (S.screen === 'contacts') return submit();
+      if (S.screen === 'review') return submitReview();
     }
   });
   $('lb').addEventListener('click', (e) => { if (e.target.id === 'lb') $('lb').hidden = true; });
@@ -406,11 +496,26 @@
   document.addEventListener('input', (e) => {
     const t = e.target;
     if (t.id === 'phone') { t.value = maskPhone(t.value); S.form.phone = t.value; }
+    else if (t.id === 'rphone') { t.value = maskPhone(t.value); S.rform.phone = t.value; }
+    else if (t.id === 'rtext') S.rform.text = t.value;
+    else if (t.id === 'rauthor') S.rform.author = t.value;
     else if (t.id === 'name') S.form.name = t.value;
     else if (t.id === 'comment') S.form.comment = t.value;
   });
-  document.addEventListener('change', (e) => { if (e.target.id === 'consent') S.form.consent = e.target.checked; });
-  document.addEventListener('submit', (e) => { e.preventDefault(); submit(); });
+  document.addEventListener('change', (e) => {
+    if (e.target.id === 'consent') S.form.consent = e.target.checked;
+    if (e.target.id === 'rconsent') S.rform.consent = e.target.checked;
+    if (e.target.id === 'rpublish') S.rform.publish = e.target.checked;
+  });
+  document.addEventListener('submit', (e) => { e.preventDefault(); e.target.id === 'rform' ? submitReview() : submit(); });
+
+  // Ссылка …#review ведёт сразу к форме отзыва (её будем присылать после визита)
+  async function openFromHash() {
+    if (location.hash !== '#review' || !S.staff[0]) return;
+    await openMaster(S.staff[0].id);
+    openReview();
+  }
+  window.addEventListener('hashchange', openFromHash);
 
   // --- старт ----------------------------------------------------------------
   (async function start() {
@@ -422,6 +527,8 @@
       let saved = null;
       try { saved = localStorage.getItem('prive.salon'); } catch { /* без памяти */ }
       await loadSalon(saved || salons[0]?.id);
+      // Ссылка …#review ведёт сразу к форме отзыва (её будем присылать после визита)
+      openFromHash();
     } catch (e) { S.error = e.message; render(); }
   })();
 })();

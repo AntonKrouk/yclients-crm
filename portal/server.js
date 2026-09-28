@@ -41,6 +41,25 @@ db.exec(`
     created_at  TEXT
   );
   CREATE INDEX IF NOT EXISTS portal_bookings_phone ON portal_bookings(phone10, datetime);
+
+  -- Отзывы клиентов о мастерах. Публикуются только после проверки (status='published').
+  -- verified — нашли ли мы у этого телефона визит к этому мастеру; видит только модератор.
+  CREATE TABLE IF NOT EXISTS portal_reviews (
+    id          INTEGER PRIMARY KEY,
+    company_id  INTEGER,
+    staff_id    INTEGER,
+    staff_name  TEXT,
+    rating      INTEGER,
+    text        TEXT,
+    author      TEXT,
+    phone10     TEXT,
+    verified    INTEGER DEFAULT 0,
+    status      TEXT DEFAULT 'pending',   -- pending | published | hidden
+    can_publish INTEGER DEFAULT 0,        -- клиент отдельно разрешил публикацию (ст. 10.1 152-ФЗ)
+    ip          TEXT,
+    created_at  TEXT
+  );
+  CREATE INDEX IF NOT EXISTS portal_reviews_staff ON portal_reviews(company_id, staff_id, status);
 `);
 
 // --- помощники ---------------------------------------------------------------
@@ -223,8 +242,10 @@ app.post('/p/api/book', wrap(async (req, res) => {
     try { await sync.importRecord(salon.id, salon.name, rec.id); } catch (e) { console.error('[portal/import]', e.message); }
     const svc = (rec.services || []).map(s => s.title).filter(Boolean).join(', ');
     const at = when.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' });
+    // Без телефона и имени: Telegram — иностранный сервис, персональные данные туда не шлём.
+    // Кто записался — видно в журнале YClients и в CRM.
     telegram.notifyAdmins(`<b>Онлайн-запись</b> · ${salon.name}\n${at}, ${svc}${rec.staff?.name ? ' — ' + rec.staff.name : ''}\n` +
-      `${card ? 'Клиент есть в базе' : 'Новый клиент'}, тел. +${phone}`).catch(e => console.error('[portal/tg]', e.message));
+      `${card ? 'Клиент есть в базе' : 'Новый клиент'}. Подтвердите запись звонком.`).catch(e => console.error('[portal/tg]', e.message));
   });
 
   res.json({
@@ -232,6 +253,78 @@ app.post('/p/api/book', wrap(async (req, res) => {
     services: (rec.services || []).map(s => s.title).filter(Boolean).join(', '),
     datetime: rec.datetime || datetime,
   });
+}));
+
+// --- отзывы ------------------------------------------------------------------
+
+app.get('/p/api/reviews', (req, res) => {
+  const salon = salonById(req.query.salon);
+  const staff = ids(req.query.staff)[0];
+  if (!salon || !staff) return fail(res, 400, 'Выберите мастера');
+  if (yc.isDemo()) return res.json(demo.handle('GET', req.path, req.query));
+  res.json(db.prepare(`SELECT author, rating, text, substr(created_at, 1, 10) AS date FROM portal_reviews
+    WHERE company_id = ? AND staff_id = ? AND status = 'published' ORDER BY created_at DESC LIMIT 30`)
+    .all(salon.id, Number(staff)));
+});
+
+// Был ли у этого телефона завершённый визит к мастеру за последние полгода. Ответ клиенту
+// от этого НЕ зависит (иначе по чужому номеру можно узнать, ходит ли человек в салон) —
+// флаг видит только тот, кто проверяет отзыв.
+const visitedStmt = db.prepare(`SELECT 1 FROM visits v JOIN clients c ON c.id = v.client_id
+  WHERE c.company_id = ? AND v.staff = ? AND v.status = 'completed' AND v.date >= ?
+    AND substr(replace(replace(replace(replace(replace(c.phone,' ',''),'-',''),'(',''),')',''),'+',''), -10) = ?
+  LIMIT 1`);
+const reviewStmt = db.prepare(`INSERT INTO portal_reviews(company_id, staff_id, staff_name, rating, text, author,
+  phone10, verified, can_publish, ip, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`);
+const STARS = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
+// Telegram разбирает HTML — имя мастера из YClients экранируем на всякий случай
+const h = (v) => String(v ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+app.post('/p/api/review', wrap(async (req, res) => {
+  const b = req.body || {};
+  if (b.website) return res.json({ ok: true });
+  const salon = salonById(b.salon);
+  const staffId = ids(b.staff_id)[0];
+  const rating = Number(b.rating);
+  const text = String(b.text || '').replace(/[ \t]+/g, ' ').trim().slice(0, 1000);
+  const author = String(b.author || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+  const digits = people.normPhone(b.phone);
+  const phone10 = digits.length >= 10 ? digits.slice(-10) : '';
+
+  if (!salon || !staffId) return fail(res, 400, 'Не выбран мастер');
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) return fail(res, 400, 'Поставьте оценку от одной до пяти звёзд');
+  if (author.length < 2) return fail(res, 400, 'Напишите, как подписать отзыв');
+  if (!/^9/.test(phone10) || !people.isRealPhone(phone10)) return fail(res, 400, 'Проверьте номер: нужен мобильный, +7 9XX XXX-XX-XX');
+  if (!b.consent) return fail(res, 400, 'Нужно согласие на обработку персональных данных');
+
+  const ip = req.ip || '';
+  hit('rip:' + ip);
+  if (recent('rip:' + ip, 3600e3).length > 5 || recent('rph:' + phone10, 86400e3).length >= 2) {
+    return fail(res, 429, 'Вы уже оставили отзыв сегодня. Спасибо!');
+  }
+  if (yc.isDemo()) { hit('rph:' + phone10); return res.json(demo.handle('POST', req.path, {}, b)); }
+
+  const staffList = await cached(`staff:${salon.id}:`, 600e3, () => yc.fetchBookStaff(salon.id, []));
+  const staffName = (Array.isArray(staffList) ? staffList : []).find(s => String(s.id) === String(staffId))?.name || '';
+  const since = new Date(Date.now() - 183 * 86400e3).toISOString();
+  const verified = staffName ? Boolean(visitedStmt.get(salon.id, staffName, since, phone10)) : false;
+
+  hit('rph:' + phone10);
+  const info = reviewStmt.run(salon.id, Number(staffId), staffName, rating, text, author, phone10, verified ? 1 : 0,
+    b.publish ? 1 : 0, ip, new Date().toISOString());
+
+  // Админам — сразу. Низкая оценка — отдельным текстом: клиенту надо позвонить сегодня,
+  // пока он не унёс недовольство на Яндекс Карты. Ни телефона, ни подписи, ни текста
+  // в Telegram не шлём (иностранный сервис, а в тексте клиент может написать что угодно о себе):
+  // всё это — в CRM, в разделе отзывов (следующий шаг), номер отзыва ниже.
+  const head = rating <= 3
+    ? `<b>⚠️ Низкая оценка ${STARS(rating)}</b> · ${salon.name}\nКлиенту нужно позвонить сегодня`
+    : `<b>Новый отзыв ${STARS(rating)}</b> · ${salon.name}, ${b.publish ? 'ждёт проверки' : 'только для салона, без публикации'}`;
+  telegram.notifyAdmins(`${head}\nМастер: ${h(staffName || staffId)}\n` +
+    `${verified ? 'Визит к мастеру подтверждён' : 'Визит к мастеру по этому номеру не найден'}\nОтзыв №${info.lastInsertRowid}`)
+    .catch(e => console.error('[portal/tg]', e.message));
+
+  res.json({ ok: true, low: rating <= 3 });
 }));
 
 app.get('/p/api/health', (req, res) => res.json({ ok: true, demo: yc.isDemo() }));

@@ -91,6 +91,27 @@
     ],
   };
 
+  // Опубликованные отзывы (после модерации). Подпись — только имя, которое клиент
+  // указал сам, и первая буква фамилии, если он её дал.
+  const REVIEW_POOL = [
+    { author: 'Анна', rating: 5, text: 'Всё аккуратно и без спешки. Покрытие держится уже третью неделю, ни одного скола.' },
+    { author: 'Екатерина Л.', rating: 5, text: 'Пришла с конкретной картинкой, получила даже лучше. Отдельное спасибо за кофе и тишину.' },
+    { author: 'Мария', rating: 4, text: 'Результат отличный. Немного задержались с началом, минут на десять, но предупредили заранее.' },
+    { author: 'Ольга', rating: 5, text: 'Хожу второй год и не представляю, к кому ещё. Всегда подскажет, что лучше именно мне.' },
+    { author: 'Юлия С.', rating: 5, text: 'Очень бережные руки. Записалась сразу на следующий раз.' },
+    { author: 'Ирина', rating: 5, text: 'Спокойная атмосфера, всё объяснили по ходу. Буду рекомендовать подругам.' },
+  ];
+  function reviewsOf(staffId) {
+    const n = 2 + (hash('r' + staffId) % 2);
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const r = REVIEW_POOL[(hash(staffId + ':' + i) + i) % REVIEW_POOL.length];
+      const d = new Date(Date.now() - (6 + i * 17 + hash('d' + staffId + i) % 9) * 86400000);
+      out.push({ ...r, date: d.toISOString().slice(0, 10) });
+    }
+    return out;
+  }
+
   const pad = (n) => String(n).padStart(2, '0');
   const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
@@ -154,6 +175,11 @@
       }
       case '/p/api/dates': return { dates: dates(q.salon, q.staff) };
       case '/p/api/times': return times(q.salon, q.staff, q.date);
+      case '/p/api/reviews': return reviewsOf(q.staff);
+      case '/p/api/review': {
+        if (method !== 'POST') throw new Error('Метод не поддерживается');
+        return { ok: true, demo: true, low: Number(body.rating) <= 3 };
+      }
       case '/p/api/book': {
         if (method !== 'POST') throw new Error('Метод не поддерживается');
         const st = staffById(body.salon, body.staff_id);
