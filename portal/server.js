@@ -104,6 +104,8 @@ app.get('/p/api/staff', wrap(async (req, res) => {
     .filter(s => s.bookable && !s.fired && !s.hidden)
     .map(s => ({
       id: s.id, name: s.name, specialization: s.specialization || '',
+      // должность из YClients — по ней страница раскладывает мастеров по направлениям
+      position: s.position?.title || '',
       avatar: s.avatar_big || s.avatar || '',
       rating: Number(s.rating) || null, reviews: Number(s.comments_count || s.votes_count) || 0,
       works: worksOf(salon.id, s.id),

@@ -36,7 +36,7 @@
 
   // --- состояние ------------------------------------------------------------
   const S = {
-    salons: [], salon: null, tab: 'staff',
+    salons: [], salon: null, tab: 'staff', group: '',
     staff: [], services: [],            // справочники салона
     screen: 'home', stack: [],
     master: null, masterServices: [],   // выбранный мастер и что он делает
@@ -87,7 +87,7 @@
   }
 
   async function openMaster(id) {
-    S.master = S.staff.find(m => String(m.id) === String(id)) || S.candidates.find(m => String(m.id) === String(id));
+    S.master = S.staff.find(m => String(m.id) === String(id)) || (S.candidates || []).find(m => String(m.id) === String(id));
     const fromServices = S.picked.size > 0 && S.screen === 'pick';
     if (!fromServices) S.picked.clear();
     S.masterServices = [];
@@ -143,7 +143,6 @@
 
   // --- куски разметки -------------------------------------------------------
   const initials = (n) => esc(String(n || '?').trim().charAt(0).toUpperCase());
-  const ava = (m, lg) => `<div class="ava${lg ? ' lg' : ''}">${m.avatar ? `<img src="${esc(m.avatar)}" alt="">` : initials(m.name)}</div>`;
   const rating = (m) => (m.rating ? `<div class="rate"><b>★ ${Number(m.rating).toFixed(1).replace('.', ',')}</b>${m.reviews ? ` · ${m.reviews} ${plural(m.reviews, 'отзыв', 'отзыва', 'отзывов')}` : ''}</div>` : '');
   function tile(w, i, zoom) {
     const inner = w.src ? `<img src="${esc(w.src)}" alt="${esc(w.caption)}" loading="lazy">` : '';
@@ -158,15 +157,62 @@
       <span class="svc-t">${esc(s.title)}${s.duration ? `<small>${dur(s.duration)}</small>` : ''}</span>
       <span class="price">${s.price_max > s.price_min ? 'от ' : ''}${rub(s.price_min)}</span>
     </button>`;
-  function svcGroups(list) {
+  function svcGroups(list, hideSingle) {
     const cats = [];
     for (const s of list) {
       let c = cats.find(x => x.name === s.category);
       if (!c) cats.push(c = { name: s.category, items: [] });
       c.items.push(s);
     }
-    return cats.map(c => `<section class="cat"><h2 class="eyebrow">${esc(c.name)}</h2>${c.items.map(svcRow).join('')}</section>`).join('');
+    // у мастера одного направления заголовок категории повторял бы шапку — прячем
+    const head = !(hideSingle && cats.length === 1);
+    return cats.map(c => `<section class="cat">${head ? `<h2 class="eyebrow">${esc(c.name)}</h2>` : ''}${c.items.map(svcRow).join('')}</section>`).join('');
   }
+  // Направление мастера: в YClients у сотрудника есть должность (position) и свободная
+  // строка специализации — по ним и раскладываем. Порядок строк = порядок проверки и показа:
+  // «Косметолог, массаж лица» должен попасть в косметологию, поэтому она выше массажа.
+  const GROUPS = [
+    ['Волосы', /стилист|парикмахер|колорист|барбер|волос|hair/i],
+    ['Ногтевой сервис', /маникюр|педикюр|ногт|nail/i],
+    ['Брови и ресницы', /бров|ресниц|лэш|lash/i],
+    ['Косметология', /космет|эстетист|дерматолог/i],
+    ['Массаж', /массаж|spa|спа-/i],
+    ['Макияж', /визаж|макияж|make-?up/i],
+  ];
+  const OTHER = 'Другие мастера';
+  function groupOf(m) {
+    const text = `${m.position || ''} ${m.specialization || ''}`;
+    const hit = GROUPS.find(([, re]) => re.test(text));
+    return hit ? hit[0] : (m.position || OTHER);
+  }
+  function grouped(list) {
+    const order = GROUPS.map(g => g[0]);
+    const map = new Map();
+    for (const m of list) {
+      const g = groupOf(m);
+      if (!map.has(g)) map.set(g, []);
+      map.get(g).push(m);
+    }
+    const rank = (g) => (order.includes(g) ? order.indexOf(g) : g === OTHER ? 99 : 50);
+    return [...map.entries()].sort((a, b) => rank(a[0]) - rank(b[0]));
+  }
+  // Карточка мастера в списке: крупное фото, имя, направление. Портфолио — внутри,
+  // по нажатию, чтобы список оставался спокойным и читался по лицам.
+  // В демо фото нет — вместо него монограмма на оттенке первой работы мастера
+  const photo = (m, cls) => `<span class="${cls}"${!m.avatar && m.tone ? ` style="background:linear-gradient(160deg,${esc(m.tone[0])},${esc(m.tone[1])})"` : ''}>${m.avatar
+    ? `<img src="${esc(m.avatar)}" alt="" loading="lazy">`
+    : `<span class="mono">${initials(m.name)}</span>`}</span>`;
+  const masterCard = (m, label) => `
+          <button class="card" type="button" data-master="${m.id}">
+            ${photo(m, 'card-ph')}
+            <span class="card-b">
+              ${label ? `<span class="eyebrow">${esc(label)}</span>` : ''}
+              <span class="m-name">${esc(m.name)}</span>
+              <span class="m-spec">${esc(m.specialization)}</span>
+              ${rating(m)}
+            </span>
+          </button>`;
+
   const errBox = () => (S.error ? `<p class="err" role="alert">${esc(S.error)}</p>` : '');
   const skel = (n) => Array.from({ length: n }, () => '<div class="skel"></div>').join('');
 
@@ -176,18 +222,23 @@
       <button type="button" role="tab" data-tab="staff" aria-selected="${S.tab === 'staff'}">Мастера</button>
       <button type="button" role="tab" data-tab="services" aria-selected="${S.tab === 'services'}">Услуги и цены</button></div>`;
     const loading = !S.staff.length && !S.error;
-    const body = S.tab === 'staff'
-      ? `<div class="masters">${loading ? skel(3) : S.staff.map(m => `
-          <button class="master" type="button" data-master="${m.id}">
-            ${ava(m)}
-            <span class="m-body">
-              <span class="m-name">${esc(m.name)}</span>
-              <span class="m-spec">${esc(m.specialization)}</span>
-              ${rating(m)}
-              ${m.works?.length ? `<span class="thumbs">${m.works.slice(0, 4).map((w, i) => tile(w, i)).join('')}</span>` : ''}
-            </span>
-          </button>`).join('')}</div>`
-      : (loading ? skel(4) : svcGroups(S.services));
+    let body;
+    if (S.tab !== 'staff') body = loading ? skel(4) : svcGroups(S.services);
+    else if (loading) body = `<div class="cards">${'<div class="card skel-card"></div>'.repeat(4)}</div>`;
+    else {
+      // Фильтр по направлениям: «Все» показывает мастеров разделами, кнопка — один раздел
+      const groups = grouped(S.staff);
+      if (S.group && !groups.some(([g]) => g === S.group)) S.group = '';
+      const chips = groups.length > 1 ? `<div class="chips" role="group" aria-label="Направление">
+        <button class="chip" type="button" data-group="" aria-pressed="${!S.group}">Все</button>
+        ${groups.map(([g, ms]) => `<button class="chip" type="button" data-group="${esc(g)}" aria-pressed="${S.group === g}">${esc(g)} <span>${ms.length}</span></button>`).join('')}
+      </div>` : '';
+      // Одна сплошная сетка: разделы по одному мастеру оставляли бы полстроки пустыми.
+      // В режиме «Все» направление подписано на карточке, в фильтре оно и так понятно.
+      const shown = S.group ? groups.filter(([g]) => g === S.group) : groups;
+      const label = groups.length > 1 && !S.group;
+      body = chips + `<div class="cards">${shown.flatMap(([g, ms]) => ms.map(m => masterCard(m, label ? g : ''))).join('')}</div>`;
+    }
     return `<section class="intro"><span class="eyebrow">Онлайн-запись · ${esc(S.salon?.name || '')}</span>
       <h1>${S.tab === 'staff' ? 'Выберите мастера' : 'Выберите услуги'}</h1>
       <p>${S.tab === 'staff' ? 'Посмотрите работы и запишитесь на удобное время.' : 'Отметьте всё, что хотите сделать за визит, и мы покажем, кто из мастеров свободен.'}</p></section>
@@ -196,21 +247,18 @@
 
   function master() {
     const m = S.master;
-    return `<section class="profile">${ava(m, true)}<div><h1>${esc(m.name)}</h1><div class="m-spec">${esc(m.specialization)}</div>${rating(m)}</div></section>
+    return `<section class="hero">${photo(m, 'hero-ph')}<div class="hero-t"><span class="eyebrow">${esc(groupOf(m))}</span><h1>${esc(m.name)}</h1><div class="m-spec">${esc(m.specialization)}</div>${rating(m)}</div></section>
       <section class="sec"><span class="eyebrow">Работы</span>
         ${m.works?.length ? `<div class="works">${m.works.map((w, i) => tile(w, i, true)).join('')}</div>` : '<p class="empty">Мастер ещё не добавил работы.</p>'}</section>
       <section class="sec"><span class="eyebrow">Услуги и цены</span>${errBox()}
-        ${S.masterServices.length ? svcGroups(S.masterServices).replace(/<section class="cat">/g, '<section class="cat" style="padding-top:10px">') : skel(3)}</section>`;
+        ${S.masterServices.length ? svcGroups(S.masterServices, true).replace(/<section class="cat">/g, '<section class="cat" style="padding-top:10px">') : skel(3)}</section>`;
   }
 
   function pick() {
     const list = pickedSvcs();
     return `<section class="intro"><span class="eyebrow">Шаг 2 из 4</span><h1>Кто сделает</h1>
       <p>${esc(list.map(s => s.title).join(', '))}</p></section>${errBox()}
-      <div class="masters">${S.candidates === null ? skel(2) : S.candidates.length ? S.candidates.map(m => `
-        <button class="master" type="button" data-master="${m.id}">${ava(m)}
-          <span class="m-body"><span class="m-name">${esc(m.name)}</span><span class="m-spec">${esc(m.specialization)}</span>${rating(m)}</span>
-        </button>`).join('') : '<p class="empty" style="padding-top:18px">Эти услуги не делает один мастер. Уберите часть услуг или запишитесь к разным мастерам по очереди.</p>'}</div>`;
+      <div class="cards">${S.candidates === null ? '<div class="card skel-card"></div>'.repeat(2) : S.candidates.length ? S.candidates.map(m => masterCard(m)).join('') : '<p class="empty" style="padding-top:18px;grid-column:1/-1">Эти услуги не делает один мастер. Уберите часть услуг или запишитесь к разным мастерам по очереди.</p>'}</div>`;
   }
 
   function time() {
@@ -298,6 +346,9 @@
     $('back').hidden = !S.stack.length;
     const screens = { home, master, pick, time, contacts, done };
     app.innerHTML = S.salon ? screens[S.screen]() : `<section class="intro">${errBox() || skel(3)}</section>`;
+    // полоса фильтров перерисовывается с начала — возвращаем выбранный фильтр в поле зрения
+    const on = app.querySelector('.chip[aria-pressed="true"]');
+    if (on && on.parentElement) on.parentElement.scrollLeft = Math.max(0, on.offsetLeft - on.parentElement.offsetLeft - 16);
     bar();
   }
 
@@ -309,6 +360,7 @@
     if (el.id === 'back') return history.state ? history.back() : back();
     if (d.salon) return loadSalon(d.salon);
     if (d.tab) { S.tab = d.tab; S.picked.clear(); return render(); }
+    if ('group' in d) { S.group = d.group; return render(); }
     if (d.master) return openMaster(d.master);
     if (d.svc) { const id = Number(d.svc); S.picked.has(id) ? S.picked.delete(id) : S.picked.add(id); return render(); }
     if (d.date) return pickDate(d.date);
