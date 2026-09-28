@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "sync": "node -e \"require('./src/env');require('./src/sync').run().then(r=>{console.log(r);process.exit(0)})\""
+    "sync": "node -e \"require('./src/env');require('./src/sync').run().then(r=>{console.log(r);process.exit(0)})\"",
+    "portal": "node portal/server.js",
+    "portal:preview": "node portal/build-preview.js"
   },
   "engines": {
     "node": ">=22"

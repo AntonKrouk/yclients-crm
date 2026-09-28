@@ -43,4 +43,14 @@ async function notifyDailySummary(counts) {
   return { sent };
 }
 
-module.exports = { enabled, notifyDailySummary };
+// Произвольное сообщение всем админам (онлайн-записи из клиентского портала)
+async function notifyAdmins(text) {
+  if (!enabled()) return { sent: 0, skipped: 'not_configured' };
+  let sent = 0;
+  for (const chat of CHATS) {
+    try { await send(chat, text); sent++; } catch (e) { console.error('[telegram]', e.message); }
+  }
+  return { sent };
+}
+
+module.exports = { enabled, notifyDailySummary, notifyAdmins };

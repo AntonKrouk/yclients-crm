@@ -245,9 +245,11 @@ async function fetchSaleDocument(cid, documentId) {
 
 const qsServices = (ids = []) => (ids || []).map(id => `service_ids[]=${encodeURIComponent(id)}`).join('&');
 
-// Мастера, доступные для записи (bookable=true — можно записывать)
-async function fetchBookStaff(cid) {
-  return api(`/book_staff/${cid}`);
+// Мастера, доступные для записи (bookable=true — можно записывать).
+// serviceIds — только те, кто делает все выбранные услуги (для записи «от услуги»).
+async function fetchBookStaff(cid, serviceIds = []) {
+  const q = qsServices(serviceIds);
+  return api(`/book_staff/${cid}${q ? '?' + q : ''}`);
 }
 
 // Услуги, доступные к записи (если задан staff_id — только те, что делает этот мастер).

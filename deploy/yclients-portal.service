@@ -1,0 +1,16 @@
+[Unit]
+Description=Prive: klientskaya onlayn-zapis (portal)
+After=network.target
+
+[Service]
+Type=simple
+User=crm
+WorkingDirectory=/opt/yclients-crm
+ExecStart=/usr/bin/node portal/server.js
+Restart=always
+RestartSec=5
+# Tot zhe .env, chto u CRM; port - PORTAL_PORT (po umolchaniyu 3021)
+# Logi: journalctl -u yclients-portal -f
+
+[Install]
+WantedBy=multi-user.target
