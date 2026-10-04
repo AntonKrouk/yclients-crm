@@ -103,13 +103,19 @@ async function cached(key, fn) {
 }
 const demo = () => require('../portal/demo');
 
+// Витрина показывает ВСЕХ мастеров филиала (Антон, 04.10.2026): и без графика на месяц вперёд,
+// и скрытых от онлайн-записи (к кому записывают только по телефону). Поэтому список — не
+// из онлайн-записи (book_staff), а полный список сотрудников. Отсекаем только уволенных,
+// удалённых и не-мастеров по должности. Убрать мастера руками можно в CRM («Показывать»).
+const NOT_MASTER = /администратор|менеджер|горничн|управляющ|руководител|директор|бухгалтер|уборщ/i;
+
 async function ycStaff(cid) {
   if (yc.isDemo()) {
     return demo().handle('GET', '/p/api/staff', { salon: cid }).map(s => ({ ...s, works: undefined }));
   }
-  const list = await cached(`staff:${cid}`, () => yc.fetchBookStaff(cid));
+  const list = await cached(`staff:${cid}`, async () => { await yc.ensureAuth(); return yc.fetchStaff(cid); });
   return (Array.isArray(list) ? list : [])
-    .filter(s => s.bookable && !s.fired && !s.hidden)
+    .filter(s => !s.fired && !s.is_fired && !s.is_deleted && !NOT_MASTER.test(`${s.position?.title || ''} ${s.specialization || ''} ${s.name || ''}`))
     .map(s => ({
       id: s.id, name: s.name || '', specialization: s.specialization || '',
       position: s.position?.title || '', avatar: s.avatar_big || s.avatar || '',
@@ -119,16 +125,29 @@ async function ycStaff(cid) {
     }));
 }
 
+// Прайс. Общий («Цены») — каталог онлайн-записи. Мастера — из списка услуг салона, где у
+// каждой услуги перечислены её мастера, пересечённого с тем же каталогом: так видны цены и
+// у мастеров без графика или скрытых от онлайн-записи (онлайн-запись отдаёт им пусто),
+// а служебные позиции вне каталога («+3500 раннее открытие», «выезд стилиста») не вылезают.
+// На мастере с графиком сверено 04.10.2026: совпадает с онлайн-записью 25 из 25.
 async function ycServices(cid, staffId) {
   if (yc.isDemo()) return demo().handle('GET', '/p/api/services', { salon: cid, staff: staffId || '' });
-  const data = await cached(`svc:${cid}:${staffId || ''}`, () => yc.fetchBookServices(cid, staffId || ''));
+  const pub = await cached(`svc:${cid}`, () => yc.fetchBookServices(cid, ''));
   const cats = {};
-  for (const c of (data?.category || [])) cats[c.id] = c.title || '';
-  return (data?.services || []).map(s => ({
+  for (const c of (pub?.category || [])) cats[c.id] = c.title || '';
+  const row = (s, price, len) => ({
     id: s.id, title: s.title, category: cats[s.category_id] || 'Услуги',
-    price_min: s.price_min || 0, price_max: s.price_max || 0,
-    duration: Math.round((s.seance_length || 0) / 60),
-  }));
+    price_min: price ?? (s.price_min || 0), price_max: price ?? (s.price_max || 0),
+    duration: Math.round((len || 0) / 60),
+  });
+  if (!staffId) return (pub?.services || []).map(s => row(s, null, s.seance_length));
+  const inCatalog = new Set((pub?.services || []).map(s => s.id));
+  const all = await cached(`asvc:${cid}`, async () => { await yc.ensureAuth(); return yc.fetchServices(cid); });
+  const sid = Number(staffId);
+  return (Array.isArray(all) ? all : []).filter(s => inCatalog.has(s.id)).flatMap(s => {
+    const link = (s.staff || []).find(x => Number(x.id) === sid);
+    return link ? [row(s, link.price ?? null, link.seance_length || s.duration)] : [];
+  });
 }
 
 // --- один человек в нескольких филиалах -------------------------------------------
