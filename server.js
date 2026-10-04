@@ -1710,7 +1710,7 @@ app.use('/p/works', express.static(vitrina.WORKS_DIR, { maxAge: '7d', fallthroug
 
 app.get('/api/vitrina/meta', (req, res) => res.json({
   branches: vitrinaBranches(), directions: vitrina.DIRECTIONS, demo: yc.isDemo(),
-  portal_url: process.env.PORTAL_URL || '',
+  portal_url: process.env.PORTAL_URL || 'https://masters.prive7crm.ru',
 }));
 
 app.get('/api/vitrina/staff', vtWrap(async (req, res) => {
