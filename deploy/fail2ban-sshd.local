@@ -1,0 +1,18 @@
+# fail2ban для SSH на prive7crm-spb. Ставится в /etc/fail2ban/jail.d/sshd.local
+# (поверх defaults-debian.conf), затем systemctl restart fail2ban.
+# Было по умолчанию: 5 неудач за 10 минут -> бан на 10 минут; за полтора месяца
+# 63 тыс. попыток и 11 тыс. банов — роботы просто ждали 10 минут и продолжали.
+#
+# Сам забанил себя (трижды ошибся паролем)? Войти через «Консоль» в панели Timeweb и:
+#   fail2ban-client set sshd unbanip <свой IP>
+
+[sshd]
+enabled  = true
+backend  = systemd
+maxretry = 3
+findtime = 1h
+bantime  = 1d
+# повторно пойманный IP банится каждый раз вдвое дольше, но не больше 4 недель
+bantime.increment = true
+bantime.maxtime   = 4w
+ignoreip = 127.0.0.1/8 ::1
