@@ -24,7 +24,21 @@ const CRON_SECRET = process.env.CRON_SECRET || '';
 const AUTH_ON = Boolean(DASH_PW);
 const PUBLIC_ASSETS = new Set(['/app.css', '/app-yc.css', '/app.js', '/manifest.webmanifest', '/prive-logo.png',
   '/favicon.ico', '/apple-touch-icon.png', '/apple-touch-icon-precomposed.png']);
-const sessionCookie = () => crypto.createHmac('sha256', SECRET).update('authorized-v1').digest('hex');
+// Пароль входит в подпись куки: сменили DASHBOARD_PASSWORD — все старые входы (в т.ч. у
+// уволившегося админа) перестают действовать, даже если SESSION_SECRET задан отдельно.
+const sessionCookie = () => crypto.createHmac('sha256', SECRET).update('authorized-v2:' + DASH_PW).digest('hex');
+const sameSecret = (a, b) => {
+  const x = crypto.createHash('sha256').update(String(a)).digest();
+  const y = crypto.createHash('sha256').update(String(b)).digest();
+  return crypto.timingSafeEqual(x, y);
+};
+
+// Подбор пароля: не больше 5 неудачных попыток с одного IP за 15 минут.
+// IP — из X-Real-IP/X-Forwarded-For от nginx (trust proxy только для localhost).
+app.set('trust proxy', 'loopback');
+const LOGIN_WINDOW = 15 * 60e3, LOGIN_MAX = 5;
+const loginFails = new Map(); // ip -> [время неудачи, ...]
+const recentFails = (ip) => (loginFails.get(ip) || []).filter(t => Date.now() - t < LOGIN_WINDOW);
 
 function parseCookies(req) {
   const h = req.headers.cookie || '';
@@ -36,10 +50,21 @@ function parseCookies(req) {
 
 app.post('/api/login', (req, res) => {
   if (!AUTH_ON) return res.json({ ok: true });
-  if ((req.body || {}).password === DASH_PW) {
-    res.setHeader('Set-Cookie', `sess=${sessionCookie()}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Lax`);
+  const ip = req.ip || '';
+  const fails = recentFails(ip);
+  if (fails.length >= LOGIN_MAX) {
+    return res.status(429).json({ error: 'Слишком много попыток. Попробуйте через 15 минут' });
+  }
+  if (sameSecret((req.body || {}).password || '', DASH_PW)) {
+    loginFails.delete(ip);
+    const secure = req.get('x-forwarded-proto') === 'https' ? '; Secure' : '';
+    res.setHeader('Set-Cookie', `sess=${sessionCookie()}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Lax${secure}`);
     return res.json({ ok: true });
   }
+  fails.push(Date.now());
+  loginFails.set(ip, fails);
+  if (loginFails.size > 5000) loginFails.clear(); // защита памяти от потока с разных IP
+  console.warn(`[login] неверный пароль с ${ip} (${fails.length}/${LOGIN_MAX})`);
   res.status(401).json({ error: 'Неверный пароль' });
 });
 app.post('/api/logout', (req, res) => {
