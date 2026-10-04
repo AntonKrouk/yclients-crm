@@ -175,11 +175,10 @@
   const photo = (m, cls) => `<span class="${cls}"${!m.avatar && m.tone ? ` style="background:linear-gradient(160deg,${esc(m.tone[0])},${esc(m.tone[1])})"` : ''}>${m.avatar
     ? `<img src="${esc(m.avatar)}" alt="" loading="lazy">`
     : `<span class="mono">${initials(m.name)}</span>`}</span>`;
-  const masterCard = (m, label) => `
+  const masterCard = (m) => `
           <button class="card" type="button" data-master="${m.id}">
             ${photo(m, 'card-ph')}
             <span class="card-b">
-              ${label ? `<span class="eyebrow">${esc(label)}</span>` : ''}
               <span class="m-name">${esc(m.name)}</span>
               <span class="m-spec">${esc(m.specialization)}</span>
               ${rating(m)}
@@ -210,10 +209,9 @@
         ${groups.map(([g, ms]) => `<button class="chip" type="button" data-group="${esc(g)}" aria-pressed="${S.group === g}">${esc(g)} <span>${ms.length}</span></button>`).join('')}
       </div>` : '';
       // Одна сплошная сетка: разделы по одному мастеру оставляли бы полстроки пустыми.
-      // В режиме «Все» направление подписано на карточке, в фильтре оно и так понятно.
+      // Направление над именем не подписываем (Антон, 04.10.2026): специализация и так под именем.
       const shown = S.group ? groups.filter(([g]) => g === S.group) : groups;
-      const label = groups.length > 1 && !S.group;
-      body = chips + `<div class="cards">${shown.flatMap(([g, ms]) => ms.map(m => masterCard(m, label ? g : ''))).join('')}</div>`;
+      body = chips + `<div class="cards">${shown.flatMap(([, ms]) => ms.map(m => masterCard(m))).join('')}</div>`;
     }
     return `<section class="intro"><span class="eyebrow">Privé7 · ${esc(S.salon?.name || '')}</span>
       <h1>${S.tab === 'staff' ? 'Наши мастера' : 'Услуги и цены'}</h1>
@@ -227,7 +225,7 @@
 
   function master() {
     const m = S.master;
-    return `<section class="hero">${photo(m, 'hero-ph')}<div class="hero-t"><span class="eyebrow">${esc(groupOf(m))}</span><h1>${esc(m.name)}</h1><div class="m-spec">${esc(m.specialization)}</div>${alsoLine(m)}${rating(m)}</div></section>
+    return `<section class="hero">${photo(m, 'hero-ph')}<div class="hero-t"><h1>${esc(m.name)}</h1><div class="m-spec">${esc(m.specialization)}</div>${alsoLine(m)}${rating(m)}</div></section>
       ${m.bio ? `<section class="sec bio"><p>${esc(m.bio).replace(/\n+/g, '</p><p>')}</p></section>` : ''}
       <section class="sec"><span class="eyebrow">Работы</span>
         ${m.works?.length ? `<div class="works">${m.works.map((w, i) => tile(w, i)).join('')}</div>` : '<p class="empty">Мастер ещё не добавил работы.</p>'}</section>
