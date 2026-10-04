@@ -199,7 +199,7 @@
       <button type="button" role="tab" data-tab="services" aria-selected="${S.tab === 'services'}">Цены</button></div>`;
     const loading = !S.staff.length && !S.error;
     let body;
-    if (S.tab !== 'staff') body = loading ? skel(4) : svcGroups(S.services);
+    if (S.tab !== 'staff') body = loading ? skel(4) : `<div class="prices">${svcGroups(S.services)}</div>`;
     else if (loading) body = `<div class="cards">${'<div class="card skel-card"></div>'.repeat(4)}</div>`;
     else {
       const groups = grouped(S.staff);
@@ -225,8 +225,11 @@
 
   function master() {
     const m = S.master;
-    return `<section class="hero">${photo(m, 'hero-ph')}<div class="hero-t"><h1>${esc(m.name)}</h1><div class="m-spec">${esc(m.specialization)}</div>${alsoLine(m)}${rating(m)}</div></section>
+    // .mp-side / .mp-main: на компьютере — две колонки (portal.css), на телефоне — одна
+    return `<div class="mp"><div class="mp-side">
+      <section class="hero">${photo(m, 'hero-ph')}<div class="hero-t"><h1>${esc(m.name)}</h1><div class="m-spec">${esc(m.specialization)}</div>${alsoLine(m)}${rating(m)}</div></section>
       ${m.bio ? `<section class="sec bio"><p>${esc(m.bio).replace(/\n+/g, '</p><p>')}</p></section>` : ''}
+      </div><div class="mp-main">
       <section class="sec"><span class="eyebrow">Работы</span>
         ${m.works?.length ? `<div class="works">${m.works.map((w, i) => tile(w, i)).join('')}</div>` : '<p class="empty">Мастер ещё не добавил работы.</p>'}</section>
       <section class="sec"><span class="eyebrow">Услуги и цены</span>${errBox()}
@@ -236,7 +239,8 @@
         ${S.reviews === null ? skel(2) : S.reviews.length ? S.reviews.map(r => `
           <article class="rev"><div class="rev-h">${stars(r.rating)}<span class="rev-d">${shortDate(r.date)}</span></div>
             ${r.text ? `<p>${esc(r.text)}</p>` : ''}<span class="rev-a">${esc(r.author)}</span></article>`).join('')
-        : '<p class="empty">Отзывов пока нет. Ваш может стать первым.</p>'}</section>`;
+        : '<p class="empty">Отзывов пока нет. Ваш может стать первым.</p>'}</section>
+      </div></div>`;
   }
 
   function review() {
@@ -343,6 +347,7 @@
     $('back').hidden = !S.stack.length;
     const screens = { home, master, review, reviewDone };
     app.innerHTML = S.salon ? screens[S.screen]() : `<section class="intro">${errBox() || skel(3)}</section>`;
+    app.dataset.screen = S.screen; // ширина колонки зависит от экрана: форма отзыва уже, список мастеров шире
     // полоса фильтров перерисовывается с начала — возвращаем выбранный фильтр в поле зрения
     const on = app.querySelector('.chip[aria-pressed="true"]');
     if (on && on.parentElement) on.parentElement.scrollLeft = Math.max(0, on.offsetLeft - on.parentElement.offsetLeft - 16);

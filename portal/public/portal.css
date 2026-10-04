@@ -230,3 +230,39 @@ a.mark{color:var(--ink);text-decoration:none}
 
 /* мастер работает в обоих салонах */
 .m-also{font-size:12.5px;color:var(--accent-ink)}
+
+/* ── раскладка по ширине экрана ───────────────────────────────────────────────
+   Телефон — колонка до 600 px (как было). Планшет — 900 px, мастера по 4 в ряд,
+   цены в две колонки. Компьютер — 1160–1320 px, мастера по 5, страница мастера
+   в две колонки: слева фото и «о мастере», справа работы, цены и отзывы.
+   Форма отзыва и «спасибо» на любом экране узкие — так их удобнее читать. */
+:root{--wrap:600px}
+@media (min-width:760px){:root{--wrap:900px}}
+@media (min-width:1024px){:root{--wrap:1160px}}
+@media (min-width:1440px){:root{--wrap:1320px}}
+main{max-width:var(--wrap)}
+main[data-screen="review"],main[data-screen="reviewDone"]{max-width:600px}
+.top{padding-inline:max(16px, calc((100% - var(--wrap)) / 2 + 16px))}
+.bar-in{max-width:calc(var(--wrap) - 32px)}
+.foot{max-width:var(--wrap)}
+
+@media (min-width:760px){
+  .intro{padding-top:36px}
+  .intro h1{font-size:38px}
+  .chips{flex-wrap:wrap;overflow:visible;margin-inline:0;padding-inline:0}
+  .cards{grid-template-columns:repeat(4,minmax(0,1fr));gap:30px 18px;padding-top:20px}
+  .card .m-name{font-size:19px}
+  .works{grid-template-columns:repeat(4,1fr);gap:8px}
+  .prices{column-count:2;column-gap:56px}
+  .prices .cat{break-inside:avoid}
+  .hero{grid-template-columns:minmax(0,280px) minmax(0,1fr);gap:28px}
+}
+@media (min-width:1024px){
+  .intro h1{font-size:44px}
+  .cards{grid-template-columns:repeat(5,minmax(0,1fr))}
+  .mp{display:grid;grid-template-columns:minmax(0,360px) minmax(0,1fr);gap:64px;align-items:start;padding-top:12px}
+  .mp-side .hero{grid-template-columns:1fr;gap:18px;align-items:start}
+  .mp-side .hero h1{font-size:36px}
+  .mp-side .hero-t{order:-1}  /* имя над фото: на невысоком экране ноутбука иначе уходит за край */
+  .mp-main>.sec:first-child{padding-top:20px}
+}
