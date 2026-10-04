@@ -330,7 +330,12 @@ async function adminStaffAll() {
 async function adminMaster(cid, sid) {
   const m = (await adminStaff(cid)).find(x => x.id === Number(sid));
   if (!m) return null;
-  m.workList = worksOf(await cardsOf(cid, sid));
+  const cards = await cardsOf(cid, sid);
+  // «показывать» по каждому салону человека — в редакторе галочки для всех его карточек
+  const names = new Map(branchList().map(b => [b.id, b.name]));
+  m.branches = cards.map(c => ({ id: c.cid, sid: c.sid, name: names.get(c.cid) || String(c.cid),
+    visible: Boolean(getOverride.get(c.cid, c.sid)?.visible ?? 1) }));
+  m.workList = worksOf(cards);
   m.services = await ycServices(cid, m.id).catch(() => []);
   return m;
 }

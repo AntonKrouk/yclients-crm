@@ -2623,11 +2623,12 @@ function vtRenderStaff(){
 async function vtToggleVisible(cid,sid,on){
   try{
     await api(`/api/vitrina/staff/${cid}/${sid}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({visible:on})});
-    for(const m of VT.staff){
+    for(const m of [...VT.staff, ...(VT.master?[VT.master]:[])]){
       if(m.cid===cid && m.id===sid) m.visible=on;
       for(const b of (m.branches||[])) if(b.id===cid && b.sid===sid) b.visible=on;
     }
     vtRenderStaff();
+    if(VT.master && $('#vtDrawer').classList.contains('open')) vtRenderMaster();
     toast(on?'Мастер показан на витрине':'Мастер скрыт с витрины','ok');
   }catch(e){ toast('Не сохранилось: '+e.message,'bad'); vtRenderStaff(); }
 }
@@ -2650,12 +2651,14 @@ function vtCloseMaster(){
 function vtRenderMaster(){
   const m=VT.master;
   $('#vtName').textContent=m.name;
-  $('#vtSub').innerHTML=`${esc(m.direction)}<span class="dsep">·</span>${m.visible?'показан на витрине':'<b>скрыт с витрины</b>'}`;
+  const shownIn=m.branches.filter(b=>b.visible).map(b=>b.name);
+  $('#vtSub').innerHTML=`${esc(m.direction)}<span class="dsep">·</span>${shownIn.length?'на витрине: '+esc(shownIn.join(', ')):'<b>скрыт с витрины</b>'}`;
   const dirOpts = ['',...VT.meta.directions].map(d=>`<option value="${esc(d)}"${(m.custom.direction||'')===d?' selected':''}>${d?esc(d):'Определить автоматически'}</option>`).join('');
   const cats=[]; for(const s of m.services){ let c=cats.find(x=>x.n===s.category); if(!c) cats.push(c={n:s.category,items:[]}); c.items.push(s); }
   const price = s => (s.price_max>s.price_min?'от ':'')+Number(s.price_min||0).toLocaleString('ru-RU')+' ₽';
   $('#vtBody').innerHTML=`
-    <label class="vt-check"><input type="checkbox" id="vtfVisible"${m.visible?' checked':''}> Показывать мастера на витрине${VT.meta.branches.length>1?' — '+esc(vtBranchName(VT.mcid)):''}</label>
+    <div class="vt-checks"><span>Показывать на витрине:</span>${m.branches.map(b=>`
+      <label class="vt-check"><input type="checkbox" data-vt-visible="${b.sid}" data-vt-cid="${b.id}"${b.visible?' checked':''}> ${esc(b.name)}</label>`).join('')}</div>
     ${m.also.length?`<div class="vt-note vt-shared">Работает и на ${esc(m.also.map(b=>b.name).join(', '))}: фото, имя, описание, работы и отзывы <b>общие</b> — правка здесь видна в обоих салонах. «Показывать» — отдельно для каждого салона${m.also.some(b=>!b.visible)?' (там сейчас скрыт)':''}.</div>`:''}
 
     <div class="vt-sec"><div class="eyebrow">Фото мастера</div>
@@ -2721,7 +2724,7 @@ async function vtSaveMaster(){
   btn.disabled=true;
   try{
     VT.master = await api(`/api/vitrina/staff/${VT.mcid}/${m.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      visible:$('#vtfVisible').checked, name:$('#vtfName').value, specialization:$('#vtfSpec').value,
+      name:$('#vtfName').value, specialization:$('#vtfSpec').value,
       direction:$('#vtfDir').value, bio:$('#vtfBio').value, sort:$('#vtfSort').value===''?null:Number($('#vtfSort').value),
     })});
     vtRenderMaster(); toast('Сохранено, на витрине обновится сразу','ok');
