@@ -221,9 +221,13 @@
       ${tabs}${errBox()}${body}`;
   }
 
+  // Мастер работает и в другом салоне — клиенту полезно: можно выбрать точку ближе
+  const alsoLine = (m) => !m.also?.length ? '' : `<div class="m-also">${S.salons.length === 2
+    ? 'Принимает в обоих салонах' : 'Принимает также: ' + esc(m.also.join(', '))}</div>`;
+
   function master() {
     const m = S.master;
-    return `<section class="hero">${photo(m, 'hero-ph')}<div class="hero-t"><span class="eyebrow">${esc(groupOf(m))}</span><h1>${esc(m.name)}</h1><div class="m-spec">${esc(m.specialization)}</div>${rating(m)}</div></section>
+    return `<section class="hero">${photo(m, 'hero-ph')}<div class="hero-t"><span class="eyebrow">${esc(groupOf(m))}</span><h1>${esc(m.name)}</h1><div class="m-spec">${esc(m.specialization)}</div>${alsoLine(m)}${rating(m)}</div></section>
       ${m.bio ? `<section class="sec bio"><p>${esc(m.bio).replace(/\n+/g, '</p><p>')}</p></section>` : ''}
       <section class="sec"><span class="eyebrow">Работы</span>
         ${m.works?.length ? `<div class="works">${m.works.map((w, i) => tile(w, i)).join('')}</div>` : '<p class="empty">Мастер ещё не добавил работы.</p>'}</section>

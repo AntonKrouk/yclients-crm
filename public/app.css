@@ -886,6 +886,8 @@
   .vt-photo-a{display:grid;gap:8px;justify-items:start;flex:1;min-width:180px}
   .vt-photo-a .btn,.vt-add{cursor:pointer;display:inline-block}
   .vt-note{font-size:12px;line-height:1.5}
+  .vt-also{color:var(--accent-2)}
+  .vt-shared{margin-top:12px;padding:10px 12px;background:var(--accent-soft);border-radius:6px;color:var(--ink-2)}
   .vt-add{margin-right:10px}
   .vt-works{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:14px}
   .vt-work{display:grid;gap:6px;align-content:start}

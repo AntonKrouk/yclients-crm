@@ -105,8 +105,9 @@ button.tile{cursor:zoom-in}
 .skel-card{aspect-ratio:4/5;border-radius:var(--r);background:linear-gradient(90deg,var(--sunk),var(--line),var(--sunk));
   background-size:200% 100%;animation:sk 1.2s linear infinite}
 .hero{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:18px;align-items:end;padding-top:20px}
-.hero-t{display:grid;gap:4px;padding-bottom:4px}
-.hero h1{font-family:var(--serif);font-weight:400;font-size:30px;margin:0;line-height:1.1;text-wrap:balance}
+.hero-t{display:grid;gap:4px;padding-bottom:4px;min-width:0}
+.hero-t h1{overflow-wrap:anywhere}
+.hero h1{font-family:var(--serif);font-weight:400;font-size:clamp(22px,7.4vw,30px);margin:0;line-height:1.1;text-wrap:balance}
 @media (prefers-reduced-motion: reduce){.card-ph img{transition:none}.skel-card{animation:none}}
 
 /* ── услуги ──────────────────────────────────────────────────────────────── */
@@ -226,3 +227,6 @@ a.mark{color:var(--ink);text-decoration:none}
 .legal .lead{color:var(--ink);font-size:15.5px}
 .legal mark{background:var(--gold-soft);color:var(--gold);padding:0 3px;border-radius:var(--r)}
 .legal-nav{margin-top:36px;padding-top:16px;border-top:1px solid var(--line);font-size:13px}
+
+/* мастер работает в обоих салонах */
+.m-also{font-size:12.5px;color:var(--accent-ink)}

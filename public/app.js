@@ -2587,6 +2587,7 @@ function vtRenderStaff(){
           <div class="vt-spec">${esc(m.specialization||'—')}</div>
           <div class="vt-meta">
             <span class="pill">${esc(m.direction)}</span>
+            ${m.also.length?`<span class="vt-also" title="Тот же мастер работает и там: фото, описание, работы и отзывы общие">+ ${esc(m.also.map(b=>b.name).join(', '))}</span>`:''}
             <span>${m.works} ${m.works%10===1&&m.works%100!==11?'работа':(m.works%10>=2&&m.works%10<=4&&(m.works%100<10||m.works%100>=20))?'работы':'работ'}</span>
             <span>${m.rating?'★ '+String(m.rating).replace('.',',')+' · '+m.reviews:'без оценок'}</span>
             ${m.pending?`<span class="vt-warn">${m.pending} на проверке</span>`:''}
@@ -2631,6 +2632,7 @@ function vtRenderMaster(){
   const price = s => (s.price_max>s.price_min?'от ':'')+Number(s.price_min||0).toLocaleString('ru-RU')+' ₽';
   $('#vtBody').innerHTML=`
     <label class="vt-check"><input type="checkbox" id="vtfVisible"${m.visible?' checked':''}> Показывать мастера на витрине</label>
+    ${m.also.length?`<div class="vt-note vt-shared">Работает и на ${esc(m.also.map(b=>b.name).join(', '))}: фото, имя, описание, работы и отзывы <b>общие</b> — правка здесь видна в обоих салонах. «Показывать» — отдельно для каждого салона${m.also.some(b=>!b.visible)?' (там сейчас скрыт)':''}.</div>`:''}
 
     <div class="vt-sec"><div class="eyebrow">Фото мастера</div>
       <div class="vt-photo">

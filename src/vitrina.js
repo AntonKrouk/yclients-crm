@@ -124,34 +124,114 @@ async function ycServices(cid, staffId) {
   }));
 }
 
+// --- один человек в нескольких филиалах -------------------------------------------
+//
+// В YClients у каждого филиала свой список сотрудников: Коновалова на Баскове и на
+// Мытнинской — две карточки с разными id. Для клиента это один мастер, поэтому профиль
+// (имя, специализация, направление, «о мастере», фото), портфолио и отзывы у таких
+// карточек ОБЩИЕ. «Показывать» и порядок — у каждого филиала свои (мастер может почти не
+// работать на второй точке). Склеиваем по имени из YClients: регистр, «ё», лишние пробелы
+// и порядок слов не важны. Два сотрудника с одним именем в одном филиале — не склеиваем.
+// Пишем на «главную» карточку — первую по порядку филиалов в YCLIENTS_COMPANY_ID; читаем
+// с главной, а если там пусто — с остальных, чтобы загруженное раньше на вторую карточку
+// не потерялось.
+
+const clean = (v) => (v == null ? '' : String(v).trim());
+
+function branchList() {
+  if (yc.isDemo()) return demo().SALONS.map(s => ({ id: Number(s.id), name: s.name }));
+  return yc.companies().map(c => ({ id: Number(c.id), name: c.name || String(c.id) }));
+}
+const personKey = (name) => clean(name).toLowerCase().replace(/ё/g, 'е').split(/\s+/).filter(Boolean).sort().join(' ');
+
+// `${cid}:${sid}` -> все карточки этого человека [{cid, sid}], главная первой
+async function personMap() {
+  const branches = branchList();
+  const lists = await Promise.all(branches.map(b => ycStaff(b.id).catch(() => [])));
+  const groups = new Map();
+  const dupes = new Set();
+  branches.forEach((b, i) => {
+    const seen = new Set();
+    for (const s of lists[i]) {
+      const k = personKey(s.name);
+      if (!k) continue;
+      if (seen.has(k)) { dupes.add(k); continue; }
+      seen.add(k);
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push({ cid: b.id, sid: Number(s.id) });
+    }
+  });
+  const map = new Map();
+  for (const [k, cards] of groups) {
+    if (dupes.has(k)) continue;
+    for (const c of cards) map.set(`${c.cid}:${c.sid}`, cards);
+  }
+  return map;
+}
+const cardsIn = (map, cid, sid) => map.get(`${Number(cid)}:${Number(sid)}`) || [{ cid: Number(cid), sid: Number(sid) }];
+const cardsOf = async (cid, sid) => cardsIn(await personMap(), cid, sid);
+
 // --- правки админов -------------------------------------------------------------
 
-const overridesStmt = db.prepare('SELECT * FROM portal_staff WHERE company_id = ?');
-const worksStmt = db.prepare('SELECT id, file, caption FROM portal_works WHERE company_id = ? AND staff_id = ? ORDER BY sort, id');
-const worksCountStmt = db.prepare('SELECT staff_id, COUNT(*) n FROM portal_works WHERE company_id = ? GROUP BY staff_id');
-const ratingStmt = db.prepare(`SELECT staff_id, ROUND(AVG(rating), 1) AS rating, COUNT(*) AS n
-  FROM portal_reviews WHERE company_id = ? AND status = 'published' GROUP BY staff_id`);
+const PROFILE = ['name', 'specialization', 'direction', 'bio'];
+const getOverride = db.prepare('SELECT * FROM portal_staff WHERE company_id = ? AND staff_id = ?');
 const pendingStmt = db.prepare(`SELECT staff_id, COUNT(*) n FROM portal_reviews
   WHERE company_id = ? AND status = 'pending' GROUP BY staff_id`);
 
 const fileUrl = (cid, sid, file) => `/p/works/${cid}/${sid}/${encodeURIComponent(file)}`;
-const clean = (v) => (v == null ? '' : String(v).trim());
+const cardsSql = (cards) => ({
+  sql: '(' + cards.map(() => '(company_id = ? AND staff_id = ?)').join(' OR ') + ')',
+  args: cards.flatMap(c => [c.cid, c.sid]),
+});
+
+// Общий профиль человека: поле с главной карточки, пусто — с остальных
+function profileOf(cards) {
+  const rows = cards.map(c => getOverride.get(c.cid, c.sid)).filter(Boolean);
+  const p = {};
+  for (const f of PROFILE) p[f] = clean(rows.find(r => clean(r[f]))?.[f]);
+  const ph = rows.find(r => r.photo);
+  p.photo = ph ? fileUrl(ph.company_id, ph.staff_id, ph.photo) : '';
+  return p;
+}
+function worksOf(cards) {
+  const w = cardsSql(cards);
+  return db.prepare(`SELECT id, company_id, staff_id, file, caption FROM portal_works WHERE ${w.sql} ORDER BY sort, id`)
+    .all(...w.args).map(x => ({ id: x.id, src: fileUrl(x.company_id, x.staff_id, x.file), caption: x.caption || '' }));
+}
+function ratingOf(cards) {
+  const w = cardsSql(cards);
+  const r = db.prepare(`SELECT ROUND(AVG(rating), 1) AS rating, COUNT(*) AS n FROM portal_reviews
+    WHERE ${w.sql} AND status = 'published'`).get(...w.args);
+  return { rating: r?.n ? r.rating : null, n: r?.n || 0 };
+}
+// Опубликованные отзывы о человеке — со всех его карточек, для витрины
+async function publicReviews(cid, sid) {
+  const w = cardsSql(await cardsOf(cid, sid));
+  return db.prepare(`SELECT author, rating, text, substr(created_at, 1, 10) AS date FROM portal_reviews
+    WHERE ${w.sql} AND status = 'published' ORDER BY created_at DESC LIMIT 30`).all(...w.args);
+}
 
 // Мастер = данные YClients + правки админа. Возвращает и то и другое, чтобы CRM могла
-// показать «в YClients так, у нас так».
-function merge(cid, s, o) {
-  const name = clean(o?.name) || s.name;
-  const specialization = clean(o?.specialization) || s.specialization;
+// показать «в YClients так, у нас так». also — другие филиалы, где работает этот же человек.
+function merge(cid, s, cards) {
+  const own = getOverride.get(cid, s.id);
+  const prof = profileOf(cards);
+  const names = new Map(branchList().map(b => [b.id, b.name]));
+  const name = prof.name || s.name;
+  const specialization = prof.specialization || s.specialization;
   return {
     id: s.id, name, specialization,
-    direction: clean(o?.direction) || autoDirection(s.position, specialization) || s.position || 'Другие мастера',
-    bio: clean(o?.bio) || s.bio || '',
-    avatar: o?.photo ? fileUrl(cid, s.id, o.photo) : s.avatar,
-    visible: o ? Boolean(o.visible) : true,
-    sort: o?.sort ?? null,
+    direction: prof.direction || autoDirection(s.position, specialization) || s.position || 'Другие мастера',
+    bio: prof.bio || s.bio || '',
+    avatar: prof.photo || s.avatar,
+    visible: own ? Boolean(own.visible) : true,
+    sort: own?.sort ?? null,
+    also: cards.filter(c => c.cid !== Number(cid)).map(c => ({
+      id: c.cid, name: names.get(c.cid) || String(c.cid), visible: Boolean(getOverride.get(c.cid, c.sid)?.visible ?? 1),
+    })),
     yc: { name: s.name, specialization: s.specialization, position: s.position, avatar: s.avatar, bio: s.bio || '' },
-    custom: { name: clean(o?.name), specialization: clean(o?.specialization), direction: clean(o?.direction),
-      bio: clean(o?.bio), photo: Boolean(o?.photo) },
+    custom: { name: prof.name, specialization: prof.specialization, direction: prof.direction,
+      bio: prof.bio, photo: Boolean(prof.photo) },
     tone: s.tone, // только в демо: оттенок вместо фото
   };
 }
@@ -159,66 +239,82 @@ const bySort = (a, b) => ((a.sort ?? 1e9) - (b.sort ?? 1e9)) || a.name.localeCom
 
 // Для витрины: только видимые, с портфолио и оценкой по опубликованным отзывам
 async function publicStaff(cid) {
-  const [list, overrides] = [await ycStaff(cid), new Map(overridesStmt.all(cid).map(o => [o.staff_id, o]))];
-  const rates = new Map(ratingStmt.all(cid).map(r => [Number(r.staff_id), r]));
+  const [list, map] = [await ycStaff(cid), await personMap()];
   // в демо работ и отзывов в базе нет — показываем примерные из demo.js
   const demoWorks = yc.isDemo() ? new Map(demo().STAFF[cid]?.map(s => [s.id, s.works]) || []) : null;
   const raw = new Map(list.map(s => [s.id, s]));
-  return list.map(s => merge(cid, s, overrides.get(s.id)))
-    .filter(m => m.visible)
-    .sort(bySort)
-    .map(m => {
-      const works = worksStmt.all(cid, m.id).map(w => ({ src: fileUrl(cid, m.id, w.file), caption: w.caption || '' }));
-      const r = rates.get(m.id);
+  return list.map(s => ({ m: merge(cid, s, cardsIn(map, cid, s.id)), cards: cardsIn(map, cid, s.id) }))
+    .filter(x => x.m.visible)
+    .sort((a, b) => bySort(a.m, b.m))
+    .map(({ m, cards }) => {
+      const works = worksOf(cards).map(w => ({ src: w.src, caption: w.caption }));
+      const r = ratingOf(cards);
       return {
         id: m.id, name: m.name, specialization: m.specialization, direction: m.direction, bio: m.bio,
         avatar: m.avatar, tone: m.tone,
+        also: m.also.filter(b => b.visible).map(b => b.name),
         works: works.length || !demoWorks ? works : (demoWorks.get(m.id) || []),
-        rating: r?.rating || (demoWorks && raw.get(m.id)?.rating) || null,
-        reviews: r?.n || (demoWorks && raw.get(m.id)?.reviews) || 0,
+        rating: r.rating || (demoWorks && raw.get(m.id)?.rating) || null,
+        reviews: r.n || (demoWorks && raw.get(m.id)?.reviews) || 0,
       };
     });
 }
 
-// Для CRM: все мастера филиала, включая скрытых, со счётчиками
+// Для CRM: все мастера филиала, включая скрытых, со счётчиками.
+// «На проверке» — отзывы, оставленные в этом филиале: их и проверяет его админ.
 async function adminStaff(cid) {
-  const list = await ycStaff(cid);
-  const overrides = new Map(overridesStmt.all(cid).map(o => [o.staff_id, o]));
-  const works = new Map(worksCountStmt.all(cid).map(r => [Number(r.staff_id), r.n]));
-  const rates = new Map(ratingStmt.all(cid).map(r => [Number(r.staff_id), r]));
+  const [list, map] = [await ycStaff(cid), await personMap()];
   const pending = new Map(pendingStmt.all(cid).map(r => [Number(r.staff_id), r.n]));
   return list.map(s => {
-    const m = merge(cid, s, overrides.get(s.id));
-    return { ...m, works: works.get(m.id) || 0, rating: rates.get(m.id)?.rating || null,
-      reviews: rates.get(m.id)?.n || 0, pending: pending.get(m.id) || 0 };
+    const cards = cardsIn(map, cid, s.id);
+    const m = merge(cid, s, cards);
+    const r = ratingOf(cards);
+    return { ...m, works: worksOf(cards).length, rating: r.rating, reviews: r.n, pending: pending.get(m.id) || 0 };
   }).sort(bySort);
 }
 
 async function adminMaster(cid, sid) {
   const m = (await adminStaff(cid)).find(x => x.id === Number(sid));
   if (!m) return null;
-  m.workList = worksStmt.all(cid, m.id).map(w => ({ id: w.id, src: fileUrl(cid, m.id, w.file), caption: w.caption || '' }));
+  m.workList = worksOf(await cardsOf(cid, sid));
   m.services = await ycServices(cid, m.id).catch(() => []);
   return m;
 }
 
-const upsertStmt = db.prepare(`INSERT INTO portal_staff(company_id, staff_id, visible, name, specialization, direction, bio, sort, updated_at)
-  VALUES(?,?,?,?,?,?,?,?,?)
-  ON CONFLICT(company_id, staff_id) DO UPDATE SET visible=excluded.visible, name=excluded.name,
-    specialization=excluded.specialization, direction=excluded.direction, bio=excluded.bio,
-    sort=excluded.sort, updated_at=excluded.updated_at`);
-const getOverride = db.prepare('SELECT * FROM portal_staff WHERE company_id = ? AND staff_id = ?');
+const upsertOwn = db.prepare(`INSERT INTO portal_staff(company_id, staff_id, visible, sort, updated_at) VALUES(?,?,?,?,?)
+  ON CONFLICT(company_id, staff_id) DO UPDATE SET visible=excluded.visible, sort=excluded.sort, updated_at=excluded.updated_at`);
+const upsertProfile = db.prepare(`INSERT INTO portal_staff(company_id, staff_id, name, specialization, direction, bio, updated_at)
+  VALUES(?,?,?,?,?,?,?)
+  ON CONFLICT(company_id, staff_id) DO UPDATE SET name=excluded.name, specialization=excluded.specialization,
+    direction=excluded.direction, bio=excluded.bio, updated_at=excluded.updated_at`);
+const clearProfile = db.prepare(`UPDATE portal_staff SET name = NULL, specialization = NULL, direction = NULL, bio = NULL
+  WHERE company_id = ? AND staff_id = ?`);
 
-function saveMaster(cid, sid, p) {
-  const cur = getOverride.get(cid, sid) || {};
-  const pick = (k, max) => (p[k] === undefined ? (cur[k] ?? null) : (clean(p[k]).slice(0, max) || null));
+// visible/sort — в карточку этого филиала; имя, специализация, направление, «о мастере» —
+// в главную карточку человека (со вторых стираем, чтобы старое не всплыло из-под пустого)
+async function saveMaster(cid, sid, p) {
+  const cards = await cardsOf(cid, sid);
+  const prof = profileOf(cards);
+  const pick = (k, max) => (p[k] === undefined ? (prof[k] || null) : (clean(p[k]).slice(0, max) || null));
   const direction = pick('direction', 40);
   if (direction && !DIRECTIONS.some(([d]) => d === direction)) throw new Error('Неизвестное направление');
-  upsertStmt.run(cid, sid,
-    p.visible === undefined ? (cur.visible ?? 1) : (p.visible ? 1 : 0),
-    pick('name', 60), pick('specialization', 120), direction, pick('bio', 1200),
-    p.sort === undefined ? (cur.sort ?? null) : (Number.isFinite(Number(p.sort)) && p.sort !== null ? Number(p.sort) : null),
-    new Date().toISOString());
+  const now = new Date().toISOString();
+  db.exec('BEGIN');
+  try {
+    if (p.visible !== undefined || p.sort !== undefined) {
+      const cur = getOverride.get(cid, sid) || {};
+      upsertOwn.run(cid, sid,
+        p.visible === undefined ? (cur.visible ?? 1) : (p.visible ? 1 : 0),
+        p.sort === undefined ? (cur.sort ?? null) : (Number.isFinite(Number(p.sort)) && p.sort !== null ? Number(p.sort) : null),
+        now);
+    }
+    if (PROFILE.some(f => p[f] !== undefined)) {
+      const [home, ...rest] = cards;
+      upsertProfile.run(home.cid, home.sid, pick('name', 60), pick('specialization', 120), direction, pick('bio', 1200), now);
+      for (const c of rest) clearProfile.run(c.cid, c.sid);
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 
 // --- файлы ----------------------------------------------------------------------
@@ -246,29 +342,39 @@ function removeFile(cid, sid, file) {
   try { fs.unlinkSync(path.join(WORKS_DIR, String(Number(cid)), String(Number(sid)), file)); } catch { /* уже нет */ }
 }
 
-function setPhoto(cid, sid, buf) {
-  const file = buf ? saveFile(cid, sid, buf) : null;
-  const old = getOverride.get(cid, sid)?.photo;
-  saveMaster(cid, sid, {});
-  db.prepare('UPDATE portal_staff SET photo = ?, updated_at = ? WHERE company_id = ? AND staff_id = ?')
-    .run(file, new Date().toISOString(), cid, sid);
-  if (old) removeFile(cid, sid, old);
+// Фото — на главную карточку; старые фото со всех карточек человека убираем
+async function setPhoto(cid, sid, buf) {
+  const cards = await cardsOf(cid, sid);
+  const home = cards[0];
+  const file = buf ? saveFile(home.cid, home.sid, buf) : null;
+  const now = new Date().toISOString();
+  db.prepare('INSERT OR IGNORE INTO portal_staff(company_id, staff_id, updated_at) VALUES(?,?,?)').run(home.cid, home.sid, now);
+  const setStmt = db.prepare('UPDATE portal_staff SET photo = ?, updated_at = ? WHERE company_id = ? AND staff_id = ?');
+  for (const c of cards) {
+    const old = getOverride.get(c.cid, c.sid)?.photo;
+    setStmt.run(c === home ? file : null, now, c.cid, c.sid);
+    if (old) removeFile(c.cid, c.sid, old);
+  }
 }
 
-function addWork(cid, sid, buf, caption) {
-  const file = saveFile(cid, sid, buf);
-  const next = db.prepare('SELECT COALESCE(MAX(sort), 0) + 1 AS s FROM portal_works WHERE company_id = ? AND staff_id = ?').get(cid, sid).s;
+// Работы — на главную карточку, в конец общего списка человека
+async function addWork(cid, sid, buf, caption) {
+  const cards = await cardsOf(cid, sid);
+  const home = cards[0];
+  const file = saveFile(home.cid, home.sid, buf);
+  const w = cardsSql(cards);
+  const next = db.prepare(`SELECT COALESCE(MAX(sort), 0) + 1 AS s FROM portal_works WHERE ${w.sql}`).get(...w.args).s;
   return db.prepare('INSERT INTO portal_works(company_id, staff_id, file, caption, sort, created_at) VALUES(?,?,?,?,?,?)')
-    .run(cid, sid, file, clean(caption).slice(0, 120) || null, next, new Date().toISOString()).lastInsertRowid;
+    .run(home.cid, home.sid, file, clean(caption).slice(0, 120) || null, next, new Date().toISOString()).lastInsertRowid;
 }
 const workById = db.prepare('SELECT * FROM portal_works WHERE id = ?');
-function updateWork(id, { caption, move }) {
+async function updateWork(id, { caption, move }) {
   const w = workById.get(id);
   if (!w) throw new Error('Работа не найдена');
   if (caption !== undefined) db.prepare('UPDATE portal_works SET caption = ? WHERE id = ?').run(clean(caption).slice(0, 120) || null, id);
   if (move === -1 || move === 1) {
-    // меняемся местами с соседом: порядок 1..n пересобираем, чтобы не было дублей
-    const list = worksStmt.all(w.company_id, w.staff_id).map(x => x.id);
+    // меняемся местами с соседом по общему списку человека; порядок 1..n пересобираем
+    const list = worksOf(await cardsOf(w.company_id, w.staff_id)).map(x => x.id);
     const i = list.indexOf(Number(id)), j = i + move;
     if (j >= 0 && j < list.length) {
       [list[i], list[j]] = [list[j], list[i]];
@@ -316,7 +422,7 @@ function purgeReviews() {
 
 module.exports = {
   WORKS_DIR, purgeReviews, DIRECTIONS: DIRECTIONS.map(d => d[0]),
-  ycStaff, ycServices, publicStaff, adminStaff, adminMaster,
+  ycStaff, ycServices, publicStaff, publicReviews, adminStaff, adminMaster,
   saveMaster, setPhoto, addWork, updateWork, deleteWork,
   reviewsForAdmin, setReviewStatus,
 };

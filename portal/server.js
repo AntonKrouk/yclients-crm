@@ -86,16 +86,15 @@ app.get('/p/api/services', wrap(async (req, res) => {
 
 // --- отзывы ------------------------------------------------------------------
 
-app.get('/p/api/reviews', (req, res) => {
+// Отзывы о человеке — со всех его карточек: мастер в двух салонах один (src/vitrina.js)
+app.get('/p/api/reviews', wrap(async (req, res) => {
   const salon = salonById(req.query.salon);
   const staff = ids(req.query.staff)[0];
   if (!salon || !staff) return fail(res, 400, 'Выберите мастера');
-  const rows = db.prepare(`SELECT author, rating, text, substr(created_at, 1, 10) AS date FROM portal_reviews
-    WHERE company_id = ? AND staff_id = ? AND status = 'published' ORDER BY created_at DESC LIMIT 30`)
-    .all(salon.id, Number(staff));
+  const rows = await vitrina.publicReviews(salon.id, Number(staff));
   // в демо к настоящим (опубликованным из CRM) добавляем примерные
   res.json(yc.isDemo() ? rows.concat(demo.handle('GET', req.path, req.query)) : rows);
-});
+}));
 
 // Был ли у этого телефона завершённый визит к мастеру за последние полгода (только если
 // телефон оставили — он в отзыве необязательный). Ответ клиенту

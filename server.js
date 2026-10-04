@@ -1754,33 +1754,33 @@ app.get('/api/vitrina/staff/:cid/:sid', vtWrap(async (req, res) => {
 app.patch('/api/vitrina/staff/:cid/:sid', vtWrap(async (req, res) => {
   const cid = vtCid(req.params.cid);
   if (!cid) return res.status(400).json({ error: 'Не выбран филиал' });
-  vitrina.saveMaster(cid, Number(req.params.sid), req.body || {});
+  await vitrina.saveMaster(cid, Number(req.params.sid), req.body || {});
   res.json(await vitrina.adminMaster(cid, Number(req.params.sid)));
 }));
 
 app.post('/api/vitrina/staff/:cid/:sid/photo', vtImage, vtWrap(async (req, res) => {
   const cid = vtCid(req.params.cid);
   if (!cid) return res.status(400).json({ error: 'Не выбран филиал' });
-  vitrina.setPhoto(cid, Number(req.params.sid), req.body);
+  await vitrina.setPhoto(cid, Number(req.params.sid), req.body);
   res.json(await vitrina.adminMaster(cid, Number(req.params.sid)));
 }));
 
 app.delete('/api/vitrina/staff/:cid/:sid/photo', vtWrap(async (req, res) => {
   const cid = vtCid(req.params.cid);
   if (!cid) return res.status(400).json({ error: 'Не выбран филиал' });
-  vitrina.setPhoto(cid, Number(req.params.sid), null);
+  await vitrina.setPhoto(cid, Number(req.params.sid), null);
   res.json(await vitrina.adminMaster(cid, Number(req.params.sid)));
 }));
 
 app.post('/api/vitrina/staff/:cid/:sid/works', vtImage, vtWrap(async (req, res) => {
   const cid = vtCid(req.params.cid);
   if (!cid) return res.status(400).json({ error: 'Не выбран филиал' });
-  vitrina.addWork(cid, Number(req.params.sid), req.body, req.query.caption);
+  await vitrina.addWork(cid, Number(req.params.sid), req.body, req.query.caption);
   res.json(await vitrina.adminMaster(cid, Number(req.params.sid)));
 }));
 
 app.patch('/api/vitrina/works/:id', vtWrap(async (req, res) => {
-  vitrina.updateWork(Number(req.params.id), req.body || {});
+  await vitrina.updateWork(Number(req.params.id), req.body || {});
   res.json({ ok: true });
 }));
 
