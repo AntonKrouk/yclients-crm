@@ -212,3 +212,17 @@ button.tile{cursor:zoom-in}
   background-size:200% 100%;animation:sk 1.2s linear infinite}
 @keyframes sk{to{background-position:-200% 0}}
 @media (prefers-reduced-motion: reduce){.skel{animation:none}}
+
+/* ── документы о ПДн (/privacy, /consent, /consent-publish) и ссылка на них ── */
+.consent a,.legal a,.foot a{color:var(--accent-ink);text-underline-offset:2px}
+.foot{max-width:600px;margin:40px auto 0;padding:16px;border-top:1px solid var(--line);font-size:12px;text-align:center}
+.foot a{color:var(--muted)}
+a.mark{color:var(--ink);text-decoration:none}
+.legal{padding-top:28px;padding-bottom:40px;font-size:14.5px;line-height:1.6;color:var(--ink-2)}
+.legal h1{font-family:var(--serif);font-weight:400;font-size:26px;line-height:1.2;color:var(--ink);margin:8px 0 20px}
+.legal h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink);margin:28px 0 8px}
+.legal ul{padding-left:20px}
+.legal li{margin:6px 0}
+.legal .lead{color:var(--ink);font-size:15.5px}
+.legal mark{background:var(--gold-soft);color:var(--gold);padding:0 3px;border-radius:var(--r)}
+.legal-nav{margin-top:36px;padding-top:16px;border-top:1px solid var(--line);font-size:13px}

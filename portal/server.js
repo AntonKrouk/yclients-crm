@@ -20,6 +20,7 @@ const vitrina = require('../src/vitrina');
 const people = require('../src/people');
 const telegram = require('../src/telegram');
 const demo = require('./demo');
+const legal = require('./legal');
 
 const PORT = Number(process.env.PORTAL_PORT) || 3021;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -105,7 +106,7 @@ const visitedStmt = db.prepare(`SELECT 1 FROM visits v JOIN clients c ON c.id = 
     AND substr(replace(replace(replace(replace(replace(c.phone,' ',''),'-',''),'(',''),')',''),'+',''), -10) = ?
   LIMIT 1`);
 const reviewStmt = db.prepare(`INSERT INTO portal_reviews(company_id, staff_id, staff_name, rating, text, author,
-  phone10, verified, can_publish, ip, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`);
+  phone10, verified, can_publish, ip, created_at, consent_ver) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`);
 const STARS = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
 // Telegram разбирает HTML — имя мастера из YClients экранируем на всякий случай
 const h = (v) => String(v ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -141,7 +142,7 @@ app.post('/p/api/review', wrap(async (req, res) => {
   const verified = staffName && phone10 ? Boolean(visitedStmt.get(salon.id, staffName, since, phone10)) : false;
 
   const info = reviewStmt.run(salon.id, Number(staffId), staffName, rating, text, author, phone10, verified ? 1 : 0,
-    b.publish ? 1 : 0, ip, new Date().toISOString());
+    b.publish ? 1 : 0, ip, new Date().toISOString(), legal.LEGAL_VERSION);
 
   // Админам — сразу. Низкая оценка — отдельным текстом: клиенту надо позвонить сегодня,
   // пока он не унёс недовольство на Яндекс Карты. Ни телефона, ни подписи, ни текста
@@ -159,10 +160,15 @@ app.post('/p/api/review', wrap(async (req, res) => {
 
 app.get('/p/api/health', (req, res) => res.json({ ok: true, demo: yc.isDemo() }));
 
+legal.mount(app); // /privacy, /consent, /consent-publish
+
 app.use('/p/works', express.static(vitrina.WORKS_DIR, { maxAge: '7d', fallthrough: false }));
 app.use(express.static(PUBLIC_DIR, { maxAge: '1h' }));
 
 if (require.main === module) {
+  // Сроки хранения ПДн из политики — портал сам подчищает старые телефоны, IP и отзывы
+  const purge = () => { try { const r = vitrina.purgeReviews(); if (r.cleared || r.deleted) console.log('[portal/purge]', r); } catch (e) { console.error('[portal/purge]', e.message); } };
+  purge(); setInterval(purge, 86400e3).unref();
   // Только localhost: снаружи витрина доступна через nginx (HTTPS), а не голым портом 3021.
   app.listen(PORT, process.env.PORTAL_HOST || '127.0.0.1', () => {
     console.log(`[portal] http://localhost:${PORT} ${yc.isDemo() ? '(демо-данные)' : '(мастера и цены из YClients)'}`);

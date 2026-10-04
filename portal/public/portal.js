@@ -257,9 +257,9 @@
           <span class="hint">Оставьте, если хотите, чтобы салон с вами связался. На сайте номер не показываем.</span></div>
         <div class="hp" aria-hidden="true"><label for="website">Сайт</label><input id="website" tabindex="-1" autocomplete="off"></div>
         <label class="consent"><input type="checkbox" id="rpublish"${f.publish ? ' checked' : ''}>
-          <span>Разрешаю опубликовать отзыв на сайте под указанным именем. Без этой отметки его прочитает только салон.</span></label>
+          <span>Разрешаю опубликовать отзыв на сайте под указанным именем (<a href="/consent-publish" target="_blank" rel="noopener">согласие на распространение</a>). Без этой отметки его прочитает только салон.</span></label>
         <label class="consent"><input type="checkbox" id="rconsent"${f.consent ? ' checked' : ''}>
-          <span>Согласна(ен) на обработку персональных данных, указанных в отзыве.</span></label>
+          <span>Даю <a href="/consent" target="_blank" rel="noopener">согласие на обработку персональных данных</a>, указанных в отзыве, на условиях <a href="/privacy" target="_blank" rel="noopener">политики</a>.</span></label>
       </form>${errBox()}`;
   }
 

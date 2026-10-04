@@ -64,6 +64,10 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS portal_reviews_staff ON portal_reviews(company_id, staff_id, status);
 `);
+// Редакция документов о ПДн, с которой согласился автор отзыва (portal/legal.js, LEGAL_VERSION)
+if (!db.prepare('PRAGMA table_info(portal_reviews)').all().some(c => c.name === 'consent_ver')) {
+  db.exec('ALTER TABLE portal_reviews ADD COLUMN consent_ver TEXT');
+}
 
 // Направления витрины. Порядок = порядок проверки и показа: «Косметолог, массаж лица»
 // должен попасть в косметологию, поэтому она выше массажа. Тот же список — в portal.js.
@@ -297,8 +301,21 @@ function setReviewStatus(id, status) {
   db.prepare('UPDATE portal_reviews SET status = ? WHERE id = ?').run(status, id);
 }
 
+// Сроки хранения из политики (/privacy): телефон и IP — 12 месяцев, неопубликованный
+// отзыв — 3 года. Опубликованный живёт, пока клиент не отзовёт согласие (снимают вручную).
+// Зовёт витрина при старте и раз в сутки.
+function purgeReviews() {
+  const day = 86400e3, now = Date.now();
+  const year = new Date(now - 365 * day).toISOString();
+  const three = new Date(now - 3 * 365 * day).toISOString();
+  const a = db.prepare(`UPDATE portal_reviews SET phone10 = NULL, ip = NULL
+    WHERE created_at < ? AND (phone10 IS NOT NULL OR ip IS NOT NULL)`).run(year).changes;
+  const b = db.prepare(`DELETE FROM portal_reviews WHERE created_at < ? AND status != 'published'`).run(three).changes;
+  return { cleared: a, deleted: b };
+}
+
 module.exports = {
-  WORKS_DIR, DIRECTIONS: DIRECTIONS.map(d => d[0]),
+  WORKS_DIR, purgeReviews, DIRECTIONS: DIRECTIONS.map(d => d[0]),
   ycStaff, ycServices, publicStaff, adminStaff, adminMaster,
   saveMaster, setPhoto, addWork, updateWork, deleteWork,
   reviewsForAdmin, setReviewStatus,
