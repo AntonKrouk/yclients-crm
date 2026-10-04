@@ -45,6 +45,7 @@
     <button class="tab" data-view="bday">ДР</button>
     <button class="tab" data-view="scripts">Скрипты</button>
     <button class="tab" data-view="segments">Конструктор</button>
+    <button class="tab" data-view="vitrina">Витрина</button>
   </div>
   <button class="btn primary" id="connectBtn" style="display:none">Подключить YClients</button>
   <button class="btn" id="syncBtn" title="Подтянуть свежие записи из YClients — несколько секунд">Обновить</button>
@@ -615,6 +616,34 @@
   </section>
 
   <!-- КЛИЕНТЫ -->
+  <!-- ВИТРИНА: что видят клиенты на странице мастеров. Мастера, услуги и цены — из YClients,
+       здесь — показывать ли, как подписать, фото, портфолио и проверка отзывов. -->
+  <section id="view-vitrina" style="display:none">
+    <div class="vt-head">
+      <div class="section-title" style="margin:0">Витрина</div>
+      <select id="vtBranch" title="Филиал"></select>
+      <div class="vt-sub" role="tablist">
+        <button class="vt-subtab active" data-vt="staff" type="button">Мастера</button>
+        <button class="vt-subtab" data-vt="reviews" type="button">Отзывы <span id="vtPending" class="vt-count" style="display:none"></span></button>
+      </div>
+      <a id="vtOpen" class="btn" target="_blank" rel="noopener" style="display:none">Открыть витрину</a>
+    </div>
+    <p class="section-hint">Мастера, их услуги, категории и цены подтягиваются из YClients. Здесь — то, что увидит клиент:
+      показывать ли мастера, как его подписать, фото, работы и текст «о мастере». В YClients ничего не меняется.</p>
+    <div id="vtStaff"></div>
+    <div id="vtReviews" style="display:none">
+      <div class="vt-rfilter">
+        <select id="vtRStatus">
+          <option value="pending">Ждут проверки</option>
+          <option value="published">Опубликованы</option>
+          <option value="hidden">Скрыты</option>
+          <option value="all">Все</option>
+        </select>
+      </div>
+      <div id="vtRList"></div>
+    </div>
+  </section>
+
   <section id="view-clients" style="display:none">
     <input class="search" id="clientSearch" placeholder="Поиск по имени или телефону…">
     <div class="card" style="margin-top:12px;padding:0">
@@ -622,6 +651,17 @@
     </div>
   </section>
 </main>
+
+<!-- Редактор мастера витрины -->
+<div class="overlay" id="vtOverlay"></div>
+<aside class="drawer" id="vtDrawer" aria-label="Мастер на витрине">
+  <div class="head">
+    <button class="dclose" id="vtClose" type="button"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M10 3L5 8l5 5"/></svg> Назад</button>
+    <div class="dtitle"><span class="dname" id="vtName"></span></div>
+    <div class="dsub" id="vtSub"></div>
+  </div>
+  <div class="dbody vt-body" id="vtBody"></div>
+</aside>
 
 <!-- Лента событий клиента -->
 <div class="overlay" id="overlay"></div>

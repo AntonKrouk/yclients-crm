@@ -11,6 +11,7 @@ const telegram = require('./src/telegram');
 const yc = require('./src/yclients');
 const people = require('./src/people');
 const ai = require('./src/ai');
+const vitrina = require('./src/vitrina');
 
 const app = express();
 app.use(express.json());
@@ -1682,6 +1683,97 @@ app.post('/api/booking/create', async (req, res) => {
     imported, status: action?.status || null,
   });
 });
+
+// --- Витрина для клиентов: мастера, портфолио, отзывы ------------------------
+// Мастера и прайс — из YClients (только чтение), здесь админы правят то, что видит
+// клиент: показывать ли мастера, имя, специализацию, направление, «о мастере», фото,
+// работы; и проверяют отзывы. Логика и таблицы — src/vitrina.js (общий с portal/).
+
+// Филиалы: из конфига YClients, в демо — из демо-набора витрины
+function vitrinaBranches() {
+  if (yc.isDemo()) return require('./portal/demo').SALONS.map(s => ({ id: s.id, name: s.name }));
+  return yc.companies().map(c => ({ id: Number(c.id), name: c.name || c.id }));
+}
+const vtCid = (v) => {
+  const id = Number(v);
+  return vitrinaBranches().some(b => b.id === id) ? id : null;
+};
+const vtWrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch(e => {
+  console.error('[vitrina]', req.method, req.path, e.message);
+  res.status(/YClients/.test(e.message) ? 502 : 400).json({ error: e.message });
+});
+// Фото приходят уже ужатыми в браузере (до 1600 px), 8 МБ — с запасом
+const vtImage = express.raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit: '8mb' });
+
+// Превью фото в CRM — те же файлы, что раздаёт витрина
+app.use('/p/works', express.static(vitrina.WORKS_DIR, { maxAge: '7d', fallthrough: false }));
+
+app.get('/api/vitrina/meta', (req, res) => res.json({
+  branches: vitrinaBranches(), directions: vitrina.DIRECTIONS, demo: yc.isDemo(),
+  portal_url: process.env.PORTAL_URL || '',
+}));
+
+app.get('/api/vitrina/staff', vtWrap(async (req, res) => {
+  const cid = vtCid(req.query.company_id);
+  if (!cid) return res.status(400).json({ error: 'Не выбран филиал' });
+  res.json(await vitrina.adminStaff(cid));
+}));
+
+app.get('/api/vitrina/staff/:cid/:sid', vtWrap(async (req, res) => {
+  const cid = vtCid(req.params.cid);
+  const m = cid && await vitrina.adminMaster(cid, Number(req.params.sid));
+  if (!m) return res.status(404).json({ error: 'Мастер не найден в YClients' });
+  res.json(m);
+}));
+
+app.patch('/api/vitrina/staff/:cid/:sid', vtWrap(async (req, res) => {
+  const cid = vtCid(req.params.cid);
+  if (!cid) return res.status(400).json({ error: 'Не выбран филиал' });
+  vitrina.saveMaster(cid, Number(req.params.sid), req.body || {});
+  res.json(await vitrina.adminMaster(cid, Number(req.params.sid)));
+}));
+
+app.post('/api/vitrina/staff/:cid/:sid/photo', vtImage, vtWrap(async (req, res) => {
+  const cid = vtCid(req.params.cid);
+  if (!cid) return res.status(400).json({ error: 'Не выбран филиал' });
+  vitrina.setPhoto(cid, Number(req.params.sid), req.body);
+  res.json(await vitrina.adminMaster(cid, Number(req.params.sid)));
+}));
+
+app.delete('/api/vitrina/staff/:cid/:sid/photo', vtWrap(async (req, res) => {
+  const cid = vtCid(req.params.cid);
+  if (!cid) return res.status(400).json({ error: 'Не выбран филиал' });
+  vitrina.setPhoto(cid, Number(req.params.sid), null);
+  res.json(await vitrina.adminMaster(cid, Number(req.params.sid)));
+}));
+
+app.post('/api/vitrina/staff/:cid/:sid/works', vtImage, vtWrap(async (req, res) => {
+  const cid = vtCid(req.params.cid);
+  if (!cid) return res.status(400).json({ error: 'Не выбран филиал' });
+  vitrina.addWork(cid, Number(req.params.sid), req.body, req.query.caption);
+  res.json(await vitrina.adminMaster(cid, Number(req.params.sid)));
+}));
+
+app.patch('/api/vitrina/works/:id', vtWrap(async (req, res) => {
+  vitrina.updateWork(Number(req.params.id), req.body || {});
+  res.json({ ok: true });
+}));
+
+app.delete('/api/vitrina/works/:id', vtWrap(async (req, res) => {
+  vitrina.deleteWork(Number(req.params.id));
+  res.json({ ok: true });
+}));
+
+app.get('/api/vitrina/reviews', vtWrap(async (req, res) => {
+  const cid = vtCid(req.query.company_id);
+  if (!cid) return res.status(400).json({ error: 'Не выбран филиал' });
+  res.json(vitrina.reviewsForAdmin(cid, String(req.query.status || 'pending')));
+}));
+
+app.patch('/api/vitrina/reviews/:id', vtWrap(async (req, res) => {
+  vitrina.setReviewStatus(Number(req.params.id), String(req.body?.status || ''));
+  res.json({ ok: true });
+}));
 
 // Ручная отметка «не беспокоить» из дашборда (переопределяет авто-детект по комментарию).
 // value: true — принудительно ДА, false — принудительно НЕТ, null — снять ручную отметку (вернуть авто).

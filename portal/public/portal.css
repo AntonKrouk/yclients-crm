@@ -138,6 +138,10 @@ button.tile{cursor:zoom-in}
 .hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
 .err{background:var(--red-soft);color:var(--red);padding:10px 12px;border-radius:var(--r);font-size:14px;margin:16px 0 0}
 
+.bio{padding-top:18px}
+.bio p{margin:0 0 10px;color:var(--ink-2);max-width:62ch}
+.bio p:last-child{margin:0}
+
 /* ── отзывы ──────────────────────────────────────────────────────────────── */
 .sec-h{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:6px}
 .sec-h .eyebrow{margin:0}

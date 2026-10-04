@@ -288,7 +288,7 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   setNav(false);                              // на телефоне меню закрывается само
   $('#topbarView').textContent=t.textContent; // в свёрнутом виде видно, где мы находимся
   const v=t.dataset.view;
-  ['tasks','calls','overview','clients','vip','deposit','alice','bday','scripts','analytics','segments'].forEach(name=>$('#view-'+name).style.display = name===v?'':'none');
+  ['tasks','calls','overview','clients','vip','deposit','alice','bday','scripts','analytics','segments','vitrina'].forEach(name=>$('#view-'+name).style.display = name===v?'':'none');
   if(v==='tasks') loadTasks();
   if(v==='calls') loadCalls();
   if(v==='overview') loadOverview();
@@ -300,6 +300,7 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   if(v==='scripts') loadScripts();
   if(v==='analytics') loadAnalytics();
   if(v==='segments') loadSegments();
+  if(v==='vitrina') loadVitrina();
 });
 
 // --- Режим (demo/live) ---
@@ -2539,3 +2540,273 @@ loadBranches();
 // нужны listIds, чтобы кнопки ручных списков в карточке клиента знали своё состояние
 for(const slug of Object.keys(LIST_UI)) loadList(slug);
 loadTasks();
+
+// ═══ Витрина для клиентов ════════════════════════════════════════════════════
+// Мастера, их услуги, категории и цены — из YClients (только чтение). Здесь админ решает,
+// что увидит клиент: показывать ли мастера, имя, специализацию, направление, текст
+// «о мастере», фото, портфолио; и проверяет отзывы. Сервер — /api/vitrina/*, src/vitrina.js.
+const VT = { meta:null, cid:null, sub:'staff', staff:[], master:null, busy:false };
+
+async function loadVitrina(){
+  if(!VT.meta){
+    VT.meta = await api('/api/vitrina/meta');
+    let saved=null; try{ saved=localStorage.getItem('vt.branch'); }catch{}
+    VT.cid = Number(saved) && VT.meta.branches.some(b=>b.id===Number(saved)) ? Number(saved) : VT.meta.branches[0]?.id;
+    $('#vtBranch').innerHTML = VT.meta.branches.map(b=>`<option value="${b.id}">${esc(b.name)}</option>`).join('');
+    if(VT.meta.portal_url){ $('#vtOpen').href=VT.meta.portal_url; $('#vtOpen').style.display=''; }
+  }
+  $('#vtBranch').value = String(VT.cid);
+  if(VT.sub==='staff') await vtLoadStaff(); else await vtLoadReviews();
+  vtCountPending();
+}
+
+async function vtLoadStaff(){
+  $('#vtStaff').innerHTML='<div class="empty">Загружаю мастеров из YClients…</div>';
+  try{ VT.staff = await api('/api/vitrina/staff?company_id='+VT.cid); }
+  catch(e){ $('#vtStaff').innerHTML=`<div class="empty">Не получилось загрузить мастеров: ${esc(e.message)}</div>`; return; }
+  vtRenderStaff();
+}
+
+// Фото мастера: своё (загружено в CRM) → аватар YClients → буква имени
+const vtPhoto = (m,cls) => m.avatar
+  ? `<span class="${cls}"><img src="${esc(m.avatar)}" alt="" loading="lazy"></span>`
+  : `<span class="${cls} vt-mono">${esc((m.name||'?').trim().charAt(0).toUpperCase())}</span>`;
+
+function vtRenderStaff(){
+  if(!VT.staff.length){
+    $('#vtStaff').innerHTML='<div class="empty">В YClients нет мастеров, доступных для онлайн-записи в этом филиале.</div>';
+    return;
+  }
+  const shown = VT.staff.filter(m=>m.visible).length;
+  $('#vtStaff').innerHTML = `<div class="vt-sum muted">На витрине ${shown} из ${VT.staff.length}. Нажмите на мастера, чтобы изменить данные и добавить работы.</div>
+    <div class="card vt-list">${VT.staff.map(m=>`
+      <div class="vt-row${m.visible?'':' off'}" data-vt-master="${m.id}" tabindex="0" role="button" aria-label="Открыть ${esc(m.name)}">
+        ${vtPhoto(m,'vt-ph')}
+        <div class="vt-main">
+          <div class="vt-name">${esc(m.name)}${m.custom.name?`<span class="muted vt-yc">в YClients: ${esc(m.yc.name)}</span>`:''}</div>
+          <div class="vt-spec">${esc(m.specialization||'—')}</div>
+          <div class="vt-meta">
+            <span class="pill">${esc(m.direction)}</span>
+            <span>${m.works} ${m.works%10===1&&m.works%100!==11?'работа':(m.works%10>=2&&m.works%10<=4&&(m.works%100<10||m.works%100>=20))?'работы':'работ'}</span>
+            <span>${m.rating?'★ '+String(m.rating).replace('.',',')+' · '+m.reviews:'без оценок'}</span>
+            ${m.pending?`<span class="vt-warn">${m.pending} на проверке</span>`:''}
+            ${m.custom.photo?'':(m.avatar?'':'<span class="vt-warn">нет фото</span>')}
+          </div>
+        </div>
+        <label class="vt-vis" title="Показывать на витрине">
+          <input type="checkbox" data-vt-visible="${m.id}"${m.visible?' checked':''}> <span>${m.visible?'Показан':'Скрыт'}</span>
+        </label>
+      </div>`).join('')}</div>`;
+}
+
+async function vtToggleVisible(sid,on){
+  try{
+    await api(`/api/vitrina/staff/${VT.cid}/${sid}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({visible:on})});
+    const m=VT.staff.find(x=>x.id===sid); if(m) m.visible=on;
+    vtRenderStaff();
+    toast(on?'Мастер показан на витрине':'Мастер скрыт с витрины','ok');
+  }catch(e){ toast('Не сохранилось: '+e.message,'bad'); vtRenderStaff(); }
+}
+
+// --- редактор мастера ---
+async function vtOpenMaster(sid){
+  $('#vtOverlay').classList.add('open'); $('#vtDrawer').classList.add('open');
+  $('#vtName').textContent = VT.staff.find(x=>x.id===sid)?.name || '';
+  $('#vtSub').textContent=''; $('#vtBody').innerHTML='<div class="empty">Загружаю…</div>';
+  try{ VT.master = await api(`/api/vitrina/staff/${VT.cid}/${sid}`); vtRenderMaster(); }
+  catch(e){ $('#vtBody').innerHTML=`<div class="empty">${esc(e.message)}</div>`; }
+}
+function vtCloseMaster(){
+  $('#vtOverlay').classList.remove('open'); $('#vtDrawer').classList.remove('open');
+  VT.master=null;
+  if($('#view-vitrina').style.display!=='none' && VT.sub==='staff') vtLoadStaff();
+}
+
+function vtRenderMaster(){
+  const m=VT.master;
+  $('#vtName').textContent=m.name;
+  $('#vtSub').innerHTML=`${esc(m.direction)}<span class="dsep">·</span>${m.visible?'показан на витрине':'<b>скрыт с витрины</b>'}`;
+  const dirOpts = ['',...VT.meta.directions].map(d=>`<option value="${esc(d)}"${(m.custom.direction||'')===d?' selected':''}>${d?esc(d):'Определить автоматически'}</option>`).join('');
+  const cats=[]; for(const s of m.services){ let c=cats.find(x=>x.n===s.category); if(!c) cats.push(c={n:s.category,items:[]}); c.items.push(s); }
+  const price = s => (s.price_max>s.price_min?'от ':'')+Number(s.price_min||0).toLocaleString('ru-RU')+' ₽';
+  $('#vtBody').innerHTML=`
+    <label class="vt-check"><input type="checkbox" id="vtfVisible"${m.visible?' checked':''}> Показывать мастера на витрине</label>
+
+    <div class="vt-sec"><div class="eyebrow">Фото мастера</div>
+      <div class="vt-photo">
+        ${vtPhoto(m,'vt-ph-lg')}
+        <div class="vt-photo-a">
+          <label class="btn">Загрузить фото<input type="file" accept="image/*" id="vtfPhoto" hidden></label>
+          ${m.custom.photo?`<button class="btn" type="button" id="vtPhotoReset">${m.yc.avatar?'Вернуть фото из YClients':'Убрать фото'}</button>`:''}
+          <div class="muted vt-note">${m.custom.photo?'Загружено в CRM.':m.yc.avatar?'Сейчас — аватар из YClients.':'Фото нет: на витрине будет первая буква имени.'}
+            Лучше вертикальное, лицо по центру, 4:5.</div>
+        </div>
+      </div></div>
+
+    <div class="vt-sec"><div class="eyebrow">Как показать клиенту</div>
+      <label class="fld">Имя<input id="vtfName" maxlength="60" value="${esc(m.custom.name)}" placeholder="${esc(m.yc.name)}"></label>
+      <label class="fld">Специализация<input id="vtfSpec" maxlength="120" value="${esc(m.custom.specialization)}" placeholder="${esc(m.yc.specialization||'Например: Топ-мастер маникюра')}"></label>
+      <label class="fld">Направление<select id="vtfDir">${dirOpts}</select></label>
+      <label class="fld">О мастере<textarea id="vtfBio" rows="4" maxlength="1200" placeholder="${esc(m.yc.bio||'Опыт, на чём специализируется, что любит делать. 2–3 предложения.')}">${esc(m.custom.bio)}</textarea></label>
+      <label class="fld">Порядок в списке<input id="vtfSort" type="number" min="0" step="1" value="${m.sort??''}" placeholder="по алфавиту"></label>
+      <div class="muted vt-note">Пустое поле — берём из YClients (серым показано, что там сейчас).</div>
+      <button class="btn primary" type="button" id="vtSave">Сохранить</button>
+    </div>
+
+    <div class="vt-sec"><div class="eyebrow">Портфолио · ${m.workList.length}</div>
+      <label class="btn vt-add">Добавить работы<input type="file" accept="image/*" multiple id="vtfWorks" hidden></label>
+      <span class="muted vt-note" id="vtUpNote">Можно выбрать несколько фото сразу. Перед загрузкой ужмём до 1600 px.</span>
+      <div class="vt-works">${m.workList.map((w,i)=>`
+        <div class="vt-work">
+          <img src="${esc(w.src)}" alt="" loading="lazy">
+          <input class="vt-cap" data-vt-cap="${w.id}" maxlength="120" value="${esc(w.caption)}" placeholder="Подпись, например «Нюд с укреплением»">
+          <div class="vt-work-a">
+            <button type="button" class="btn" data-vt-move="${w.id}" data-dir="-1"${i===0?' disabled':''} title="Левее">←</button>
+            <button type="button" class="btn" data-vt-move="${w.id}" data-dir="1"${i===m.workList.length-1?' disabled':''} title="Правее">→</button>
+            <button type="button" class="btn vt-del" data-vt-del="${w.id}">Удалить</button>
+          </div>
+        </div>`).join('') || '<div class="muted vt-note">Работ пока нет. На витрине будет «Мастер ещё не добавил работы».</div>'}</div>
+    </div>
+
+    <div class="vt-sec"><div class="eyebrow">Услуги и цены из YClients</div>
+      ${cats.length?cats.map(c=>`<div class="vt-cat">${esc(c.n)}</div>${c.items.map(s=>`<div class="vt-svc"><span>${esc(s.title)}</span><span>${price(s)}</span></div>`).join('')}`).join('')
+        :'<div class="muted vt-note">Услуг для онлайн-записи у мастера нет. Цены и услуги меняются в YClients.</div>'}
+    </div>`;
+}
+
+// Фото ужимаем в браузере: телефонные снимки по 5–10 МБ витрине не нужны
+async function vtShrink(file,max=1600){
+  const url=URL.createObjectURL(file);
+  try{
+    const img=await new Promise((ok,bad)=>{ const i=new Image(); i.onload=()=>ok(i); i.onerror=()=>bad(new Error('не удалось открыть «'+file.name+'» — нужен JPEG, PNG или WebP')); i.src=url; });
+    const k=Math.min(1,max/Math.max(img.naturalWidth,img.naturalHeight));
+    const c=document.createElement('canvas'); c.width=Math.round(img.naturalWidth*k); c.height=Math.round(img.naturalHeight*k);
+    c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+    return await new Promise(ok=>c.toBlob(ok,'image/jpeg',0.86));
+  } finally { URL.revokeObjectURL(url); }
+}
+async function vtUpload(url,file){
+  const blob=await vtShrink(file);
+  return api(url,{method:'POST',headers:{'Content-Type':'image/jpeg'},body:blob});
+}
+
+async function vtSaveMaster(){
+  const m=VT.master, btn=$('#vtSave');
+  btn.disabled=true;
+  try{
+    VT.master = await api(`/api/vitrina/staff/${VT.cid}/${m.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      visible:$('#vtfVisible').checked, name:$('#vtfName').value, specialization:$('#vtfSpec').value,
+      direction:$('#vtfDir').value, bio:$('#vtfBio').value, sort:$('#vtfSort').value===''?null:Number($('#vtfSort').value),
+    })});
+    vtRenderMaster(); toast('Сохранено, на витрине обновится сразу','ok');
+  }catch(e){ toast('Не сохранилось: '+e.message,'bad'); btn.disabled=false; }
+}
+
+document.addEventListener('change',async e=>{
+  const t=e.target;
+  if(t.id==='vtBranch'){ VT.cid=Number(t.value); try{localStorage.setItem('vt.branch',t.value);}catch{} return loadVitrina(); }
+  if(t.dataset && t.dataset.vtVisible) return vtToggleVisible(Number(t.dataset.vtVisible),t.checked);
+  if(t.id==='vtRStatus') return vtLoadReviews();
+  if(t.id==='vtfPhoto' && t.files[0]){
+    try{ VT.master=await vtUpload(`/api/vitrina/staff/${VT.cid}/${VT.master.id}/photo`,t.files[0]); vtRenderMaster(); toast('Фото обновлено','ok'); }
+    catch(e){ toast('Фото не загрузилось: '+e.message,'bad'); }
+  }
+  if(t.id==='vtfWorks' && t.files.length){
+    const files=[...t.files]; let done=0, failed=0;
+    for(const f of files){
+      $('#vtUpNote').textContent=`Загружаю ${done+failed+1} из ${files.length}…`;
+      try{ VT.master=await vtUpload(`/api/vitrina/staff/${VT.cid}/${VT.master.id}/works`,f); done++; }
+      catch(e){ failed++; toast(e.message,'bad'); }
+    }
+    vtRenderMaster();
+    toast(failed?`Загружено ${done}, не загрузилось ${failed}`:`Добавлено работ: ${done}`, failed?'bad':'ok');
+  }
+  if(t.dataset && t.dataset.vtCap){
+    try{ await api('/api/vitrina/works/'+t.dataset.vtCap,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:t.value})}); toast('Подпись сохранена','ok'); }
+    catch(e){ toast('Подпись не сохранилась: '+e.message,'bad'); }
+  }
+});
+
+document.addEventListener('click',async e=>{
+  const el=e.target.closest('[data-vt-master],[data-vt],#vtClose,#vtSave,#vtPhotoReset,[data-vt-move],[data-vt-del],[data-vt-review]');
+  if(!el || e.target.closest('.vt-vis')) return;
+  if(el.dataset.vtMaster) return vtOpenMaster(Number(el.dataset.vtMaster));
+  if(el.dataset.vt){
+    VT.sub=el.dataset.vt;
+    document.querySelectorAll('.vt-subtab').forEach(b=>b.classList.toggle('active',b===el));
+    $('#vtStaff').style.display=VT.sub==='staff'?'':'none';
+    $('#vtReviews').style.display=VT.sub==='reviews'?'':'none';
+    return VT.sub==='staff'?vtLoadStaff():vtLoadReviews();
+  }
+  if(el.id==='vtClose') return vtCloseMaster();
+  if(el.id==='vtSave') return vtSaveMaster();
+  if(el.id==='vtPhotoReset'){
+    try{ VT.master=await api(`/api/vitrina/staff/${VT.cid}/${VT.master.id}/photo`,{method:'DELETE'}); vtRenderMaster(); toast('Фото убрано','ok'); }
+    catch(err){ toast(err.message,'bad'); }
+    return;
+  }
+  if(el.dataset.vtMove){
+    try{ await api('/api/vitrina/works/'+el.dataset.vtMove,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({move:Number(el.dataset.dir)})});
+      VT.master=await api(`/api/vitrina/staff/${VT.cid}/${VT.master.id}`); vtRenderMaster(); }
+    catch(err){ toast(err.message,'bad'); }
+    return;
+  }
+  if(el.dataset.vtDel){
+    // подтверждение прямо на кнопке: второе нажатие в течение 3 секунд удаляет
+    if(el.dataset.armed!=='1'){ el.dataset.armed='1'; el.textContent='Точно удалить?'; setTimeout(()=>{ if(el.isConnected){ el.dataset.armed=''; el.textContent='Удалить'; } },3000); return; }
+    try{ await api('/api/vitrina/works/'+el.dataset.vtDel,{method:'DELETE'});
+      VT.master=await api(`/api/vitrina/staff/${VT.cid}/${VT.master.id}`); vtRenderMaster(); toast('Работа удалена','ok'); }
+    catch(err){ toast(err.message,'bad'); }
+    return;
+  }
+  if(el.dataset.vtReview) return vtSetReview(Number(el.dataset.vtReview),el.dataset.status);
+});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Enter' && e.target.dataset && e.target.dataset.vtMaster) vtOpenMaster(Number(e.target.dataset.vtMaster));
+  if(e.key==='Escape' && $('#vtDrawer').classList.contains('open')) vtCloseMaster();
+});
+$('#vtOverlay').onclick=vtCloseMaster;
+
+// --- отзывы ---
+async function vtCountPending(){
+  try{
+    const list=await api(`/api/vitrina/reviews?company_id=${VT.cid}&status=pending`);
+    $('#vtPending').textContent=list.length; $('#vtPending').style.display=list.length?'':'none';
+  }catch{}
+}
+async function vtLoadReviews(){
+  $('#vtRList').innerHTML='<div class="empty">Загружаю…</div>';
+  let list;
+  try{ list=await api(`/api/vitrina/reviews?company_id=${VT.cid}&status=${$('#vtRStatus').value}`); }
+  catch(e){ $('#vtRList').innerHTML=`<div class="empty">${esc(e.message)}</div>`; return; }
+  vtCountPending(); // счётчик «на проверке» мог устареть, пока вкладка была открыта
+  const names=new Map(VT.staff.map(m=>[m.id,m.name]));
+  const st={pending:'ждёт проверки',published:'опубликован',hidden:'скрыт'};
+  $('#vtRList').innerHTML = list.length ? list.map(r=>`
+    <div class="card vt-rev${r.rating<=3?' low':''}">
+      <div class="vt-rev-h">
+        <span class="vt-stars">${'★'.repeat(r.rating)}<span>${'★'.repeat(5-r.rating)}</span></span>
+        <b>${esc(names.get(r.staff_id)||r.staff_name||'Мастер')}</b>
+        <span class="muted">${new Date(r.created_at).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>
+        <span class="pill">${st[r.status]||r.status}</span>
+      </div>
+      ${r.text?`<p class="vt-rev-t">${esc(r.text)}</p>`:'<p class="vt-rev-t muted">Без текста, только оценка</p>'}
+      <div class="vt-rev-m">
+        <span>Подпись: <b>${esc(r.author)}</b></span>
+        ${r.phone10?`<span>Тел.: <a href="tel:+7${esc(r.phone10)}">+7 ${esc(r.phone10)}</a> ${r.verified?'<span class="vt-ok">визит к мастеру был</span>':'<span class="vt-warn">визит по номеру не найден</span>'}</span>`:'<span class="muted">телефон не оставлен</span>'}
+        <span>${r.can_publish?'Клиент разрешил публикацию':'<b>Только для салона</b> — публиковать нельзя'}</span>
+      </div>
+      <div class="vt-rev-a">
+        ${r.status!=='published'&&r.can_publish?`<button class="btn primary" type="button" data-vt-review="${r.id}" data-status="published">Опубликовать</button>`:''}
+        ${r.status!=='hidden'?`<button class="btn" type="button" data-vt-review="${r.id}" data-status="hidden">${r.status==='published'?'Снять с витрины':'Скрыть'}</button>`:''}
+        ${r.status==='hidden'?`<button class="btn" type="button" data-vt-review="${r.id}" data-status="pending">Вернуть на проверку</button>`:''}
+      </div>
+    </div>`).join('') : '<div class="empty">Здесь пусто.</div>';
+}
+async function vtSetReview(id,status){
+  try{
+    await api('/api/vitrina/reviews/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status})});
+    toast(status==='published'?'Отзыв опубликован':status==='hidden'?'Отзыв скрыт':'Отзыв вернулся на проверку','ok');
+    vtLoadReviews(); vtCountPending();
+  }catch(e){ toast(e.message,'bad'); }
+}

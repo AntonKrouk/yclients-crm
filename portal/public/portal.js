@@ -140,8 +140,8 @@
     return cats.map(c => `<section class="cat">${head ? `<h2 class="eyebrow">${esc(c.name)}</h2>` : ''}${c.items.map(svcRow).join('')}</section>`).join('');
   }
 
-  // Направление мастера: в YClients у сотрудника есть должность (position) и свободная
-  // строка специализации — по ним и раскладываем. Порядок строк = порядок проверки и показа:
+  // Направление мастера: админ может выбрать его в CRM, иначе — по должности (position)
+  // и специализации из YClients. Порядок строк = порядок проверки и показа:
   // «Косметолог, массаж лица» должен попасть в косметологию, поэтому она выше массажа.
   const GROUPS = [
     ['Волосы', /стилист|парикмахер|колорист|барбер|волос|hair/i],
@@ -153,6 +153,7 @@
   ];
   const OTHER = 'Другие мастера';
   function groupOf(m) {
+    if (m.direction) return m.direction; // сервер уже учёл выбор админа в CRM
     const text = `${m.position || ''} ${m.specialization || ''}`;
     const hit = GROUPS.find(([, re]) => re.test(text));
     return hit ? hit[0] : (m.position || OTHER);
@@ -223,6 +224,7 @@
   function master() {
     const m = S.master;
     return `<section class="hero">${photo(m, 'hero-ph')}<div class="hero-t"><span class="eyebrow">${esc(groupOf(m))}</span><h1>${esc(m.name)}</h1><div class="m-spec">${esc(m.specialization)}</div>${rating(m)}</div></section>
+      ${m.bio ? `<section class="sec bio"><p>${esc(m.bio).replace(/\n+/g, '</p><p>')}</p></section>` : ''}
       <section class="sec"><span class="eyebrow">Работы</span>
         ${m.works?.length ? `<div class="works">${m.works.map((w, i) => tile(w, i)).join('')}</div>` : '<p class="empty">Мастер ещё не добавил работы.</p>'}</section>
       <section class="sec"><span class="eyebrow">Услуги и цены</span>${errBox()}

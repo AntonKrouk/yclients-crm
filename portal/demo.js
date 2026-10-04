@@ -48,6 +48,7 @@
   const STAFF = {
     387958: [
       { id: 11, name: 'Алина', specialization: 'Топ-мастер маникюра и педикюра', rating: 4.9, reviews: 64,
+        bio: 'Восемь лет в профессии. Любит сложный нюд, тонкий френч и короткую аккуратную длину. Работает только одноразовыми пилками.',
         services: [101, 102, 103, 104, 201, 202],
         works: [w('nude', 'Нюд с укреплением'), w('wine', 'Бордо, квадрат'), w('french', 'Френч тонкой линией'),
           w('chrome', 'Хром на миндаль'), w('milk', 'Молочный однотон'), w('sage', 'Шалфей, короткая длина')] },
@@ -128,7 +129,7 @@
   const ids = (v) => String(v || '').split(',').map(Number).filter(Boolean);
 
   const publicStaff = (s) => ({
-    id: s.id, name: s.name, specialization: s.specialization, avatar: '', tone: s.works[0]?.tone,
+    id: s.id, name: s.name, specialization: s.specialization, avatar: '', tone: s.works[0]?.tone, bio: s.bio || '',
     rating: s.rating, reviews: s.reviews, works: s.works,
   });
 

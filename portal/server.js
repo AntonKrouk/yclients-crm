@@ -16,39 +16,20 @@ const fs = require('node:fs');
 const express = require('express');
 const yc = require('../src/yclients');
 const { db, DATA_DIR } = require('../src/db');
+const vitrina = require('../src/vitrina');
 const people = require('../src/people');
 const telegram = require('../src/telegram');
 const demo = require('./demo');
 
 const PORT = Number(process.env.PORTAL_PORT) || 3021;
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const WORKS_DIR = path.join(DATA_DIR, 'portfolio');
 const SALONS_FILE = path.join(DATA_DIR, 'portal-salons.json');
 
 const app = express();
 app.set('trust proxy', 'loopback'); // за nginx: реальный IP клиента — из X-Forwarded-For
 app.use(express.json({ limit: '20kb' }));
 
-db.exec(`
-  -- Отзывы клиентов о мастерах. Публикуются только после проверки (status='published').
-  -- verified — нашли ли мы у этого телефона визит к этому мастеру; видит только модератор.
-  CREATE TABLE IF NOT EXISTS portal_reviews (
-    id          INTEGER PRIMARY KEY,
-    company_id  INTEGER,
-    staff_id    INTEGER,
-    staff_name  TEXT,
-    rating      INTEGER,
-    text        TEXT,
-    author      TEXT,
-    phone10     TEXT,
-    verified    INTEGER DEFAULT 0,        -- по телефону нашёлся визит к мастеру (если телефон оставили)
-    status      TEXT DEFAULT 'pending',   -- pending | published | hidden
-    can_publish INTEGER DEFAULT 0,        -- клиент отдельно разрешил публикацию (ст. 10.1 152-ФЗ)
-    ip          TEXT,
-    created_at  TEXT
-  );
-  CREATE INDEX IF NOT EXISTS portal_reviews_staff ON portal_reviews(company_id, staff_id, status);
-`);
+// Таблицы витрины (мастера, работы, отзывы) заводит src/vitrina.js — он общий с CRM.
 
 // --- помощники ---------------------------------------------------------------
 
@@ -68,17 +49,6 @@ function salons() {
 const salonById = (id) => salons().find(s => String(s.id) === String(id));
 const ids = (v) => String(v || '').split(',').map(s => s.trim()).filter(s => /^\d+$/.test(s));
 
-// Мастера и прайс меняются редко — держим 10 минут, чтобы не долбить YClients
-// на каждое открытие страницы.
-const cache = new Map();
-async function cached(key, ttlMs, fn) {
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.t < ttlMs) return hit.v;
-  const v = await fn();
-  cache.set(key, { t: Date.now(), v });
-  return v;
-}
-
 // Простой счётчик в памяти: без регистрации это главная защита от спама в отзывах.
 const hits = new Map();
 function recent(key, windowMs) {
@@ -88,18 +58,6 @@ function recent(key, windowMs) {
   return arr;
 }
 const hit = (key) => recent(key, 86400e3).push(Date.now());
-
-// Портфолио на этапе 0 — папка на диске: data/portfolio/<филиал>/<id мастера>/*.jpg,
-// подписи (по желанию) — captions.json вида {"1.jpg": "Нюд с укреплением"}.
-// Загрузка из CRM — следующий шаг.
-function worksOf(cid, staffId) {
-  const dir = path.join(WORKS_DIR, String(cid), String(staffId));
-  let files = [];
-  try { files = fs.readdirSync(dir).filter(f => /\.(jpe?g|png|webp)$/i.test(f)).sort(); } catch { return []; }
-  let captions = {};
-  try { captions = JSON.parse(fs.readFileSync(path.join(dir, 'captions.json'), 'utf8')); } catch { /* без подписей */ }
-  return files.map(f => ({ src: `/p/works/${cid}/${staffId}/${encodeURIComponent(f)}`, caption: captions[f] || '' }));
-}
 
 const fail = (res, code, error) => res.status(code).json({ error });
 const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch(e => {
@@ -111,42 +69,18 @@ const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch(e => {
 
 app.get('/p/api/salons', (req, res) => res.json(salons()));
 
-// Оценка мастера — по НАШИМ опубликованным отзывам, а не по рейтингу YClients:
-// на витрине клиент видит ровно те отзывы, из которых она сложилась.
-const ratingStmt = db.prepare(`SELECT staff_id, ROUND(AVG(rating), 1) AS rating, COUNT(*) AS n
-  FROM portal_reviews WHERE company_id = ? AND status = 'published' GROUP BY staff_id`);
-
+// Мастера = YClients + правки админов из CRM (скрытые не попадают), портфолио, оценка
+// по нашим опубликованным отзывам — всё собирает src/vitrina.js.
 app.get('/p/api/staff', wrap(async (req, res) => {
   const salon = salonById(req.query.salon);
   if (!salon) return fail(res, 400, 'Выберите салон');
-  if (yc.isDemo()) return res.json(demo.handle('GET', req.path, req.query));
-  const list = await cached(`staff:${salon.id}`, 600e3, () => yc.fetchBookStaff(salon.id));
-  const rates = new Map(ratingStmt.all(salon.id).map(r => [Number(r.staff_id), r]));
-  res.json((Array.isArray(list) ? list : [])
-    .filter(s => s.bookable && !s.fired && !s.hidden)
-    .map(s => ({
-      id: s.id, name: s.name, specialization: s.specialization || '',
-      // должность из YClients — по ней страница раскладывает мастеров по направлениям
-      position: s.position?.title || '',
-      avatar: s.avatar_big || s.avatar || '',
-      rating: rates.get(Number(s.id))?.rating || null, reviews: rates.get(Number(s.id))?.n || 0,
-      works: worksOf(salon.id, s.id),
-    })));
+  res.json(await vitrina.publicStaff(salon.id));
 }));
 
 app.get('/p/api/services', wrap(async (req, res) => {
   const salon = salonById(req.query.salon);
   if (!salon) return fail(res, 400, 'Выберите салон');
-  if (yc.isDemo()) return res.json(demo.handle('GET', req.path, req.query));
-  const staff = ids(req.query.staff)[0] || '';
-  const data = await cached(`svc:${salon.id}:${staff}`, 600e3, () => yc.fetchBookServices(salon.id, staff));
-  const cats = {};
-  for (const c of (data?.category || [])) cats[c.id] = c.title || '';
-  res.json((data?.services || []).map(s => ({
-    id: s.id, title: s.title, category: cats[s.category_id] || 'Услуги',
-    price_min: s.price_min || 0, price_max: s.price_max || 0,
-    duration: Math.round((s.seance_length || 0) / 60),
-  })));
+  res.json(await vitrina.ycServices(salon.id, ids(req.query.staff)[0] || ''));
 }));
 
 // --- отзывы ------------------------------------------------------------------
@@ -155,10 +89,11 @@ app.get('/p/api/reviews', (req, res) => {
   const salon = salonById(req.query.salon);
   const staff = ids(req.query.staff)[0];
   if (!salon || !staff) return fail(res, 400, 'Выберите мастера');
-  if (yc.isDemo()) return res.json(demo.handle('GET', req.path, req.query));
-  res.json(db.prepare(`SELECT author, rating, text, substr(created_at, 1, 10) AS date FROM portal_reviews
+  const rows = db.prepare(`SELECT author, rating, text, substr(created_at, 1, 10) AS date FROM portal_reviews
     WHERE company_id = ? AND staff_id = ? AND status = 'published' ORDER BY created_at DESC LIMIT 30`)
-    .all(salon.id, Number(staff)));
+    .all(salon.id, Number(staff));
+  // в демо к настоящим (опубликованным из CRM) добавляем примерные
+  res.json(yc.isDemo() ? rows.concat(demo.handle('GET', req.path, req.query)) : rows);
 });
 
 // Был ли у этого телефона завершённый визит к мастеру за последние полгода (только если
@@ -200,10 +135,8 @@ app.post('/p/api/review', wrap(async (req, res) => {
     return fail(res, 429, 'Вы уже оставили отзыв сегодня. Спасибо!');
   }
   if (phone10) hit('rph:' + phone10);
-  if (yc.isDemo()) return res.json(demo.handle('POST', req.path, {}, b));
 
-  const staffList = await cached(`staff:${salon.id}`, 600e3, () => yc.fetchBookStaff(salon.id));
-  const staffName = (Array.isArray(staffList) ? staffList : []).find(s => String(s.id) === String(staffId))?.name || '';
+  const staffName = (await vitrina.ycStaff(salon.id)).find(s => String(s.id) === String(staffId))?.name || '';
   const since = new Date(Date.now() - 183 * 86400e3).toISOString();
   const verified = staffName && phone10 ? Boolean(visitedStmt.get(salon.id, staffName, since, phone10)) : false;
 
@@ -226,7 +159,7 @@ app.post('/p/api/review', wrap(async (req, res) => {
 
 app.get('/p/api/health', (req, res) => res.json({ ok: true, demo: yc.isDemo() }));
 
-app.use('/p/works', express.static(WORKS_DIR, { maxAge: '7d', fallthrough: false }));
+app.use('/p/works', express.static(vitrina.WORKS_DIR, { maxAge: '7d', fallthrough: false }));
 app.use(express.static(PUBLIC_DIR, { maxAge: '1h' }));
 
 if (require.main === module) {
