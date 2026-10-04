@@ -1,0 +1,19 @@
+# Сеть prive7crm-spb без старого IP 89.223.66.128 (04.10.2026).
+# Основной адрес — 194.187.122.175/24, шлюз 194.187.122.1 (ответ поддержки Timeweb).
+# Кладётся в /etc/netplan/99-extra-ip.yaml поверх 50-cloud-init.yaml (там DHCP и IPv6 —
+# их не трогаем). Применяется перезагрузкой, которую Timeweb делает сам после отвязки IP.
+# Если DHCP после отвязки сам выдаст 194.x — не страшно, адрес и шлюз совпадут.
+# Откат через «Консоль» в панели Timeweb:
+#   cp /root/99-extra-ip.yaml.bak /etc/netplan/99-extra-ip.yaml && netplan apply
+network:
+  version: 2
+  ethernets:
+    eth0:
+      addresses:
+        - 194.187.122.175/24
+      routes:
+        - to: default
+          via: 194.187.122.1
+          on-link: true
+      nameservers:
+        addresses: [77.88.8.8, 8.8.8.8]
