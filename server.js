@@ -1739,6 +1739,7 @@ app.get('/api/vitrina/meta', (req, res) => res.json({
 }));
 
 app.get('/api/vitrina/staff', vtWrap(async (req, res) => {
+  if (req.query.company_id === 'all') return res.json(await vitrina.adminStaffAll());
   const cid = vtCid(req.query.company_id);
   if (!cid) return res.status(400).json({ error: 'Не выбран филиал' });
   res.json(await vitrina.adminStaff(cid));
@@ -1790,6 +1791,7 @@ app.delete('/api/vitrina/works/:id', vtWrap(async (req, res) => {
 }));
 
 app.get('/api/vitrina/reviews', vtWrap(async (req, res) => {
+  if (req.query.company_id === 'all') return res.json(vitrina.reviewsForAdmin(null, String(req.query.status || 'pending')));
   const cid = vtCid(req.query.company_id);
   if (!cid) return res.status(400).json({ error: 'Не выбран филиал' });
   res.json(vitrina.reviewsForAdmin(cid, String(req.query.status || 'pending')));

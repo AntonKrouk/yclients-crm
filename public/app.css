@@ -858,6 +858,8 @@
   #vtOpen{margin-left:auto;text-decoration:none}
   .vt-sum{font-size:12.5px;margin:0 0 10px}
   .vt-list{padding:0}
+  .vt-group{display:flex;align-items:baseline;gap:8px;margin:22px 0 8px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;color:var(--ink)}
+  .vt-viss{display:grid;gap:6px;justify-items:start;min-width:120px}
   .vt-row{display:grid;grid-template-columns:52px 1fr auto;gap:14px;align-items:center;padding:12px 16px;
     border-bottom:1px solid var(--line);cursor:pointer;transition:background .15s}
   .vt-row:last-child{border-bottom:0}

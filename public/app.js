@@ -2545,17 +2545,19 @@ loadTasks();
 // Мастера, их услуги, категории и цены — из YClients (только чтение). Здесь админ решает,
 // что увидит клиент: показывать ли мастера, имя, специализацию, направление, текст
 // «о мастере», фото, портфолио; и проверяет отзывы. Сервер — /api/vitrina/*, src/vitrina.js.
-const VT = { meta:null, cid:null, sub:'staff', staff:[], master:null, busy:false };
+// cid — выбранный салон или 'all' (кнопка «Все»); mcid — салон карточки, открытой в редакторе
+const VT = { meta:null, cid:null, mcid:null, sub:'staff', staff:[], master:null, busy:false };
+const vtBranchName = (id) => VT.meta?.branches.find(b=>b.id===Number(id))?.name || '';
 
 async function loadVitrina(){
   if(!VT.meta){
     VT.meta = await api('/api/vitrina/meta');
     let saved=null; try{ saved=localStorage.getItem('vt.branch'); }catch{}
-    VT.cid = Number(saved) && VT.meta.branches.some(b=>b.id===Number(saved)) ? Number(saved) : VT.meta.branches[0]?.id;
-    $('#vtBranch').innerHTML = VT.meta.branches.map(b=>`<option value="${b.id}">${esc(b.name)}</option>`).join('');
+    VT.cid = Number(saved) && VT.meta.branches.some(b=>b.id===Number(saved)) ? Number(saved) : 'all';
     if(VT.meta.portal_url){ $('#vtOpen').href=VT.meta.portal_url; $('#vtOpen').style.display=''; }
   }
-  $('#vtBranch').value = String(VT.cid);
+  $('#vtBranch').innerHTML = [{id:'all',name:'Все'},...VT.meta.branches].map(b=>
+    `<button class="vt-subtab${String(VT.cid)===String(b.id)?' active':''}" type="button" role="tab" data-vt-branch="${b.id}">${esc(b.name)}</button>`).join('');
   if(VT.sub==='staff') await vtLoadStaff(); else await vtLoadReviews();
   vtCountPending();
 }
@@ -2572,49 +2574,71 @@ const vtPhoto = (m,cls) => m.avatar
   ? `<span class="${cls}"><img src="${esc(m.avatar)}" alt="" loading="lazy"></span>`
   : `<span class="${cls} vt-mono">${esc((m.name||'?').trim().charAt(0).toUpperCase())}</span>`;
 
+// Мастера блоками по направлениям, в том же порядке, что фильтры на витрине;
+// направления не из списка (по должности: «Мастер перманента», «Другие мастера») — в конце
+function vtGroups(list){
+  const order=VT.meta.directions, groups=new Map();
+  for(const m of list){ if(!groups.has(m.direction)) groups.set(m.direction,[]); groups.get(m.direction).push(m); }
+  const rank=d=>{ const i=order.indexOf(d); return i<0?order.length:i; };
+  return [...groups].sort((a,b)=>rank(a[0])-rank(b[0]) || a[0].localeCompare(b[0],'ru'));
+}
+const vtPlural=(n,a,b,c)=>n%10===1&&n%100!==11?a:(n%10>=2&&n%10<=4&&(n%100<10||n%100>=20))?b:c;
+
 function vtRenderStaff(){
   if(!VT.staff.length){
-    $('#vtStaff').innerHTML='<div class="empty">В YClients нет мастеров, доступных для онлайн-записи в этом филиале.</div>';
+    $('#vtStaff').innerHTML='<div class="empty">В YClients нет мастеров в этом филиале.</div>';
     return;
   }
-  const shown = VT.staff.filter(m=>m.visible).length;
-  $('#vtStaff').innerHTML = `<div class="vt-sum muted">На витрине ${shown} из ${VT.staff.length}. Нажмите на мастера, чтобы изменить данные и добавить работы.</div>
-    <div class="card vt-list">${VT.staff.map(m=>`
-      <div class="vt-row${m.visible?'':' off'}" data-vt-master="${m.id}" tabindex="0" role="button" aria-label="Открыть ${esc(m.name)}">
+  const all = VT.cid==='all';
+  // в «Все» мастер на витрине, если показан хотя бы в одном салоне
+  const on = m => all ? m.branches.some(b=>b.visible) : m.visible;
+  const shown = VT.staff.filter(on).length;
+  // переключатели «показывать»: в «Все» — по одному на каждый салон человека
+  const vis = m => (all ? m.branches : [{id:m.cid,sid:m.id,visible:m.visible,name:''}]).map(b=>`
+        <label class="vt-vis" title="Показывать на витрине${b.name?' — '+esc(b.name):''}">
+          <input type="checkbox" data-vt-visible="${b.sid}" data-vt-cid="${b.id}"${b.visible?' checked':''}> <span>${b.name?esc(b.name):(b.visible?'Показан':'Скрыт')}</span>
+        </label>`).join('');
+  const row = m => `
+      <div class="vt-row${on(m)?'':' off'}" data-vt-master="${m.id}" data-vt-cid="${m.cid}" tabindex="0" role="button" aria-label="Открыть ${esc(m.name)}">
         ${vtPhoto(m,'vt-ph')}
         <div class="vt-main">
           <div class="vt-name">${esc(m.name)}${m.custom.name?`<span class="muted vt-yc">в YClients: ${esc(m.yc.name)}</span>`:''}</div>
           <div class="vt-spec">${esc(m.specialization||'—')}</div>
           <div class="vt-meta">
-            <span class="pill">${esc(m.direction)}</span>
-            ${m.also.length?`<span class="vt-also" title="Тот же мастер работает и там: фото, описание, работы и отзывы общие">+ ${esc(m.also.map(b=>b.name).join(', '))}</span>`:''}
-            <span>${m.works} ${m.works%10===1&&m.works%100!==11?'работа':(m.works%10>=2&&m.works%10<=4&&(m.works%100<10||m.works%100>=20))?'работы':'работ'}</span>
+            ${!all&&m.also.length?`<span class="vt-also" title="Тот же мастер работает и там: фото, описание, работы и отзывы общие">+ ${esc(m.also.map(b=>b.name).join(', '))}</span>`:''}
+            <span>${m.works} ${vtPlural(m.works,'работа','работы','работ')}</span>
             <span>${m.rating?'★ '+String(m.rating).replace('.',',')+' · '+m.reviews:'без оценок'}</span>
             ${m.pending?`<span class="vt-warn">${m.pending} на проверке</span>`:''}
             ${m.custom.photo?'':(m.avatar?'':'<span class="vt-warn">нет фото</span>')}
           </div>
         </div>
-        <label class="vt-vis" title="Показывать на витрине">
-          <input type="checkbox" data-vt-visible="${m.id}"${m.visible?' checked':''}> <span>${m.visible?'Показан':'Скрыт'}</span>
-        </label>
-      </div>`).join('')}</div>`;
+        <div class="vt-viss">${vis(m)}</div>
+      </div>`;
+  $('#vtStaff').innerHTML = `<div class="vt-sum muted">${all?'Все салоны: на':'На'} витрине ${shown} из ${VT.staff.length}. Нажмите на мастера, чтобы изменить данные и добавить работы.</div>
+    ${vtGroups(VT.staff).map(([dir,ms])=>`
+      <div class="vt-group"><span>${esc(dir)}</span><span class="muted">${ms.length}</span></div>
+      <div class="card vt-list">${ms.map(row).join('')}</div>`).join('')}`;
 }
 
-async function vtToggleVisible(sid,on){
+async function vtToggleVisible(cid,sid,on){
   try{
-    await api(`/api/vitrina/staff/${VT.cid}/${sid}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({visible:on})});
-    const m=VT.staff.find(x=>x.id===sid); if(m) m.visible=on;
+    await api(`/api/vitrina/staff/${cid}/${sid}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({visible:on})});
+    for(const m of VT.staff){
+      if(m.cid===cid && m.id===sid) m.visible=on;
+      for(const b of (m.branches||[])) if(b.id===cid && b.sid===sid) b.visible=on;
+    }
     vtRenderStaff();
     toast(on?'Мастер показан на витрине':'Мастер скрыт с витрины','ok');
   }catch(e){ toast('Не сохранилось: '+e.message,'bad'); vtRenderStaff(); }
 }
 
 // --- редактор мастера ---
-async function vtOpenMaster(sid){
+async function vtOpenMaster(cid,sid){
+  VT.mcid=cid;
   $('#vtOverlay').classList.add('open'); $('#vtDrawer').classList.add('open');
   $('#vtName').textContent = VT.staff.find(x=>x.id===sid)?.name || '';
   $('#vtSub').textContent=''; $('#vtBody').innerHTML='<div class="empty">Загружаю…</div>';
-  try{ VT.master = await api(`/api/vitrina/staff/${VT.cid}/${sid}`); vtRenderMaster(); }
+  try{ VT.master = await api(`/api/vitrina/staff/${cid}/${sid}`); vtRenderMaster(); }
   catch(e){ $('#vtBody').innerHTML=`<div class="empty">${esc(e.message)}</div>`; }
 }
 function vtCloseMaster(){
@@ -2631,7 +2655,7 @@ function vtRenderMaster(){
   const cats=[]; for(const s of m.services){ let c=cats.find(x=>x.n===s.category); if(!c) cats.push(c={n:s.category,items:[]}); c.items.push(s); }
   const price = s => (s.price_max>s.price_min?'от ':'')+Number(s.price_min||0).toLocaleString('ru-RU')+' ₽';
   $('#vtBody').innerHTML=`
-    <label class="vt-check"><input type="checkbox" id="vtfVisible"${m.visible?' checked':''}> Показывать мастера на витрине</label>
+    <label class="vt-check"><input type="checkbox" id="vtfVisible"${m.visible?' checked':''}> Показывать мастера на витрине${VT.meta.branches.length>1?' — '+esc(vtBranchName(VT.mcid)):''}</label>
     ${m.also.length?`<div class="vt-note vt-shared">Работает и на ${esc(m.also.map(b=>b.name).join(', '))}: фото, имя, описание, работы и отзывы <b>общие</b> — правка здесь видна в обоих салонах. «Показывать» — отдельно для каждого салона${m.also.some(b=>!b.visible)?' (там сейчас скрыт)':''}.</div>`:''}
 
     <div class="vt-sec"><div class="eyebrow">Фото мастера</div>
@@ -2696,7 +2720,7 @@ async function vtSaveMaster(){
   const m=VT.master, btn=$('#vtSave');
   btn.disabled=true;
   try{
-    VT.master = await api(`/api/vitrina/staff/${VT.cid}/${m.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    VT.master = await api(`/api/vitrina/staff/${VT.mcid}/${m.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       visible:$('#vtfVisible').checked, name:$('#vtfName').value, specialization:$('#vtfSpec').value,
       direction:$('#vtfDir').value, bio:$('#vtfBio').value, sort:$('#vtfSort').value===''?null:Number($('#vtfSort').value),
     })});
@@ -2706,18 +2730,17 @@ async function vtSaveMaster(){
 
 document.addEventListener('change',async e=>{
   const t=e.target;
-  if(t.id==='vtBranch'){ VT.cid=Number(t.value); try{localStorage.setItem('vt.branch',t.value);}catch{} return loadVitrina(); }
-  if(t.dataset && t.dataset.vtVisible) return vtToggleVisible(Number(t.dataset.vtVisible),t.checked);
+  if(t.dataset && t.dataset.vtVisible) return vtToggleVisible(Number(t.dataset.vtCid),Number(t.dataset.vtVisible),t.checked);
   if(t.id==='vtRStatus') return vtLoadReviews();
   if(t.id==='vtfPhoto' && t.files[0]){
-    try{ VT.master=await vtUpload(`/api/vitrina/staff/${VT.cid}/${VT.master.id}/photo`,t.files[0]); vtRenderMaster(); toast('Фото обновлено','ok'); }
+    try{ VT.master=await vtUpload(`/api/vitrina/staff/${VT.mcid}/${VT.master.id}/photo`,t.files[0]); vtRenderMaster(); toast('Фото обновлено','ok'); }
     catch(e){ toast('Фото не загрузилось: '+e.message,'bad'); }
   }
   if(t.id==='vtfWorks' && t.files.length){
     const files=[...t.files]; let done=0, failed=0;
     for(const f of files){
       $('#vtUpNote').textContent=`Загружаю ${done+failed+1} из ${files.length}…`;
-      try{ VT.master=await vtUpload(`/api/vitrina/staff/${VT.cid}/${VT.master.id}/works`,f); done++; }
+      try{ VT.master=await vtUpload(`/api/vitrina/staff/${VT.mcid}/${VT.master.id}/works`,f); done++; }
       catch(e){ failed++; toast(e.message,'bad'); }
     }
     vtRenderMaster();
@@ -2730,12 +2753,13 @@ document.addEventListener('change',async e=>{
 });
 
 document.addEventListener('click',async e=>{
-  const el=e.target.closest('[data-vt-master],[data-vt],#vtClose,#vtSave,#vtPhotoReset,[data-vt-move],[data-vt-del],[data-vt-review]');
+  const el=e.target.closest('[data-vt-master],[data-vt],[data-vt-branch],#vtClose,#vtSave,#vtPhotoReset,[data-vt-move],[data-vt-del],[data-vt-review]');
   if(!el || e.target.closest('.vt-vis')) return;
-  if(el.dataset.vtMaster) return vtOpenMaster(Number(el.dataset.vtMaster));
+  if(el.dataset.vtBranch){ VT.cid=el.dataset.vtBranch==='all'?'all':Number(el.dataset.vtBranch); try{localStorage.setItem('vt.branch',String(VT.cid));}catch{} return loadVitrina(); }
+  if(el.dataset.vtMaster) return vtOpenMaster(Number(el.dataset.vtCid),Number(el.dataset.vtMaster));
   if(el.dataset.vt){
     VT.sub=el.dataset.vt;
-    document.querySelectorAll('.vt-subtab').forEach(b=>b.classList.toggle('active',b===el));
+    document.querySelectorAll('[data-vt]').forEach(b=>b.classList.toggle('active',b===el));
     $('#vtStaff').style.display=VT.sub==='staff'?'':'none';
     $('#vtReviews').style.display=VT.sub==='reviews'?'':'none';
     return VT.sub==='staff'?vtLoadStaff():vtLoadReviews();
@@ -2743,13 +2767,13 @@ document.addEventListener('click',async e=>{
   if(el.id==='vtClose') return vtCloseMaster();
   if(el.id==='vtSave') return vtSaveMaster();
   if(el.id==='vtPhotoReset'){
-    try{ VT.master=await api(`/api/vitrina/staff/${VT.cid}/${VT.master.id}/photo`,{method:'DELETE'}); vtRenderMaster(); toast('Фото убрано','ok'); }
+    try{ VT.master=await api(`/api/vitrina/staff/${VT.mcid}/${VT.master.id}/photo`,{method:'DELETE'}); vtRenderMaster(); toast('Фото убрано','ok'); }
     catch(err){ toast(err.message,'bad'); }
     return;
   }
   if(el.dataset.vtMove){
     try{ await api('/api/vitrina/works/'+el.dataset.vtMove,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({move:Number(el.dataset.dir)})});
-      VT.master=await api(`/api/vitrina/staff/${VT.cid}/${VT.master.id}`); vtRenderMaster(); }
+      VT.master=await api(`/api/vitrina/staff/${VT.mcid}/${VT.master.id}`); vtRenderMaster(); }
     catch(err){ toast(err.message,'bad'); }
     return;
   }
@@ -2757,14 +2781,14 @@ document.addEventListener('click',async e=>{
     // подтверждение прямо на кнопке: второе нажатие в течение 3 секунд удаляет
     if(el.dataset.armed!=='1'){ el.dataset.armed='1'; el.textContent='Точно удалить?'; setTimeout(()=>{ if(el.isConnected){ el.dataset.armed=''; el.textContent='Удалить'; } },3000); return; }
     try{ await api('/api/vitrina/works/'+el.dataset.vtDel,{method:'DELETE'});
-      VT.master=await api(`/api/vitrina/staff/${VT.cid}/${VT.master.id}`); vtRenderMaster(); toast('Работа удалена','ok'); }
+      VT.master=await api(`/api/vitrina/staff/${VT.mcid}/${VT.master.id}`); vtRenderMaster(); toast('Работа удалена','ok'); }
     catch(err){ toast(err.message,'bad'); }
     return;
   }
   if(el.dataset.vtReview) return vtSetReview(Number(el.dataset.vtReview),el.dataset.status);
 });
 document.addEventListener('keydown',e=>{
-  if(e.key==='Enter' && e.target.dataset && e.target.dataset.vtMaster) vtOpenMaster(Number(e.target.dataset.vtMaster));
+  if(e.key==='Enter' && e.target.dataset && e.target.dataset.vtMaster) vtOpenMaster(Number(e.target.dataset.vtCid),Number(e.target.dataset.vtMaster));
   if(e.key==='Escape' && $('#vtDrawer').classList.contains('open')) vtCloseMaster();
 });
 $('#vtOverlay').onclick=vtCloseMaster;
@@ -2790,7 +2814,7 @@ async function vtLoadReviews(){
         <span class="vt-stars">${'★'.repeat(r.rating)}<span>${'★'.repeat(5-r.rating)}</span></span>
         <b>${esc(names.get(r.staff_id)||r.staff_name||'Мастер')}</b>
         <span class="muted">${new Date(r.created_at).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>
-        <span class="pill">${st[r.status]||r.status}</span>
+        <span class="pill">${st[r.status]||r.status}</span>${VT.cid==='all'?`<span class="muted">${esc(vtBranchName(r.company_id))}</span>`:''}
       </div>
       ${r.text?`<p class="vt-rev-t">${esc(r.text)}</p>`:'<p class="vt-rev-t muted">Без текста, только оценка</p>'}
       <div class="vt-rev-m">

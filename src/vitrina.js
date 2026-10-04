@@ -295,8 +295,36 @@ async function adminStaff(cid) {
     const cards = cardsIn(map, cid, s.id);
     const m = merge(cid, s, cards);
     const r = ratingOf(cards);
-    return { ...m, works: worksOf(cards).length, rating: r.rating, reviews: r.n, pending: pending.get(m.id) || 0 };
+    return { ...m, cid: Number(cid), works: worksOf(cards).length, rating: r.rating, reviews: r.n, pending: pending.get(m.id) || 0 };
   }).sort(bySort);
+}
+
+// Для CRM, кнопка «Все»: мастера всех филиалов, каждый человек один раз — на главной карточке
+// (cid/id), в branches — его карточки по филиалам со своим «показывать». «На проверке» —
+// сумма по всем его карточкам.
+async function adminStaffAll() {
+  const branches = branchList();
+  const names = new Map(branches.map(b => [b.id, b.name]));
+  const map = await personMap();
+  const pending = new Map();
+  for (const b of branches) for (const r of pendingStmt.all(b.id)) pending.set(`${b.id}:${Number(r.staff_id)}`, r.n);
+  const seen = new Set();
+  const out = [];
+  for (const b of branches) {
+    for (const m of await adminStaff(b.id)) {
+      const cards = cardsIn(map, b.id, m.id);
+      const key = `${cards[0].cid}:${cards[0].sid}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        ...m,
+        pending: cards.reduce((n, c) => n + (pending.get(`${c.cid}:${c.sid}`) || 0), 0),
+        branches: cards.map(c => ({ id: c.cid, sid: c.sid, name: names.get(c.cid) || String(c.cid),
+          visible: Boolean(getOverride.get(c.cid, c.sid)?.visible ?? 1) })),
+      });
+    }
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
 }
 
 async function adminMaster(cid, sid) {
@@ -418,11 +446,13 @@ function deleteWork(id) {
 
 // --- отзывы для проверки ----------------------------------------------------------
 
+// cid = null — отзывы всех филиалов (кнопка «Все» в CRM)
 function reviewsForAdmin(cid, status) {
-  const where = status === 'all' ? '' : 'AND status = ?';
-  const args = status === 'all' ? [cid] : [cid, status || 'pending'];
-  return db.prepare(`SELECT id, staff_id, staff_name, rating, text, author, phone10, verified, status, can_publish, created_at
-    FROM portal_reviews WHERE company_id = ? ${where} ORDER BY created_at DESC LIMIT 200`).all(...args);
+  const conds = [], args = [];
+  if (cid != null) { conds.push('company_id = ?'); args.push(cid); }
+  if (status !== 'all') { conds.push('status = ?'); args.push(status || 'pending'); }
+  return db.prepare(`SELECT id, company_id, staff_id, staff_name, rating, text, author, phone10, verified, status, can_publish, created_at
+    FROM portal_reviews ${conds.length ? 'WHERE ' + conds.join(' AND ') : ''} ORDER BY created_at DESC LIMIT 200`).all(...args);
 }
 function setReviewStatus(id, status) {
   const r = db.prepare('SELECT can_publish FROM portal_reviews WHERE id = ?').get(id);
@@ -448,7 +478,7 @@ function purgeReviews() {
 
 module.exports = {
   WORKS_DIR, purgeReviews, DIRECTIONS: DIRECTIONS.map(d => d[0]),
-  ycStaff, ycServices, publicStaff, publicReviews, adminStaff, adminMaster,
+  ycStaff, ycServices, publicStaff, publicReviews, adminStaff, adminStaffAll, adminMaster,
   saveMaster, setPhoto, addWork, updateWork, deleteWork,
   reviewsForAdmin, setReviewStatus,
 };
