@@ -1,6 +1,6 @@
 'use strict';
 
-// Собирает одностраничное превью портала: тот же HTML, стили и код, но вместо сервера —
+// Собирает одностраничное превью витрины: тот же HTML, стили и код, но вместо сервера —
 // demo.js прямо в браузере. Нужен, чтобы показать интерфейс без запуска сервера
 // (открыть с телефона, переслать). Запуск: node portal/build-preview.js <файл.html>
 const fs = require('node:fs');
@@ -13,7 +13,7 @@ const body = html.slice(html.indexOf('<!--app-->') + 10, html.indexOf('<!--/app-
 const out = process.argv[2] || path.join(dir, 'preview.html');
 
 fs.writeFileSync(out, [
-  '<title>Privé7 Запись</title>',
+  '<title>Privé7 Мастера</title>',
   `<style>\n${read('public/portal.css')}</style>`,
   body,
   `<script>\n${read('demo.js')}</script>`,

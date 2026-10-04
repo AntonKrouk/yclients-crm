@@ -1,13 +1,14 @@
 'use strict';
 
-// Клиентский портал Prive: мастера, работы, услуги с ценами, онлайн-запись в YClients.
+// Витрина Prive для клиентов: мастера по направлениям, их работы, цены, отзывы и оценки.
 // ОТДЕЛЬНЫЙ процесс от CRM (свой порт, свой systemd-юнит): здесь только публичные
 // маршруты, админских нет физически, поэтому ошибка в портале не открывает базу CRM.
 // План и решения — docs/portal-mvp.md.
 //
-// Этап 0 — без регистрации: клиент оставляет имя и телефон прямо в форме записи.
-// Правило, на котором всё держится: портал НИЧЕГО не отдаёт о клиенте. Ни имени из
-// YClients, ни «есть ли вы в базе», ни прошлых визитов — только «запись создана».
+// Решение 04.10.2026: записи на сайте НЕТ и в YClients портал ничего не пишет.
+// Клиент звонит в салон (телефоны — data/portal-salons.json). Мастеров и прайс портал
+// только ЧИТАЕТ из YClients, чтобы цены не вести в двух местах.
+// Правило: портал ничего не отдаёт о клиентах — ни имён, ни «есть ли вы в базе».
 
 require('../src/env');
 const path = require('node:path');
@@ -16,32 +17,19 @@ const express = require('express');
 const yc = require('../src/yclients');
 const { db, DATA_DIR } = require('../src/db');
 const people = require('../src/people');
-const sync = require('../src/sync');
 const telegram = require('../src/telegram');
 const demo = require('./demo');
 
 const PORT = Number(process.env.PORTAL_PORT) || 3021;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const WORKS_DIR = path.join(DATA_DIR, 'portfolio');
-const MAX_FUTURE_PER_PHONE = 3;
+const SALONS_FILE = path.join(DATA_DIR, 'portal-salons.json');
 
 const app = express();
 app.set('trust proxy', 'loopback'); // за nginx: реальный IP клиента — из X-Forwarded-For
 app.use(express.json({ limit: '20kb' }));
 
-// Онлайн-записи портала: для лимитов и чтобы админ видел источник
 db.exec(`
-  CREATE TABLE IF NOT EXISTS portal_bookings (
-    id          INTEGER PRIMARY KEY,
-    company_id  INTEGER,
-    record_id   INTEGER,
-    phone10     TEXT,
-    datetime    TEXT,
-    ip          TEXT,
-    created_at  TEXT
-  );
-  CREATE INDEX IF NOT EXISTS portal_bookings_phone ON portal_bookings(phone10, datetime);
-
   -- Отзывы клиентов о мастерах. Публикуются только после проверки (status='published').
   -- verified — нашли ли мы у этого телефона визит к этому мастеру; видит только модератор.
   CREATE TABLE IF NOT EXISTS portal_reviews (
@@ -53,7 +41,7 @@ db.exec(`
     text        TEXT,
     author      TEXT,
     phone10     TEXT,
-    verified    INTEGER DEFAULT 0,
+    verified    INTEGER DEFAULT 0,        -- по телефону нашёлся визит к мастеру (если телефон оставили)
     status      TEXT DEFAULT 'pending',   -- pending | published | hidden
     can_publish INTEGER DEFAULT 0,        -- клиент отдельно разрешил публикацию (ст. 10.1 152-ФЗ)
     ip          TEXT,
@@ -64,12 +52,24 @@ db.exec(`
 
 // --- помощники ---------------------------------------------------------------
 
-const salons = () => (yc.isDemo() ? demo.SALONS : yc.companies().map(c => ({ id: Number(c.id), name: c.name || c.id })));
+// Телефон, адрес и часы работы филиалов — data/portal-salons.json, правится без выката:
+// {"387958": {"phone": "+7 (812) 000-00-00", "address": "…", "hours": "Ежедневно 10:00–22:00"}}
+function salonInfo() {
+  try { return JSON.parse(fs.readFileSync(SALONS_FILE, 'utf8')); } catch { return {}; }
+}
+function salons() {
+  if (yc.isDemo()) return demo.SALONS;
+  const info = salonInfo();
+  return yc.companies().map(c => ({
+    id: Number(c.id), name: c.name || c.id,
+    phone: info[c.id]?.phone || '', address: info[c.id]?.address || '', hours: info[c.id]?.hours || '',
+  }));
+}
 const salonById = (id) => salons().find(s => String(s.id) === String(id));
 const ids = (v) => String(v || '').split(',').map(s => s.trim()).filter(s => /^\d+$/.test(s));
 
-// Справочники мастеров и услуг меняются редко — держим 10 минут, чтобы не долбить YClients
-// на каждое открытие страницы. Свободное время не кэшируем: оно должно быть живым.
+// Мастера и прайс меняются редко — держим 10 минут, чтобы не долбить YClients
+// на каждое открытие страницы.
 const cache = new Map();
 async function cached(key, ttlMs, fn) {
   const hit = cache.get(key);
@@ -79,9 +79,7 @@ async function cached(key, ttlMs, fn) {
   return v;
 }
 
-// Простой счётчик в памяти: без регистрации это главная защита от спама.
-// С IP считаем все попытки, с номера — только состоявшиеся записи: если окно заняли и
-// клиент выбрал другое время, это не должно съедать его лимит.
+// Простой счётчик в памяти: без регистрации это главная защита от спама в отзывах.
 const hits = new Map();
 function recent(key, windowMs) {
   const now = Date.now();
@@ -106,19 +104,24 @@ function worksOf(cid, staffId) {
 const fail = (res, code, error) => res.status(code).json({ error });
 const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch(e => {
   console.error('[portal]', req.path, e.message);
-  fail(res, 502, 'Сервис записи временно недоступен. Попробуйте через минуту или позвоните в салон.');
+  fail(res, 502, 'Не получилось загрузить данные. Попробуйте через минуту или позвоните в салон.');
 });
 
 // --- маршруты ----------------------------------------------------------------
 
 app.get('/p/api/salons', (req, res) => res.json(salons()));
 
+// Оценка мастера — по НАШИМ опубликованным отзывам, а не по рейтингу YClients:
+// на витрине клиент видит ровно те отзывы, из которых она сложилась.
+const ratingStmt = db.prepare(`SELECT staff_id, ROUND(AVG(rating), 1) AS rating, COUNT(*) AS n
+  FROM portal_reviews WHERE company_id = ? AND status = 'published' GROUP BY staff_id`);
+
 app.get('/p/api/staff', wrap(async (req, res) => {
   const salon = salonById(req.query.salon);
   if (!salon) return fail(res, 400, 'Выберите салон');
   if (yc.isDemo()) return res.json(demo.handle('GET', req.path, req.query));
-  const svc = ids(req.query.services);
-  const list = await cached(`staff:${salon.id}:${svc}`, 600e3, () => yc.fetchBookStaff(salon.id, svc));
+  const list = await cached(`staff:${salon.id}`, 600e3, () => yc.fetchBookStaff(salon.id));
+  const rates = new Map(ratingStmt.all(salon.id).map(r => [Number(r.staff_id), r]));
   res.json((Array.isArray(list) ? list : [])
     .filter(s => s.bookable && !s.fired && !s.hidden)
     .map(s => ({
@@ -126,7 +129,7 @@ app.get('/p/api/staff', wrap(async (req, res) => {
       // должность из YClients — по ней страница раскладывает мастеров по направлениям
       position: s.position?.title || '',
       avatar: s.avatar_big || s.avatar || '',
-      rating: Number(s.rating) || null, reviews: Number(s.comments_count || s.votes_count) || 0,
+      rating: rates.get(Number(s.id))?.rating || null, reviews: rates.get(Number(s.id))?.n || 0,
       works: worksOf(salon.id, s.id),
     })));
 }));
@@ -146,115 +149,6 @@ app.get('/p/api/services', wrap(async (req, res) => {
   })));
 }));
 
-app.get('/p/api/dates', wrap(async (req, res) => {
-  const salon = salonById(req.query.salon);
-  const staff = ids(req.query.staff)[0];
-  if (!salon || !staff) return fail(res, 400, 'Выберите мастера');
-  if (yc.isDemo()) return res.json(demo.handle('GET', req.path, req.query));
-  const d = await yc.fetchBookDates(salon.id, staff, ids(req.query.services));
-  res.json({ dates: d?.booking_dates || [] });
-}));
-
-app.get('/p/api/times', wrap(async (req, res) => {
-  const salon = salonById(req.query.salon);
-  const staff = ids(req.query.staff)[0];
-  const date = String(req.query.date || '');
-  if (!salon || !staff || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return fail(res, 400, 'Выберите мастера и дату');
-  if (yc.isDemo()) return res.json(demo.handle('GET', req.path, req.query));
-  const list = await yc.fetchBookTimes(salon.id, staff, date, ids(req.query.services));
-  res.json((Array.isArray(list) ? list : []).map(t => ({ time: t.time, datetime: t.datetime })));
-}));
-
-// Карточка клиента в этом салоне по телефону — только для передачи id в YClients.
-// Наружу из неё не уходит ничего.
-const cardStmt = db.prepare(`SELECT yclients_id, name FROM clients
-  WHERE company_id = ? AND yclients_id IS NOT NULL
-    AND substr(replace(replace(replace(replace(replace(phone,' ',''),'-',''),'(',''),')',''),'+',''), -10) = ?
-  ORDER BY visits_count DESC LIMIT 1`);
-const futureStmt = db.prepare(`SELECT COUNT(*) n FROM portal_bookings WHERE phone10 = ? AND datetime > ?`);
-const logStmt = db.prepare(`INSERT INTO portal_bookings(company_id, record_id, phone10, datetime, ip, created_at)
-  VALUES(?,?,?,?,?,?)`);
-
-app.post('/p/api/book', wrap(async (req, res) => {
-  const b = req.body || {};
-  // Ловушка для ботов: невидимое поле, человек его не заполняет
-  if (b.website) return res.json({ ok: true });
-
-  const salon = salonById(b.salon);
-  const staffId = ids(b.staff_id)[0];
-  const serviceIds = (Array.isArray(b.service_ids) ? b.service_ids : []).map(String).filter(s => /^\d+$/.test(s)).slice(0, 5);
-  const name = String(b.name || '').replace(/\s+/g, ' ').trim().slice(0, 60);
-  const digits = people.normPhone(b.phone);
-  const phone = digits.length === 11 && /^[78]/.test(digits) ? '7' + digits.slice(1) : (digits.length === 10 ? '7' + digits : '');
-  const comment = String(b.comment || '').replace(/\s+/g, ' ').trim().slice(0, 300);
-  const datetime = String(b.datetime || '');
-
-  if (!salon || !staffId || !serviceIds.length || !datetime) return fail(res, 400, 'Выберите мастера, услугу и время');
-  if (name.length < 2) return fail(res, 400, 'Напишите, как к вам обращаться');
-  if (!phone || !/^79/.test(phone) || !people.isRealPhone(phone)) return fail(res, 400, 'Проверьте номер: нужен мобильный, +7 9XX XXX-XX-XX');
-  if (!b.consent) return fail(res, 400, 'Нужно согласие на обработку персональных данных');
-  const when = new Date(datetime);
-  if (!(when > new Date())) return fail(res, 400, 'Это время уже прошло, выберите другое');
-
-  const phone10 = phone.slice(-10);
-  const ip = req.ip || '';
-  hit('ip:' + ip);
-  if (recent('ip:' + ip, 3600e3).length > 10 || recent('ph:' + phone10, 86400e3).length >= 3) {
-    return fail(res, 429, 'Слишком много записей подряд. Позвоните, пожалуйста, в салон.');
-  }
-  if (futureStmt.get(phone10, new Date().toISOString()).n >= MAX_FUTURE_PER_PHONE) {
-    return fail(res, 429, `Онлайн можно держать до ${MAX_FUTURE_PER_PHONE} будущих записей. Позвоните в салон, и администратор поможет.`);
-  }
-
-  if (yc.isDemo()) { hit('ph:' + phone10); return res.json(demo.handle('POST', '/p/api/book', {}, b)); }
-
-  // Имя: если человек уже есть в этом салоне — передаём его id и ТЕКУЩЕЕ имя из YClients,
-  // чтобы запись не переписала карточку. Новому клиенту YClients заведёт карточку с тем
-  // именем, которое он ввёл сам.
-  const card = cardStmt.get(salon.id, phone10);
-  let rec;
-  try {
-    const r = await yc.createRecord(salon.id, {
-      staff_id: Number(staffId),
-      services: serviceIds.map(id => ({ id: Number(id) })),
-      client: card ? { id: card.yclients_id, phone, name: card.name || name } : { phone, name },
-      datetime,
-      save_if_busy: false,
-      send_sms: false,
-      comment: ['Онлайн-запись (сайт)', card ? `Клиент представился: ${name}` : '', comment && `Комментарий: ${comment}`]
-        .filter(Boolean).join('. '),
-      api_id: '',
-    });
-    rec = Array.isArray(r) ? r[0] : r;
-    if (!rec?.id) throw new Error('YClients не вернул номер записи');
-  } catch (e) {
-    console.error('[portal/book]', e.message);
-    // Чаще всего окно заняли, пока клиент заполнял форму
-    return fail(res, 409, 'Не получилось записать на это время: его могли только что занять. Выберите другое или позвоните в салон.');
-  }
-
-  hit('ph:' + phone10);
-  logStmt.run(salon.id, rec.id, phone10, when.toISOString(), ip, new Date().toISOString());
-  cache.clear();
-
-  // Подтянуть запись в CRM сразу, не дожидаясь синка, и сообщить админам
-  setImmediate(async () => {
-    try { await sync.importRecord(salon.id, salon.name, rec.id); } catch (e) { console.error('[portal/import]', e.message); }
-    const svc = (rec.services || []).map(s => s.title).filter(Boolean).join(', ');
-    const at = when.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' });
-    // Без телефона и имени: Telegram — иностранный сервис, персональные данные туда не шлём.
-    // Кто записался — видно в журнале YClients и в CRM.
-    telegram.notifyAdmins(`<b>Онлайн-запись</b> · ${salon.name}\n${at}, ${svc}${rec.staff?.name ? ' — ' + rec.staff.name : ''}\n` +
-      `${card ? 'Клиент есть в базе' : 'Новый клиент'}. Подтвердите запись звонком.`).catch(e => console.error('[portal/tg]', e.message));
-  });
-
-  res.json({
-    ok: true, salon: salon.name, staff: rec.staff?.name || '',
-    services: (rec.services || []).map(s => s.title).filter(Boolean).join(', '),
-    datetime: rec.datetime || datetime,
-  });
-}));
-
 // --- отзывы ------------------------------------------------------------------
 
 app.get('/p/api/reviews', (req, res) => {
@@ -267,7 +161,8 @@ app.get('/p/api/reviews', (req, res) => {
     .all(salon.id, Number(staff)));
 });
 
-// Был ли у этого телефона завершённый визит к мастеру за последние полгода. Ответ клиенту
+// Был ли у этого телефона завершённый визит к мастеру за последние полгода (только если
+// телефон оставили — он в отзыве необязательный). Ответ клиенту
 // от этого НЕ зависит (иначе по чужому номеру можно узнать, ходит ли человек в салон) —
 // флаг видит только тот, кто проверяет отзыв.
 const visitedStmt = db.prepare(`SELECT 1 FROM visits v JOIN clients c ON c.id = v.client_id
@@ -294,22 +189,24 @@ app.post('/p/api/review', wrap(async (req, res) => {
   if (!salon || !staffId) return fail(res, 400, 'Не выбран мастер');
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) return fail(res, 400, 'Поставьте оценку от одной до пяти звёзд');
   if (author.length < 2) return fail(res, 400, 'Напишите, как подписать отзыв');
-  if (!/^9/.test(phone10) || !people.isRealPhone(phone10)) return fail(res, 400, 'Проверьте номер: нужен мобильный, +7 9XX XXX-XX-XX');
+  if (digits && (!/^9/.test(phone10) || !people.isRealPhone(phone10))) {
+    return fail(res, 400, 'Проверьте номер: нужен мобильный, +7 9XX XXX-XX-XX. Или оставьте поле пустым.');
+  }
   if (!b.consent) return fail(res, 400, 'Нужно согласие на обработку персональных данных');
 
   const ip = req.ip || '';
   hit('rip:' + ip);
-  if (recent('rip:' + ip, 3600e3).length > 5 || recent('rph:' + phone10, 86400e3).length >= 2) {
+  if (recent('rip:' + ip, 3600e3).length > 5 || (phone10 && recent('rph:' + phone10, 86400e3).length >= 2)) {
     return fail(res, 429, 'Вы уже оставили отзыв сегодня. Спасибо!');
   }
-  if (yc.isDemo()) { hit('rph:' + phone10); return res.json(demo.handle('POST', req.path, {}, b)); }
+  if (phone10) hit('rph:' + phone10);
+  if (yc.isDemo()) return res.json(demo.handle('POST', req.path, {}, b));
 
-  const staffList = await cached(`staff:${salon.id}:`, 600e3, () => yc.fetchBookStaff(salon.id, []));
+  const staffList = await cached(`staff:${salon.id}`, 600e3, () => yc.fetchBookStaff(salon.id));
   const staffName = (Array.isArray(staffList) ? staffList : []).find(s => String(s.id) === String(staffId))?.name || '';
   const since = new Date(Date.now() - 183 * 86400e3).toISOString();
-  const verified = staffName ? Boolean(visitedStmt.get(salon.id, staffName, since, phone10)) : false;
+  const verified = staffName && phone10 ? Boolean(visitedStmt.get(salon.id, staffName, since, phone10)) : false;
 
-  hit('rph:' + phone10);
   const info = reviewStmt.run(salon.id, Number(staffId), staffName, rating, text, author, phone10, verified ? 1 : 0,
     b.publish ? 1 : 0, ip, new Date().toISOString());
 
@@ -318,10 +215,10 @@ app.post('/p/api/review', wrap(async (req, res) => {
   // в Telegram не шлём (иностранный сервис, а в тексте клиент может написать что угодно о себе):
   // всё это — в CRM, в разделе отзывов (следующий шаг), номер отзыва ниже.
   const head = rating <= 3
-    ? `<b>⚠️ Низкая оценка ${STARS(rating)}</b> · ${salon.name}\nКлиенту нужно позвонить сегодня`
+    ? `<b>⚠️ Низкая оценка ${STARS(rating)}</b> · ${salon.name}\n${phone10 ? 'Клиент оставил телефон — позвоните сегодня' : 'Телефон не оставлен'}`
     : `<b>Новый отзыв ${STARS(rating)}</b> · ${salon.name}, ${b.publish ? 'ждёт проверки' : 'только для салона, без публикации'}`;
-  telegram.notifyAdmins(`${head}\nМастер: ${h(staffName || staffId)}\n` +
-    `${verified ? 'Визит к мастеру подтверждён' : 'Визит к мастеру по этому номеру не найден'}\nОтзыв №${info.lastInsertRowid}`)
+  const visit = !phone10 ? '' : verified ? 'Визит к мастеру подтверждён\n' : 'Визит к мастеру по этому номеру не найден\n';
+  telegram.notifyAdmins(`${head}\nМастер: ${h(staffName || staffId)}\n${visit}Отзыв №${info.lastInsertRowid}`)
     .catch(e => console.error('[portal/tg]', e.message));
 
   res.json({ ok: true, low: rating <= 3 });
@@ -334,7 +231,7 @@ app.use(express.static(PUBLIC_DIR, { maxAge: '1h' }));
 
 if (require.main === module) {
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[portal] http://localhost:${PORT} ${yc.isDemo() ? '(демо-данные)' : '(YClients LIVE)'}`);
+    console.log(`[portal] http://localhost:${PORT} ${yc.isDemo() ? '(демо-данные)' : '(мастера и цены из YClients)'}`);
   });
 }
 

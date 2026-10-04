@@ -1,4 +1,4 @@
-/* ── Privé7 · клиентская запись ──────────────────────────────────────────────
+/* ── Privé7 · витрина мастеров ───────────────────────────────────────────────
    Та же система, что у CRM (public/app.css): тёплая бумага, волосяные линейки,
    антиква в заголовках, бирюзовый акцент только там, где действие.          */
 :root{
@@ -112,13 +112,8 @@ button.tile{cursor:zoom-in}
 /* ── услуги ──────────────────────────────────────────────────────────────── */
 .cat{padding-top:22px}
 .cat h2{margin:0 0 4px}
-.svc{display:grid;grid-template-columns:22px 1fr auto;gap:12px;align-items:start;padding-block:14px;
-  border-bottom:1px solid var(--line);cursor:pointer;width:100%;text-align:left;background:none;border-inline:0;border-top:0}
+.svc{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:start;padding-block:14px;border-bottom:1px solid var(--line)}
 .svc:last-child{border-bottom:0}
-.chk{width:20px;height:20px;border:1.5px solid var(--line-strong);border-radius:50%;display:grid;place-items:center;margin-top:1px}
-.svc[aria-pressed="true"] .chk{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
-.chk svg{visibility:hidden}
-.svc[aria-pressed="true"] .chk svg{visibility:visible}
 .svc-t{display:grid;gap:2px}
 .svc-t small{color:var(--muted);font-size:13px}
 .price{font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
@@ -129,24 +124,7 @@ button.tile{cursor:zoom-in}
 .works{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
 .empty{color:var(--muted);font-size:14px;margin:0}
 
-/* ── дата и время ────────────────────────────────────────────────────────── */
-.summary{margin-top:20px;padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);display:grid;gap:4px}
-.summary .who{font-family:var(--serif);font-size:18px}
-.summary .what{color:var(--ink-2);font-size:14px}
-.days{display:flex;gap:6px;overflow-x:auto;padding-block:4px 10px;scrollbar-width:none;margin-inline:-16px;padding-inline:16px}
-.days::-webkit-scrollbar{display:none}
-.day{flex:0 0 auto;width:56px;padding:8px 0;border:1px solid var(--line);border-radius:var(--r);background:var(--panel);
-  display:grid;justify-items:center;gap:0;cursor:pointer;font-variant-numeric:tabular-nums}
-.day small{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
-.day b{font-family:var(--serif);font-weight:400;font-size:21px;line-height:1.2}
-.day[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--paper)}
-.day[aria-pressed="true"] small{color:var(--paper);opacity:.75}
-.slots-g{display:grid;gap:8px;padding-top:14px}
-.slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:6px}
-.slot{padding:9px 0;border:1px solid var(--line-strong);border-radius:var(--r);background:none;cursor:pointer;font-variant-numeric:tabular-nums}
-.slot[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
-
-/* ── контакты ────────────────────────────────────────────────────────────── */
+/* ── форма отзыва ────────────────────────────────────────────────────────── */
 .form{display:grid;gap:16px;padding-top:22px}
 .field{display:grid;gap:6px}
 .field label{font-size:13px;color:var(--ink-2)}
@@ -159,10 +137,6 @@ button.tile{cursor:zoom-in}
 .consent input{width:18px;height:18px;margin:1px 0 0;accent-color:var(--accent)}
 .hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
 .err{background:var(--red-soft);color:var(--red);padding:10px 12px;border-radius:var(--r);font-size:14px;margin:16px 0 0}
-.lines{display:grid;gap:8px;margin:0}
-.lines div{display:grid;grid-template-columns:90px 1fr;gap:10px}
-.lines dt{color:var(--muted);font-size:13px}
-.lines dd{margin:0}
 
 /* ── отзывы ──────────────────────────────────────────────────────────────── */
 .sec-h{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:6px}
@@ -191,7 +165,7 @@ button.tile{cursor:zoom-in}
 .done .ok{width:48px;height:48px;border-radius:50%;background:var(--accent-soft);color:var(--accent-ink);display:grid;place-items:center}
 .done h1{font-family:var(--serif);font-weight:400;font-size:32px;margin:0}
 .done p{margin:0;color:var(--ink-2);max-width:46ch}
-.btn-ghost{border:1px solid var(--line-strong);background:none;border-radius:999px;padding:10px 18px;cursor:pointer}
+.btn-ghost{border:1px solid var(--line-strong);background:none;border-radius:999px;padding:10px 18px;cursor:pointer;color:var(--ink)}
 
 /* ── нижняя панель действия ──────────────────────────────────────────────── */
 .bar{position:fixed;left:0;right:0;bottom:0;z-index:25;background:var(--paper);border-top:1px solid var(--line);
@@ -199,8 +173,28 @@ button.tile{cursor:zoom-in}
 .bar-in{max-width:568px;margin:0 auto;display:flex;align-items:center;gap:14px}
 .bar-sum{flex:1;min-width:0;display:grid;font-size:13px;color:var(--ink-2);font-variant-numeric:tabular-nums;line-height:1.35}
 .bar-sum b{color:var(--ink);font-size:15px;font-weight:600}
-.btn{border:0;border-radius:999px;background:var(--accent);color:var(--on-accent);padding:12px 22px;font-weight:600;cursor:pointer;white-space:nowrap}
+.btn{border:0;border-radius:999px;background:var(--accent);color:var(--on-accent);padding:12px 20px;font-weight:600;cursor:pointer;white-space:nowrap;
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;text-decoration:none;font-size:15px}
 .btn:disabled{background:var(--sunk);color:var(--muted);cursor:default}
+
+/* ── телефоны салонов ────────────────────────────────────────────────────── */
+.sheet{position:fixed;inset:0;z-index:35;background:rgba(10,9,8,.45);display:flex;align-items:flex-end;justify-content:center}
+.sheet-in{background:var(--paper);width:min(600px,100%);max-height:88%;overflow-y:auto;border-radius:14px 14px 0 0;
+  padding:18px 16px calc(20px + env(safe-area-inset-bottom,0px));display:grid;gap:4px;animation:up .22s ease-out}
+@keyframes up{from{transform:translateY(24px)}}
+.sheet-h{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.sheet-h h2{font-family:var(--serif);font-weight:400;font-size:24px;margin:0}
+.sheet-x{position:static;color:var(--ink);margin-right:-8px}
+.sheet-sub{margin:0 0 6px;color:var(--ink-2);font-size:14px}
+.salon{display:grid;gap:6px;padding-block:16px;border-top:1px solid var(--line)}
+.salon-h{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.salon-n{font-family:var(--serif);font-size:20px}
+.tag{font-size:11.5px;color:var(--accent-ink);background:var(--accent-soft);border-radius:999px;padding:2px 9px}
+.salon-p{font-size:24px;font-variant-numeric:tabular-nums;letter-spacing:.01em;user-select:all}
+.salon-a{color:var(--muted);font-size:13.5px}
+.salon-btns{display:flex;gap:8px;flex-wrap:wrap;padding-top:4px}
+.salon:not(.current) .btn{background:var(--ink);color:var(--paper)}
+@media (prefers-reduced-motion: reduce){.sheet-in{animation:none}}
 
 /* ── просмотр работы ─────────────────────────────────────────────────────── */
 .lb{position:fixed;inset:0;z-index:40;background:rgba(10,9,8,.92);display:grid;place-items:center;padding:24px 16px}

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#F6F4F0">
-<title>Privé7 Запись</title>
+<title>Privé7 Мастера</title>
 <link rel="stylesheet" href="/portal.css">
 </head>
 <body>
@@ -16,7 +16,7 @@
   <div class="mark">PRIVÉ<span>7</span></div>
   <div class="salons" id="salons" role="tablist" aria-label="Салон"></div>
 </header>
-<p class="demo-note" id="demoNote" hidden>Демонстрация: мастера, работы и цены примерные, запись никуда не уходит.</p>
+<p class="demo-note" id="demoNote" hidden>Демонстрация: мастера, работы, цены и телефоны примерные, отзывы никуда не уходят.</p>
 <main id="app" aria-live="polite"></main>
 <div class="bar" id="bar" hidden>
   <div class="bar-in">
@@ -29,6 +29,16 @@
     <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.6"/></svg>
   </button>
   <figure class="lb-fig"><div class="lb-img" id="lbImg"></div><figcaption id="lbCap"></figcaption></figure>
+</div>
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-in" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-h"><h2 id="sheetTitle">Позвонить в салон</h2>
+      <button class="lb-x sheet-x" id="sheetClose" type="button" aria-label="Закрыть">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.6"/></svg>
+      </button></div>
+    <p class="sheet-sub">Администратор подберёт время и мастера.</p>
+    <div id="sheetList"></div>
+  </div>
 </div>
 <!--/app-->
 <script src="/portal.js"></script>

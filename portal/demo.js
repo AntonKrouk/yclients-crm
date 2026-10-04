@@ -1,15 +1,16 @@
 'use strict';
 
-// Демо-данные клиентского портала. Один файл на два мира: сервер отдаёт их, пока нет
+// Демо-данные витрины. Один файл на два мира: сервер отдаёт их, пока нет
 // токенов YClients (локальная разработка), а превью-страница подключает его прямо в
 // браузер вместо сервера. Поэтому здесь нет ни require, ни fetch — только данные и
 // функция handle(), повторяющая ответы настоящих маршрутов /p/api/*.
 // Имена, цены и работы — примерные, к реальным мастерам салона отношения не имеют.
 
 (function (root) {
+  // Телефоны — заглушки: настоящие номера живут в data/portal-salons.json на сервере
   const SALONS = [
-    { id: 387958, name: 'Басков' },
-    { id: 898298, name: 'Мытнинская' },
+    { id: 387958, name: 'Басков', phone: '+7 (812) 000-00-01', address: '', hours: 'Ежедневно 10:00–22:00' },
+    { id: 898298, name: 'Мытнинская', phone: '+7 (812) 000-00-02', address: '', hours: 'Ежедневно 10:00–22:00' },
   ];
 
   const SERVICES = [
@@ -112,8 +113,6 @@
     return out;
   }
 
-  const pad = (n) => String(n).padStart(2, '0');
-  const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
   // Детерминированная «случайность»: у одного мастера в один день всегда одни и те же
   // занятые окна, чтобы превью не прыгало при каждом нажатии
@@ -127,30 +126,6 @@
   const staffOf = (salonId) => STAFF[salon(salonId).id] || [];
   const staffById = (salonId, id) => staffOf(salonId).find(s => String(s.id) === String(id));
   const ids = (v) => String(v || '').split(',').map(Number).filter(Boolean);
-
-  function dates(salonId, staffId) {
-    const out = [];
-    const d = new Date(); d.setHours(12, 0, 0, 0);
-    for (let i = 0; i < 21; i++) {
-      const day = new Date(d.getTime() + i * 86400000);
-      if (hash(`${staffId}:${ymd(day)}`) % 7 < 2) continue; // выходной мастера
-      out.push(ymd(day));
-    }
-    return out;
-  }
-
-  function times(salonId, staffId, date) {
-    const out = [];
-    const now = new Date();
-    for (let m = 10 * 60; m <= 20 * 60; m += 30) {
-      const t = `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
-      if (hash(`${staffId}:${date}:${t}`) % 5 < 2) continue; // занято
-      const dt = new Date(`${date}T${t}:00+03:00`);
-      if (dt <= now) continue;
-      out.push({ time: t, datetime: `${date}T${t}:00+03:00` });
-    }
-    return out;
-  }
 
   const publicStaff = (s) => ({
     id: s.id, name: s.name, specialization: s.specialization, avatar: '', tone: s.works[0]?.tone,
@@ -173,21 +148,10 @@
         const offered = new Set(st ? st.services : staffOf(q.salon).flatMap(s => s.services));
         return SERVICES.filter(s => offered.has(s.id));
       }
-      case '/p/api/dates': return { dates: dates(q.salon, q.staff) };
-      case '/p/api/times': return times(q.salon, q.staff, q.date);
       case '/p/api/reviews': return reviewsOf(q.staff);
       case '/p/api/review': {
         if (method !== 'POST') throw new Error('Метод не поддерживается');
         return { ok: true, demo: true, low: Number(body.rating) <= 3 };
-      }
-      case '/p/api/book': {
-        if (method !== 'POST') throw new Error('Метод не поддерживается');
-        const st = staffById(body.salon, body.staff_id);
-        const svc = SERVICES.filter(s => (body.service_ids || []).map(Number).includes(s.id));
-        return {
-          ok: true, demo: true, salon: salon(body.salon).name, staff: st ? st.name : '',
-          services: svc.map(s => s.title).join(', '), datetime: body.datetime,
-        };
       }
       default: throw new Error('Не найдено: ' + path);
     }
