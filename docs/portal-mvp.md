@@ -12,6 +12,14 @@
   текущий — первым. Телефоны, адреса и часы — `data/portal-salons.json` на сервере:
   `{"387958": {"phone": "+7 (812) …", "address": "…", "hours": "…"}, "898298": {…}}`.
 
+### Адрес (04.10.2026)
+
+**https://masters.prive7crm.ru** — поддомен CRM-домена в Timeweb, A-запись вручную на
+194.187.122.175 (не «выбрать сервис»: тот может подставить старый 89.223.66.128). Свой домен
+без «crm» — позже, переезд = новый `server_name` в nginx + certbot. Телефоны филиалов —
+`deploy/portal-salons.json`, на сервер копируется в `data/portal-salons.json`.
+Витрина слушает только 127.0.0.1 (`PORTAL_HOST`), снаружи — через nginx.
+
 ### Вкладка «Витрина» в CRM (04.10.2026)
 
 - Список мастеров филиала из YClients: фото, направление, сколько работ, оценка, сколько
@@ -55,8 +63,7 @@
   без ПДн (`telegram.notifyAdmins`), в таблицу `portal_bookings` — для лимитов.
 - Портфолио пока — папка `data/portfolio/<филиал>/<id мастера>/*.jpg` (+ `captions.json`
   с подписями); загрузка из CRM — следующий шаг.
-- Выкат: `deploy/yclients-portal.service`, `deploy/nginx-portal.conf.example`,
-  нужен отдельный домен.
+- Выкат: `deploy/yclients-portal.service`, `deploy/nginx-portal.conf`.
 
 ## Устройство
 

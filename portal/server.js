@@ -163,7 +163,8 @@ app.use('/p/works', express.static(vitrina.WORKS_DIR, { maxAge: '7d', fallthroug
 app.use(express.static(PUBLIC_DIR, { maxAge: '1h' }));
 
 if (require.main === module) {
-  app.listen(PORT, '0.0.0.0', () => {
+  // Только localhost: снаружи витрина доступна через nginx (HTTPS), а не голым портом 3021.
+  app.listen(PORT, process.env.PORTAL_HOST || '127.0.0.1', () => {
     console.log(`[portal] http://localhost:${PORT} ${yc.isDemo() ? '(демо-данные)' : '(мастера и цены из YClients)'}`);
   });
 }
