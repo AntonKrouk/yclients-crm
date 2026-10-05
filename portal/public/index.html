@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-look="glass">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#F6F4F0">
+<meta name="theme-color" content="#2A2522">
 <title>Privé7 Мастера</title>
 <link rel="stylesheet" href="/portal.css">
 </head>
@@ -16,7 +16,7 @@
   <div class="mark" role="img" aria-label="Privé7"></div>
   <div class="salons" id="salons" role="tablist" aria-label="Салон"></div>
 </header>
-<p class="demo-note" id="demoNote" hidden>Демонстрация: мастера, работы, цены и телефоны примерные, отзывы никуда не уходят.</p>
+<p class="demo-note" id="demoNote" hidden>Демонстрация: мастера, работы, цены и телефоны примерные, отзывы никуда не уходят.<span class="look-sw" id="lookSw" role="group" aria-label="Оформление"></span></p>
 <main id="app" aria-live="polite"></main>
 <footer class="foot"><a href="/privacy">Политика обработки персональных данных</a></footer>
 <div class="bar" id="bar" hidden>
@@ -29,7 +29,14 @@
   <button class="lb-x" id="lbClose" type="button" aria-label="Закрыть">
     <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.6"/></svg>
   </button>
-  <figure class="lb-fig"><div class="lb-img" id="lbImg"></div><figcaption id="lbCap"></figcaption></figure>
+  <button class="lb-nav lb-prev" id="lbPrev" type="button" aria-label="Предыдущая работа">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+  </button>
+  <figure class="lb-fig"><div class="lb-img" id="lbImg"></div>
+    <figcaption><span id="lbCap"></span><span class="lb-count" id="lbCount"></span></figcaption></figure>
+  <button class="lb-nav lb-next" id="lbNext" type="button" aria-label="Следующая работа">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+  </button>
 </div>
 <div class="sheet" id="sheet" hidden>
   <div class="sheet-in" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">

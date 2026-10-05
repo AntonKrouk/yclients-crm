@@ -33,6 +33,12 @@
     { id: 601, category: 'Массаж', title: 'Классический массаж, 60 минут', price_min: 4500, price_max: 4500, duration: 60 },
     { id: 602, category: 'Массаж', title: 'Лимфодренажный массаж', price_min: 5000, price_max: 5000, duration: 60 },
     { id: 603, category: 'Массаж', title: 'Массаж спины и шеи', price_min: 3000, price_max: 3000, duration: 40 },
+    { id: 701, category: 'Макияж', title: 'Дневной макияж', price_min: 4000, price_max: 4000, duration: 60 },
+    { id: 702, category: 'Макияж', title: 'Вечерний макияж', price_min: 5500, price_max: 5500, duration: 75 },
+    { id: 703, category: 'Макияж', title: 'Свадебный макияж с пробным', price_min: 12000, price_max: 12000, duration: 150 },
+    { id: 801, category: 'Перманентный макияж', title: 'Пудровые брови', price_min: 15000, price_max: 15000, duration: 150 },
+    { id: 802, category: 'Перманентный макияж', title: 'Межресничная стрелка', price_min: 12000, price_max: 12000, duration: 120 },
+    { id: 803, category: 'Перманентный макияж', title: 'Губы, акварельная техника', price_min: 17000, price_max: 17000, duration: 150 },
   ];
 
   // Оттенки плашек-заглушек вместо фотографий работ: пара цветов на градиент
@@ -69,6 +75,12 @@
       { id: 16, name: 'Игорь', specialization: 'Массажист', rating: 5.0, reviews: 38,
         services: [601, 602, 603],
         works: [w('oil', 'Кабинет массажа'), w('stone', 'Классический массаж')] },
+      { id: 17, name: 'Мила', specialization: 'Визажист', rating: 4.9, reviews: 18,
+        services: [701, 702, 703],
+        works: [w('copper', 'Вечерний образ'), w('skin', 'Нюдовый дневной'), w('wine', 'Акцент на губы')] },
+      { id: 18, name: 'Яна', specialization: 'Мастер перманентного макияжа', rating: 5.0, reviews: 26,
+        services: [801, 802, 803],
+        works: [w('brow', 'Пудровые брови'), w('lash', 'Межресничка'), w('copper', 'Губы акварелью')] },
     ],
     898298: [
       { id: 21, name: 'Ева', specialization: 'Топ-мастер маникюра', rating: 4.9, reviews: 58,

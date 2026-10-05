@@ -37,11 +37,11 @@ const DATE = new Date(LEGAL_VERSION).toLocaleDateString('ru-RU', { day: 'numeric
 
 function page(title, body) {
   return `<!doctype html>
-<html lang="ru">
+<html lang="ru" data-look="glass">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#F6F4F0">
+<meta name="theme-color" content="#2A2522">
 <meta name="robots" content="noindex">
 <title>${esc(title)} — Privé7</title>
 <link rel="stylesheet" href="/portal.css">

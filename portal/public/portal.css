@@ -90,14 +90,55 @@ main{max-width:600px;margin:0 auto;padding-inline:16px}
 .tile img{width:100%;height:100%;object-fit:cover;display:block}
 button.tile{cursor:zoom-in}
 
-/* направления мастеров */
-.chips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin-inline:-16px;padding:16px 16px 2px}
-.chips::-webkit-scrollbar{display:none}
-.chip{flex:0 0 auto;border:1px solid var(--line-strong);border-radius:999px;padding:7px 14px;background:none;
-  cursor:pointer;font-size:13.5px;white-space:nowrap;color:var(--ink-2)}
-.chip span{color:var(--muted);font-variant-numeric:tabular-nums;margin-left:2px}
-.chip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--paper)}
-.chip[aria-pressed="true"] span{color:var(--paper);opacity:.7}
+/* ── меню направлений ─────────────────────────────────────────────────────────
+   Телефон: ряд круглых значков, у выбранного выезжает название. Компьютер — колонка
+   значков слева, при наведении раскрывается поверх карточек со всеми названиями.
+   Планшет без мыши (наводить нечем) — колонка сразу раскрыта. */
+.staff-l{padding-top:16px}
+.rail{margin-inline:-16px}
+.rail-in{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;padding:2px 16px 4px;position:relative}
+.rail-in::-webkit-scrollbar{display:none}
+.ri{flex:0 0 auto;display:flex;align-items:center;height:44px;padding:0 10px;border:1px solid var(--line-strong);
+  border-radius:999px;background:none;cursor:pointer;color:var(--ink-2);white-space:nowrap;text-align:left;position:relative;z-index:1}
+.ri-ic{display:grid;place-items:center;width:22px;height:22px;flex:0 0 auto}
+.ri-ic svg{display:block}
+.ri-l{display:flex;align-items:baseline;gap:7px;max-width:0;opacity:0;overflow:hidden;font-size:14px}
+.ri-n{color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.ri[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.ri[aria-pressed="true"] .ri-l{max-width:280px;opacity:1;margin-left:9px;margin-right:4px}
+.ri[aria-pressed="true"] .ri-n{color:var(--paper);opacity:.6}
+.roster-h{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding-top:18px}
+.roster-h h2{font-family:var(--serif);font-weight:400;font-size:22px;line-height:1.2;margin:0}
+.roster-h span{color:var(--muted);font-size:13px;white-space:nowrap}
+
+@media (min-width:760px){
+  .staff-l{display:grid;grid-template-columns:62px minmax(0,1fr);gap:28px;align-items:start;padding-top:24px}
+  .rail{margin:0;position:sticky;top:84px;z-index:6}
+  .rail-in{flex-direction:column;overflow:hidden;width:62px;padding:7px;gap:4px;background:var(--panel);
+    border:1px solid var(--line);border-radius:20px}
+  .ri{width:100%;height:46px;padding:0 12px;border:0;border-radius:14px}
+  .ri-l{flex:1;max-width:none;justify-content:space-between;margin-left:14px;opacity:0;transform:translateX(-6px);font-size:14.5px}
+  .ri[aria-pressed="true"] .ri-l{margin:0 0 0 14px;opacity:0}
+  .ri:not([aria-pressed="true"]):hover{background:var(--sunk);color:var(--ink)}
+  /* выбранный пункт — бегунок, переезжает между пунктами (ставит portal.js) */
+  .rail-in::before{content:'';position:absolute;left:7px;right:7px;top:0;height:var(--ih,0px);
+    transform:translateY(var(--iy,0px));border-radius:14px;background:var(--ink)}
+  .rail-in.has-ind .ri[aria-pressed="true"]{background:none}
+  .roster-h{padding-top:0}
+  .staff-l .cards{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (min-width:760px) and (hover:hover){
+  .rail:hover .rail-in,.rail:focus-within .rail-in{width:318px;box-shadow:0 26px 50px -30px rgba(20,16,12,.5)}
+  .rail:hover .ri-l,.rail:focus-within .ri-l{opacity:1;transform:none}
+}
+@media (min-width:760px) and (hover:none){
+  .staff-l{grid-template-columns:250px minmax(0,1fr)}
+  .rail-in{width:100%}
+  .ri{height:auto;min-height:46px;padding-block:8px;white-space:normal}
+  .ri-l,.ri[aria-pressed="true"] .ri-l{opacity:1;transform:none}
+}
+@media (min-width:1024px){.staff-l .cards{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (min-width:1440px){.staff-l .cards{grid-template-columns:repeat(5,minmax(0,1fr))}}
 
 /* карточки мастеров: две колонки на телефоне, три на широком экране */
 .cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 12px;padding-top:14px}
@@ -259,7 +300,6 @@ main[data-screen="review"],main[data-screen="reviewDone"]{max-width:600px}
 @media (min-width:760px){
   .intro{padding-top:36px}
   .intro h1{font-size:38px}
-  .chips{flex-wrap:wrap;overflow:visible;margin-inline:0;padding-inline:0}
   .cards{grid-template-columns:repeat(4,minmax(0,1fr));gap:30px 18px;padding-top:20px}
   .card .m-name{font-size:19px}
   .works{grid-template-columns:repeat(4,1fr);gap:8px}
@@ -303,6 +343,21 @@ main[data-screen="review"],main[data-screen="reviewDone"]{max-width:600px}
   .top.scrolled .mark{scale:.9}
 
   .salons.ind-anim::before,.tabs.ind-anim::before{transition:transform .45s var(--ease),width .45s var(--ease)}
+  .rail-in.ind-anim::before{transition:transform .5s var(--ease),height .5s var(--ease)}
+
+  /* меню направлений: название выбранного выезжает (телефон), колонка раскрывается
+     и названия появляются лесенкой (компьютер), значок под курсором «оживает» */
+  .ri{transition:background-color .3s ease,color .3s ease,border-color .3s ease,scale .2s var(--ease)}
+  .ri:active{scale:.95}
+  .ri-l{transition:max-width .5s var(--ease),margin .5s var(--ease),opacity .3s ease}
+  @media (min-width:760px){
+    .rail-in{transition:width .5s var(--ease),box-shadow .5s var(--ease)}
+    .ri-l{transition:opacity .2s ease,transform .35s var(--ease)}
+    .rail:hover .ri-l,.rail:focus-within .ri-l{transition-delay:calc(var(--i,0) * 30ms + 100ms)}
+  }
+  @media (hover:hover){
+    .ri:hover .ri-ic svg{animation:wiggle .6s var(--ease)}
+  }
   .salons button{transition:color .3s ease}
 
   .card .card-ph{transition:box-shadow .5s var(--ease),scale .5s var(--ease)}
@@ -335,6 +390,7 @@ main[data-screen="review"],main[data-screen="reviewDone"]{max-width:600px}
 @keyframes pop{0%{transform:scale(.55);opacity:0}55%{transform:scale(1.15);opacity:1}}
 @keyframes draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
 @keyframes up{from{transform:translateY(40px);opacity:.6}}
+@keyframes wiggle{30%{transform:rotate(-12deg) scale(1.12)}60%{transform:rotate(7deg) scale(1.12)}}
 
 /* Шапка в прокрутке: полупрозрачная, с размытием того, что под ней */
 .top.scrolled{box-shadow:0 12px 28px -26px rgba(20,16,12,.6)}
@@ -350,3 +406,115 @@ main[data-screen="review"],main[data-screen="reviewDone"]{max-width:600px}
 ::view-transition-group(mph){animation-duration:.55s;animation-timing-function:var(--ease)}
 ::view-transition-old(root),::view-transition-new(root){animation-duration:.35s}
 ::view-transition-old(mph),::view-transition-new(mph){height:100%}
+
+/* ── оформление «Стекло» (основное с 05.10.2026) ─────────────────────────────────────
+   По мотивам референса Антона (Dashboard V8): тёплый серо-коричневый, матовое стекло
+   поверх размытого фона, выбранное — белой «пилюлей», медный акцент, подсказки
+   у значков меню. Включается атрибутом data-look="glass" на <html>: переключатель
+   в демо-плашке или ссылка ?look=glass (portal.js, setLook). Всегда тёмное. */
+:root[data-look="glass"]{
+  --paper:#2A2522; --panel:rgba(255,255,255,.06); --sunk:rgba(255,255,255,.08);
+  --line:rgba(255,255,255,.09); --line-strong:rgba(255,255,255,.2);
+  --ink:#F5F0EA; --ink-2:#D2C9C0; --muted:#A0958B;
+  --accent:#C8835D; --accent-ink:#E6A882; --accent-soft:rgba(200,131,93,.18); --on-accent:#FFFFFF;
+  --red:#F0A094; --red-soft:rgba(240,160,148,.14);
+  --gold:#E6BF78; --gold-soft:rgba(230,191,120,.14);
+  --glass:rgba(66,59,54,.4); --glass-hi:rgba(255,255,255,.12);
+  --r:14px;
+  color-scheme:dark;
+}
+/* фон — тёплые пятна, размытые как интерьер за стеклом; медленно «дышат» */
+[data-look="glass"] body{background:#221E1B}
+[data-look="glass"] body::before{content:'';position:fixed;inset:-25%;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(38% 34% at 22% 24%, rgba(181,135,99,.55), transparent 70%),
+    radial-gradient(34% 40% at 80% 18%, rgba(124,108,94,.65), transparent 70%),
+    radial-gradient(44% 38% at 72% 82%, rgba(156,112,80,.45), transparent 70%),
+    radial-gradient(40% 46% at 14% 86%, rgba(94,87,80,.65), transparent 70%),
+    radial-gradient(30% 30% at 50% 50%, rgba(214,190,160,.16), transparent 70%);
+  filter:blur(40px)}
+@media (prefers-reduced-motion: no-preference){
+  [data-look="glass"] body::before{animation:drift 38s ease-in-out infinite alternate}
+}
+@keyframes drift{to{transform:translate3d(5%,-4%,0) rotate(7deg) scale(1.1)}}
+
+[data-look="glass"] .top,[data-look="glass"] .top.scrolled{background:rgba(34,30,27,.4);border-bottom-color:var(--line);
+  -webkit-backdrop-filter:blur(22px) saturate(1.2);backdrop-filter:blur(22px) saturate(1.2)}
+[data-look="glass"] .top.scrolled{background:rgba(34,30,27,.62)}
+[data-look="glass"] .salons{background:rgba(255,255,255,.06);border-color:var(--glass-hi)}
+[data-look="glass"] .demo-note{background:rgba(200,131,93,.14);color:var(--accent-ink)}
+
+/* весь экран — одна стеклянная панель, как в референсе */
+[data-look="glass"] main{background:var(--glass);border:1px solid var(--glass-hi);border-radius:28px;
+  margin:14px auto 0;padding-bottom:30px;
+  -webkit-backdrop-filter:blur(28px) saturate(1.15);backdrop-filter:blur(28px) saturate(1.15);
+  box-shadow:0 30px 80px -40px rgba(0,0,0,.65),inset 0 1px 0 rgba(255,255,255,.07)}
+@media (max-width:759px){
+  [data-look="glass"] main{margin-inline:8px;border-radius:24px;padding-inline:14px}
+  [data-look="glass"] .rail{margin-inline:-14px}
+  [data-look="glass"] .rail-in{padding-inline:14px}
+}
+@media (min-width:760px){[data-look="glass"] main{padding-inline:28px}}
+
+/* карточки мастеров — стеклянные плитки; при наведении приподнимаются */
+[data-look="glass"] .card{padding:8px 8px 12px;border-radius:20px;border:1px solid var(--line);
+  background:linear-gradient(160deg,rgba(255,255,255,.085),rgba(255,255,255,.025))}
+[data-look="glass"] .card-b{padding-inline:4px}
+[data-look="glass"] .card .card-ph{box-shadow:none}
+@media (hover:hover){
+  [data-look="glass"] .card:hover{translate:0 -5px;border-color:var(--glass-hi);
+    background:linear-gradient(160deg,rgba(255,255,255,.12),rgba(255,255,255,.04))}
+}
+@media (prefers-reduced-motion: no-preference){
+  [data-look="glass"] .card{transition:translate .45s var(--ease),border-color .3s ease,background .3s ease}
+}
+
+/* меню направлений: капсула, выбранное — белый круг, название — подсказкой справа */
+[data-look="glass"] .ri{border-color:var(--glass-hi)}
+@media (min-width:760px){[data-look="glass"] .rail-in{background:rgba(255,255,255,.06);border-color:var(--glass-hi)}}
+@media (min-width:760px) and (hover:hover){
+  [data-look="glass"] .rail-in,[data-look="glass"] .rail:hover .rail-in,[data-look="glass"] .rail:focus-within .rail-in{
+    width:62px;border-radius:999px;overflow:visible;box-shadow:0 20px 40px -30px rgba(0,0,0,.6)}
+  [data-look="glass"] .ri,[data-look="glass"] .rail-in::before{border-radius:999px}
+  [data-look="glass"] .ri-l,[data-look="glass"] .ri[aria-pressed="true"] .ri-l,
+  [data-look="glass"] .rail:hover .ri-l,[data-look="glass"] .rail:focus-within .ri-l{
+    position:absolute;left:calc(100% + 18px);top:50%;margin:0;flex:none;gap:8px;white-space:nowrap;pointer-events:none;
+    opacity:0;transform:translate(-8px,-50%);transition-delay:0s;
+    padding:8px 14px;border-radius:12px;background:rgba(24,21,19,.86);color:#F5F0EA;font-size:14px;
+    border:1px solid rgba(255,255,255,.08);box-shadow:0 14px 30px -14px rgba(0,0,0,.7);
+    -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+  [data-look="glass"] .ri:hover .ri-l,[data-look="glass"] .ri:focus-visible .ri-l{opacity:1;transform:translate(0,-50%)}
+  [data-look="glass"] .ri .ri-n,[data-look="glass"] .ri[aria-pressed="true"] .ri-n{color:var(--muted);opacity:1}
+}
+
+[data-look="glass"] .bar{background:rgba(34,30,27,.55);border-top-color:var(--line);
+  -webkit-backdrop-filter:blur(22px) saturate(1.2);backdrop-filter:blur(22px) saturate(1.2)}
+[data-look="glass"] .sheet{background:rgba(10,8,7,.45)}
+[data-look="glass"] .sheet-in{background:rgba(46,40,36,.84);border:1px solid var(--glass-hi);border-bottom:0;border-radius:24px 24px 0 0;
+  -webkit-backdrop-filter:blur(30px);backdrop-filter:blur(30px)}
+[data-look="glass"] .foot{border-top:0}
+
+/* переключатель оформления в демо-плашке */
+.look-sw{display:inline-flex;gap:2px;margin-left:10px;vertical-align:middle;border:1px solid currentColor;border-radius:999px;padding:2px}
+.look-sw button{border:0;background:none;border-radius:999px;padding:2px 10px;font-size:12px;cursor:pointer;color:inherit}
+.look-sw button[aria-pressed="true"]{background:currentColor}
+.look-sw button[aria-pressed="true"] span{color:var(--paper)}
+
+/* ── листание работ в просмотре ──────────────────────────────────────────────
+   Стрелки по бокам фото; на телефоне — внизу, под пальцем (там и так листают свайпом). */
+.lb-img{touch-action:pan-y;user-select:none;-webkit-user-select:none;cursor:grab}
+.lb-img:active{cursor:grabbing}
+.lb-img img{-webkit-user-drag:none;pointer-events:none}
+.lb figcaption{display:grid;gap:4px;justify-items:center}
+.lb-count{font-family:var(--sans);font-size:12.5px;letter-spacing:.12em;color:rgba(238,234,227,.6);font-variant-numeric:tabular-nums}
+.lb-nav{position:absolute;top:50%;translate:0 -50%;width:48px;height:48px;border-radius:50%;cursor:pointer;
+  display:grid;place-items:center;color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);transition:background-color .2s ease,scale .2s ease}
+.lb-nav:hover{background:rgba(255,255,255,.18)}
+.lb-nav:active{scale:.92}
+.lb-prev{left:max(12px, calc(50% - 260px - 76px))}
+.lb-next{right:max(12px, calc(50% - 260px - 76px))}
+@media (max-width:640px){
+  .lb-nav{top:auto;bottom:calc(18px + env(safe-area-inset-bottom,0px));translate:none}
+  .lb-prev{left:20px} .lb-next{right:20px}
+}

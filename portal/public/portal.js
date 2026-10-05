@@ -65,6 +65,31 @@
     return vt;
   }
 
+  // Оформление: «Стекло» (основное с 05.10.2026, по референсу Антона) или «Бумага» (как CRM,
+  // прежний вид). Выбор — переключателем в демо-плашке или ссылкой ?look=paper / ?look=glass;
+  // запоминается в браузере. В index.html «Стекло» прописано сразу, чтобы не мелькала бумага.
+  const LOOKS = { paper: 'Бумага', glass: 'Стекло' };
+  function setLook(look, save) {
+    if (!LOOKS[look]) look = 'paper';
+    if (look === 'paper') delete document.documentElement.dataset.look;
+    else document.documentElement.dataset.look = look;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = look === 'glass' ? '#2A2522' : '#F6F4F0';
+    if (save) try { localStorage.setItem('prive.look', look); } catch { /* без памяти */ }
+    $('lookSw').innerHTML = Object.entries(LOOKS).map(([k, v]) =>
+      `<button type="button" data-lk="${k}" aria-pressed="${k === look}"><span>${v}</span></button>`).join('');
+    // отступы у оформлений разные — бегунки переставить на новые места
+    indicator($('salons'), 'salons', false);
+    indicator(app.querySelector('.tabs'), 'tabs', false);
+    indicator(app.querySelector('.rail-in'), 'rail', false, '[aria-pressed="true"]');
+  }
+  function initLook() {
+    const fromUrl = new URLSearchParams(location.search).get('look');
+    let saved = null;
+    try { saved = localStorage.getItem('prive.look'); } catch { /* без памяти */ }
+    setLook(fromUrl || saved || 'glass', Boolean(fromUrl));
+  }
+
   function go(screen) {
     if (S.screen === 'home') S.homeY = window.scrollY; // вернёмся к той же карточке
     S.stack.push(S.screen);
@@ -155,8 +180,9 @@
     : '<div class="rate">Пока без оценок</div>');
   function tile(w, i) {
     const inner = w.src ? `<img src="${esc(w.src)}" alt="${esc(w.caption)}" loading="lazy">` : '';
-    const bg = w.tone ? ` style="background:linear-gradient(145deg,${esc(w.tone[0])},${esc(w.tone[1])})"` : '';
-    return `<button class="tile rv-tile" type="button"${dl(320 + Math.min(i, 11) * 45)} data-work="${i}" aria-label="${esc(w.caption || 'Работа')}"${bg}>${inner}</button>`;
+    // один атрибут style на оба свойства: второй такой же атрибут браузер молча отбрасывает
+    const bg = w.tone ? `background:linear-gradient(145deg,${esc(w.tone[0])},${esc(w.tone[1])});` : '';
+    return `<button class="tile rv-tile" type="button" style="${bg}--d:${320 + Math.min(i, 11) * 45}ms" data-work="${i}" aria-label="${esc(w.caption || 'Работа')}">${inner}</button>`;
   }
   const svcRow = (s) => `
     <div class="svc">
@@ -178,23 +204,43 @@
   }
 
   // Направление мастера: админ может выбрать его в CRM, иначе — по должности (position)
-  // и специализации из YClients. Порядок строк = порядок проверки и показа:
-  // «Косметолог, массаж лица» должен попасть в косметологию, поэтому она выше массажа.
+  // и специализации из YClients. Строки — в порядке показа (Антон, 05.10.2026), третье
+  // поле — значок в боковом меню. Тот же список — в src/vitrina.js.
   const GROUPS = [
-    ['Стилисты', /стилист|парикмахер|колорист|барбер|волос|hair/i],
-    ['Мастера маникюра/педикюра', /маникюр|педикюр|ногт|nail/i],
-    ['Брови и ресницы', /бров|ресниц|лэш|lash/i],
-    ['Косметологи', /космет|эстетист|дерматолог/i],
-    ['Массажисты', /массаж|spa|спа-/i],
-    ['Визажисты', /визаж|макияж|make-?up/i],
+    ['Стилисты', /стилист|парикмахер|колорист|барбер|волос|hair/i, 'hair'],
+    ['Визажисты', /визаж|макияж|make-?up/i, 'makeup'],
+    ['Брови и ресницы', /бров|ресниц|лэш|lash/i, 'lash'],
+    ['Мастера маникюра/педикюра', /маникюр|педикюр|ногт|nail/i, 'nail'],
+    ['Косметологи', /космет|эстетист|дерматолог/i, 'skin'],
+    ['Массажисты', /массаж|spa|спа-/i, 'massage'],
+    ['Мастера перманента', /перманент|татуаж|pmu/i, 'pmu'],
   ];
+  // Порядок проверки другой: «перманентный макияж бровей» содержит и «макияж», и «бров» —
+  // перманент первым; «Косметолог, массаж лица» — в косметологию; «визажист-бровист» — в брови.
+  const MATCH = ['Мастера перманента', 'Стилисты', 'Мастера маникюра/педикюра', 'Брови и ресницы',
+    'Косметологи', 'Массажисты', 'Визажисты'].map(n => GROUPS.find(([g]) => g === n));
   const OTHER = 'Другие мастера';
   function groupOf(m) {
     if (m.direction) return m.direction; // сервер уже учёл выбор админа в CRM
     const text = `${m.position || ''} ${m.specialization || ''}`;
-    const hit = GROUPS.find(([, re]) => re.test(text));
+    const hit = MATCH.find(([, re]) => re.test(text));
     return hit ? hit[0] : (m.position || OTHER);
   }
+
+  // Значки направлений: тонкая линия в одну толщину, как стрелка «назад» и телефон
+  const ICONS = {
+    all: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/>',
+    hair: '<circle cx="6.5" cy="6.5" r="2.6"/><circle cx="6.5" cy="17.5" r="2.6"/><path d="M8.6 8 20 17.2M8.6 16 20 6.8"/>',
+    makeup: '<path d="M8 21h8v-7.5H8z"/><path d="M9.3 13.5V8.6L14.7 5v8.5"/><path d="M8 17h8"/>',
+    lash: '<path d="M3 13c2.6-3.4 5.6-5 9-5s6.4 1.6 9 5c-2.6 3.4-5.6 5-9 5s-6.4-1.6-9-5z"/><circle cx="12" cy="13" r="2.4"/><path d="M12 8V5.2M8 8.8 6.6 6.4M16 8.8l1.4-2.4M4.8 10.6 3 9M19.2 10.6 21 9"/>',
+    nail: '<path d="M10 3h4v4.6h-4z"/><path d="M7.2 11a3 3 0 0 1 3-3.4h3.6a3 3 0 0 1 3 3.4V18a3 3 0 0 1-3 3h-3.6a3 3 0 0 1-3-3z"/><path d="M7.2 13.5h9.6"/>',
+    skin: '<path d="M12 3.2c2.8 3.5 5 6.3 5 9.3a5 5 0 0 1-10 0c0-3 2.2-5.8 5-9.3z"/><path d="M9.7 13a2.4 2.4 0 0 0 2.3 2.4"/>',
+    massage: '<ellipse cx="12" cy="18.3" rx="7.5" ry="2.4"/><ellipse cx="12" cy="13" rx="5.4" ry="2.2"/><ellipse cx="12" cy="8.2" rx="3.4" ry="1.8"/><path d="M12 6.4c0-1.7.8-2.8 2.4-3.4"/>',
+    pmu: '<path d="M14.6 4.2l5.2 5.2-9.4 9.4-4.4 1 1-4.4z"/><path d="M12.6 6.2l5.2 5.2M4 20l2-2"/>',
+    other: '<circle cx="6" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18" cy="12" r="1.4"/>',
+  };
+  const iconOf = (g) => (g === '' ? 'all' : (GROUPS.find(([n]) => n === g) || [])[2] || 'other');
+  const icon = (key) => `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${ICONS[key]}</svg>`;
   function grouped(list) {
     const order = GROUPS.map(g => g[0]);
     const map = new Map();
@@ -231,6 +277,37 @@
   const skel = (n) => Array.from({ length: n }, () => '<div class="skel"></div>').join('');
 
   // --- экраны ---------------------------------------------------------------
+  // Мастера выбранного направления. Одна сплошная сетка: разделы по одному мастеру
+  // оставляли бы полстроки пустыми. Направление над именем не подписываем (Антон,
+  // 04.10.2026): специализация и так под именем.
+  function roster(groups) {
+    const shown = S.group ? groups.filter(([g]) => g === S.group) : groups;
+    const list = shown.flatMap(([, ms]) => ms);
+    return `<div class="roster"><div class="roster-h rv2"><h2>${esc(S.group || 'Все мастера')}</h2>
+        <span>${list.length} ${plural(list.length, 'мастер', 'мастера', 'мастеров')}</span></div>
+      <div class="cards">${list.map((m, i) => masterCard(m, i)).join('')}</div></div>`;
+  }
+
+  // Смена направления — без перерисовки всего экрана: меню остаётся на месте, поэтому
+  // выбранный пункт плавно раскрывается, а бегунок переезжает (portal.css, «меню»)
+  function pickGroup(g) {
+    S.group = g;
+    const r = app.querySelector('.roster');
+    if (!r) return render();
+    app.querySelectorAll('.ri').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.group === g)));
+    clocks();
+    r.outerHTML = roster(grouped(S.staff));
+    indicator(app.querySelector('.rail-in'), 'rail', true, '[aria-pressed="true"]');
+    // на телефоне пункт меню у края ряда — подвинуть его в середину
+    const on = app.querySelector('.ri[aria-pressed="true"]');
+    if (on) centerInRow(on, calm() ? 'auto' : 'smooth');
+  }
+  // Ряд прокручивается вбок только на телефоне; на компьютере scrollTo ничего не сдвинет
+  function centerInRow(el, behavior = 'auto') {
+    const row = el.parentElement;
+    row.scrollTo({ left: Math.max(0, el.offsetLeft - (row.clientWidth - el.offsetWidth) / 2), behavior });
+  }
+
   function home() {
     const tabs = `<div class="tabs rv" role="tablist"${dl(180)}>
       <button type="button" role="tab" data-tab="staff" aria-selected="${S.tab === 'staff'}">Мастера</button>
@@ -242,14 +319,14 @@
     else {
       const groups = grouped(S.staff);
       if (S.group && !groups.some(([g]) => g === S.group)) S.group = '';
-      const chips = groups.length > 1 ? `<div class="chips rv1"${dl(60)} role="group" aria-label="Направление">
-        <button class="chip" type="button" data-group="" aria-pressed="${!S.group}">Все</button>
-        ${groups.map(([g, ms]) => `<button class="chip" type="button" data-group="${esc(g)}" aria-pressed="${S.group === g}">${esc(g)} <span>${ms.length}</span></button>`).join('')}
-      </div>` : '';
-      // Одна сплошная сетка: разделы по одному мастеру оставляли бы полстроки пустыми.
-      // Направление над именем не подписываем (Антон, 04.10.2026): специализация и так под именем.
-      const shown = S.group ? groups.filter(([g]) => g === S.group) : groups;
-      body = chips + `<div class="cards">${shown.flatMap(([, ms]) => ms).map((m, i) => masterCard(m, i)).join('')}</div>`;
+      // Боковое меню направлений: значки, название — у выбранного (телефон) или при
+      // наведении на меню (компьютер). Разметка одна, раскладку решает portal.css.
+      const item = (g, n, i) => `<button class="ri" type="button" data-group="${esc(g)}" aria-pressed="${S.group === g}" style="--i:${i}">
+          <span class="ri-ic">${icon(iconOf(g))}</span><span class="ri-l">${esc(g || 'Все мастера')}<span class="ri-n">${n}</span></span></button>`;
+      const rail = groups.length > 1 ? `<nav class="rail rv1"${dl(60)} aria-label="Направление"><div class="rail-in">
+        ${item('', S.staff.length, 0)}${groups.map(([g, ms], i) => item(g, ms.length, i + 1)).join('')}
+      </div></nav>` : '';
+      body = `<div class="staff-l">${rail}${roster(groups)}</div>`;
     }
     return `<section class="intro"><span class="eyebrow rv">Privé7 · ${esc(S.salon?.name || '')}</span>
       <h1 class="rv"${dl(60)}>${S.tab === 'staff' ? 'Наши мастера' : 'Услуги и цены'}</h1>
@@ -388,19 +465,27 @@
     app.style.setProperty('--' + name, Math.round(c.at - performance.now()) + 'ms');
   }
 
-  // Бегунок под выбранной кнопкой (салон, вкладка): едет со старого места на новое
+  // Бегунок под выбранной кнопкой (салон, вкладка, пункт меню): едет со старого места
+  // на новое. Ставит --ix/--iw (по горизонтали) и --iy/--ih (по вертикали, меню)
   const IND = {};
-  function indicator(box, name, animate = true) {
-    const on = box && box.offsetParent && box.querySelector('[aria-selected="true"]');
+  function indicator(box, name, animate = true, sel = '[aria-selected="true"]') {
+    const on = box && box.offsetParent && box.querySelector(sel);
     if (!on) return;
-    const now = { x: on.offsetLeft, w: on.offsetWidth }, was = IND[name];
+    const now = { x: on.offsetLeft, w: on.offsetWidth, y: on.offsetTop, h: on.offsetHeight }, was = IND[name];
     IND[name] = now;
-    const set = (p) => { box.style.setProperty('--ix', p.x + 'px'); box.style.setProperty('--iw', p.w + 'px'); };
+    const set = (p) => { for (const k of ['x', 'w', 'y', 'h']) box.style.setProperty('--i' + k, p[k] + 'px'); };
     box.classList.add('has-ind');
-    if (!animate || !was || (was.x === now.x && was.w === now.w)) return set(now);
+    if (!animate || !was || ['x', 'w', 'y', 'h'].every(k => was[k] === now[k])) return set(now);
     box.classList.remove('ind-anim'); set(was);
     void box.offsetWidth; // зафиксировать старое место, чтобы был переход
     box.classList.add('ind-anim'); set(now);
+  }
+
+  function clocks() {
+    const screen = [S.screen, S.salon?.id, S.tab, S.master?.id].join('|');
+    clock('t0', screen);
+    clock('t1', screen + '|' + (S.staff.length > 0));
+    clock('t2', screen + '|' + (S.staff.length > 0) + '|' + S.group);
   }
 
   function render() {
@@ -408,18 +493,16 @@
       `<button type="button" role="tab" data-salon="${s.id}" aria-selected="${String(S.salon?.id) === String(s.id)}">${esc(s.name)}</button>`).join('');
     $('salons').hidden = S.screen !== 'home';
     $('back').hidden = !S.stack.length;
-    const screen = [S.screen, S.salon?.id, S.tab, S.master?.id].join('|');
-    clock('t0', screen);
-    clock('t1', screen + '|' + (S.staff.length > 0));
-    clock('t2', screen + '|' + (S.staff.length > 0) + '|' + S.group);
+    clocks();
     const screens = { home, master, review, reviewDone };
     app.innerHTML = S.salon ? screens[S.screen]() : `<section class="intro">${errBox() || skel(3)}</section>`;
     app.dataset.screen = S.screen; // ширина колонки зависит от экрана: форма отзыва уже, список мастеров шире
-    // полоса фильтров перерисовывается с начала — возвращаем выбранный фильтр в поле зрения
-    const on = app.querySelector('.chip[aria-pressed="true"]');
-    if (on && on.parentElement) on.parentElement.scrollLeft = Math.max(0, on.offsetLeft - on.parentElement.offsetLeft - 16);
+    // ряд направлений (телефон) перерисовывается с начала — возвращаем выбранное в поле зрения
+    const on = app.querySelector('.ri[aria-pressed="true"]');
+    if (on) centerInRow(on);
     indicator($('salons'), 'salons');
     indicator(app.querySelector('.tabs'), 'tabs');
+    indicator(app.querySelector('.rail-in'), 'rail', true, '[aria-pressed="true"]');
     bar();
   }
 
@@ -430,6 +513,7 @@
   window.addEventListener('resize', () => {
     indicator($('salons'), 'salons', false);
     indicator(app.querySelector('.tabs'), 'tabs', false);
+    indicator(app.querySelector('.rail-in'), 'rail', false, '[aria-pressed="true"]');
   });
 
   // --- события --------------------------------------------------------------
@@ -437,10 +521,11 @@
     const el = e.target.closest('button');
     if (!el) return;
     const d = el.dataset;
+    if (d.lk) return morph(() => setLook(d.lk, true)); // плавная смена всего экрана
     if (el.id === 'back') return history.state ? history.back() : back();
     if (d.salon) return loadSalon(d.salon);
     if (d.tab) { S.tab = d.tab; return render(); }
-    if ('group' in d) { S.group = d.group; return render(); }
+    if ('group' in d) return pickGroup(d.group);
     if (d.master) return openMaster(d.master, el.querySelector('.card-ph'));
     if (d.work) return openWork(Number(d.work));
     if (d.star) { S.rform.rating = Number(d.star); S.error = ''; return render(); }
@@ -448,21 +533,73 @@
     if (d.copy) return copyPhone(el);
     if (el.id === 'toMaster') { S.screen = S.stack.pop() || 'home'; render(); return window.scrollTo(0, 0); }
     if (el.id === 'lbClose') return ($('lb').hidden = true);
+    if (el.id === 'lbPrev') return stepWork(-1);
+    if (el.id === 'lbNext') return stepWork(1);
     if (el.id === 'sheetClose') return closeSheet();
     if (el.id === 'barBtn') return S.screen === 'review' ? submitReview() : openCall();
   });
   $('lb').addEventListener('click', (e) => { if (e.target.id === 'lb') $('lb').hidden = true; });
   $('sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') closeSheet(); });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { $('lb').hidden = true; closeSheet(); } });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { $('lb').hidden = true; closeSheet(); }
+    if (!$('lb').hidden && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) stepWork(e.key === 'ArrowLeft' ? -1 : 1);
+  });
 
+  // Просмотр работ: листается стрелками, свайпом (и перетаскиванием мышью), клавишами ← →.
+  // По кругу: после последней — первая.
+  let lbAt = 0;
+  const works = () => S.master?.works || [];
   function openWork(i) {
-    const w = S.master?.works?.[i];
+    if (!works()[i]) return;
+    lbAt = i;
+    showWork(0);
+    $('lb').hidden = false;
+  }
+  // dir: 1 — пришла следующая (въезжает справа), -1 — предыдущая (слева), 0 — без анимации
+  function showWork(dir) {
+    const list = works(), w = list[lbAt];
     if (!w) return;
     const box = $('lbImg');
-    box.innerHTML = w.src ? `<img src="${esc(w.src)}" alt="${esc(w.caption)}">` : '';
+    box.innerHTML = w.src ? `<img src="${esc(w.src)}" alt="${esc(w.caption)}" draggable="false">` : '';
     box.style.background = w.tone ? `linear-gradient(145deg,${w.tone[0]},${w.tone[1]})` : '';
     $('lbCap').textContent = w.caption || '';
-    $('lb').hidden = false;
+    $('lbCount').textContent = list.length > 1 ? `${lbAt + 1} / ${list.length}` : '';
+    $('lbPrev').hidden = $('lbNext').hidden = list.length < 2;
+    // соседние фото — загрузить заранее, чтобы листалось без пустой паузы
+    for (const d of [1, -1]) { const n = list[(lbAt + d + list.length) % list.length]; if (n?.src) new Image().src = n.src; }
+    if (dir && !calm() && box.animate) box.animate(
+      [{ transform: `translateX(${dir * 48}px)`, opacity: 0 }, { transform: 'none', opacity: 1 }],
+      { duration: 340, easing: 'cubic-bezier(.2,.7,.2,1)' });
+  }
+  function stepWork(d) {
+    const n = works().length;
+    if (n < 2) return;
+    lbAt = (lbAt + d + n) % n;
+    showWork(d);
+  }
+  // Свайп: фото едет за пальцем; сдвинули больше чем на 50 px — листаем, меньше — возвращается
+  {
+    const box = $('lbImg');
+    let drag = null;
+    const reset = () => { drag = null; box.style.transform = ''; box.style.opacity = ''; };
+    box.addEventListener('pointerdown', (e) => {
+      if (works().length < 2) return;
+      drag = { x: e.clientX };
+      box.setPointerCapture(e.pointerId);
+    });
+    box.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x;
+      box.style.transform = `translateX(${dx}px)`;
+      box.style.opacity = String(1 - Math.min(Math.abs(dx) / 500, 0.35));
+    });
+    box.addEventListener('pointerup', (e) => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x;
+      reset();
+      if (Math.abs(dx) > 50) stepWork(dx < 0 ? 1 : -1);
+    });
+    box.addEventListener('pointercancel', reset);
   }
 
   // Телефон в форме отзыва — с маской +7 (9XX) XXX-XX-XX
@@ -502,6 +639,7 @@
 
   // --- старт ----------------------------------------------------------------
   (async function start() {
+    initLook();
     render();
     try {
       const [salons, health] = await Promise.all([call('GET', '/p/api/salons'), call('GET', '/p/api/health').catch(() => ({}))]);
