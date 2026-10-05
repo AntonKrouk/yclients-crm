@@ -13,6 +13,7 @@
 require('../src/env');
 const path = require('node:path');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const express = require('express');
 const yc = require('../src/yclients');
 const { db, DATA_DIR } = require('../src/db');
@@ -159,10 +160,21 @@ app.post('/p/api/review', wrap(async (req, res) => {
 
 app.get('/p/api/health', (req, res) => res.json({ ok: true, demo: yc.isDemo() }));
 
-legal.mount(app); // /privacy, /consent, /consent-publish
+// Свежая версия сразу после выката. 05.10.2026 после выката «Стекла» браузеры ещё час
+// показывали старый дизайн: страница и стили кешировались на час. Теперь страницу браузер
+// перепроверяет при каждом открытии (no-cache + ETag: не менялась — короткий ответ 304),
+// а к стилям и скрипту дописан отпечаток содержимого: выкат меняет ссылку, и браузер
+// берёт новый файл. Отпечатки считаются при старте — выкат всё равно перезапускает портал.
+const stamp = (f) => crypto.createHash('sha1').update(fs.readFileSync(path.join(PUBLIC_DIR, f))).digest('hex').slice(0, 10);
+const ASSETS = { '/portal.css': stamp('portal.css'), '/portal.js': stamp('portal.js') };
+const versioned = (html) => html.replace(/(href|src)="(\/portal\.(?:css|js))"/g, (m, attr, url) => `${attr}="${url}?v=${ASSETS[url]}"`);
+const INDEX = versioned(fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8'));
+app.get(['/', '/index.html'], (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(INDEX));
+
+legal.mount(app, versioned); // /privacy, /consent, /consent-publish
 
 app.use('/p/works', express.static(vitrina.WORKS_DIR, { maxAge: '7d', fallthrough: false }));
-app.use(express.static(PUBLIC_DIR, { maxAge: '1h' }));
+app.use(express.static(PUBLIC_DIR, { maxAge: '1h', index: false }));
 
 if (require.main === module) {
   // Сроки хранения ПДн из политики — портал сам подчищает старые телефоны, IP и отзывы

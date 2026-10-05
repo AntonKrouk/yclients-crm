@@ -181,9 +181,11 @@ const DOCS = {
   },
 };
 
-function mount(app) {
+// versioned — дописывает к /portal.css отпечаток содержимого (portal/server.js), чтобы
+// после выката браузер сразу брал новые стили, а не держал старые из кеша
+function mount(app, versioned = (html) => html) {
   for (const [slug, render] of Object.entries(DOCS)) {
-    app.get('/' + slug, (req, res) => res.type('html').send(render()));
+    app.get('/' + slug, (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(versioned(render())));
   }
 }
 
