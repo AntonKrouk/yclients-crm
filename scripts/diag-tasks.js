@@ -95,13 +95,23 @@ show('Остаток воронки: что его отсекает (перва�
 // «Отказ» закрывает человека на 90 дней. Если так отмечают и «не ответил / игнорирует»
 // (05.10.2026 в журнале Баскова все шесть «отказов» — с заметкой «ИГНОР»), пул обзвона
 // выгорает на три месяца вперёд. Для «не ответил» есть своя кнопка — короткая пауза.
-show('Отказы за 90 дней: всего и с заметкой «игнор / не отвечает / не берёт»', `
-  SELECT c.branch, COALESCE(a.admin,'—') AS admin, COUNT(*) AS refused,
-         SUM(lower(COALESCE(a.note,'')) LIKE '%игнор%' OR lower(COALESCE(a.note,'')) LIKE '%не отвеч%'
-             OR lower(COALESCE(a.note,'')) LIKE '%не бер%' OR lower(COALESCE(a.note,'')) LIKE '%не ответ%') AS ignore_note
-  FROM task_actions a JOIN clients c ON c.id = a.client_id
-  WHERE a.result = 'refused' AND a.created_at >= date('now','-90 day')
-  GROUP BY 1,2 ORDER BY 1, refused DESC`);
+{
+  // Регистр приводим в JS: в SQLite lower() и LIKE без учёта регистра работают только
+  // для латиницы, а «ИГНОР» админы пишут заглавными
+  const IGNORE = /игнор|не отвеч|не ответ|не бер|не дозвон|недозвон/;
+  const agg = new Map();
+  for (const r of db.prepare(`
+    SELECT c.branch, COALESCE(a.admin,'—') AS admin, a.note FROM task_actions a JOIN clients c ON c.id = a.client_id
+    WHERE a.result = 'refused' AND a.created_at >= date('now','-90 day')`).all()) {
+    const k = r.branch + '|' + r.admin;
+    if (!agg.has(k)) agg.set(k, { branch: r.branch, admin: r.admin, refused: 0, ignore_note: 0 });
+    const g = agg.get(k);
+    g.refused++;
+    if (IGNORE.test(String(r.note || '').toLowerCase())) g.ignore_note++;
+  }
+  console.log('\n== Отказы за 90 дней: всего и с заметкой «игнор / не отвечает / не берёт / недозвон»');
+  console.table([...agg.values()].sort((x, y) => x.branch.localeCompare(y.branch) || y.refused - x.refused));
+}
 
 show('Активные списки обзвона: сколько людей ждут звонка (их движок в задачи не берёт)', `
   SELECT l.id, l.name, l.assignee, substr(l.created_at,1,10) AS created,
