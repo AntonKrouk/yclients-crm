@@ -1062,6 +1062,9 @@ async function loadOverview(){
     // задача закрылась записью, а звонка не было: человек записался сам или его завели
     // в YClients мимо CRM. Не работа администратора, но и не «ничего не произошло»
     ['Записались без звонка', s.self_booked ?? 0],
+    // «глубокий сон» — холодные звонки, в конверсию выше не входят (иначе роняли бы проценты
+    // админов), но работа сделана — показываем отдельно: звонков и сколько из них записались
+    ['Deep Sleep: звонков · записей', `${s.deep_sleep?.calls ?? 0} · ${s.deep_sleep?.booked ?? 0}`],
     ['Всего клиентов', s.clients_total],
   ].map(([l,n])=>`<div class="card kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
 
@@ -1077,8 +1080,9 @@ async function loadOverview(){
   const tb=$('#ovAdmins tbody');
   tb.innerHTML = s.by_admin.length? s.by_admin.map(a=>{
     const conv=a.total?Math.round(a.booked/a.total*100):0;
-    return `<tr><td>${a.admin}</td><td>${a.total}</td><td>${a.booked}</td><td>${conv}%</td></tr>`;
-  }).join('') : `<tr><td colspan="4" class="muted">${ovIsToday()?'Сегодня ещё не было звонков':'За выбранный период звонков не было'}</td></tr>`;
+    const deep=a.deep ? `${a.deep}${a.deep_booked?` <span class="muted">(записано ${a.deep_booked})</span>`:''}` : '—';
+    return `<tr><td>${a.admin}</td><td>${a.total}</td><td>${a.booked}</td><td>${a.total?conv+'%':'—'}</td><td>${deep}</td></tr>`;
+  }).join('') : `<tr><td colspan="5" class="muted">${ovIsToday()?'Сегодня ещё не было звонков':'За выбранный период звонков не было'}</td></tr>`;
 
   renderOvCal();
   loadJournal();

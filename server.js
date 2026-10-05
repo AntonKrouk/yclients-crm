@@ -2157,14 +2157,18 @@ app.get('/api/stats', (req, res) => {
     resultMap[key] = (resultMap[key] || 0) + 1;
   }
 
+  // Строка админа собирается по ВСЕМ звонкам: тот, кто за день звонил только спящим,
+  // раньше в таблицу не попадал вовсе (05.10.2026: пять звонков Этери по Баскову не
+  // видны нигде в сводке). Спящие — отдельной колонкой, конверсия — по обычным задачам.
   const admins = new Map();
-  for (const r of todayRows) {
-    if (!admins.has(r.admin)) admins.set(r.admin, { admin: r.admin, total: 0, booked: 0 });
+  for (const r of allRows) {
+    if (!admins.has(r.admin)) admins.set(r.admin, { admin: r.admin, total: 0, booked: 0, deep: 0, deep_booked: 0 });
     const a = admins.get(r.admin);
-    a.total++;
-    if (wonNow(r)) a.booked++;
+    const deep = r.task_type === 'deep_sleep';
+    if (deep) a.deep++; else a.total++;
+    if (wonNow(r)) { if (deep) a.deep_booked++; else a.booked++; }
   }
-  const byAdmin = [...admins.values()].sort((a, b) => b.total - a.total);
+  const byAdmin = [...admins.values()].sort((a, b) => (b.total - a.total) || (b.deep - a.deep));
 
   // «Обработано сегодня» = по скольким задачам админ отчитался, включая «перезвонить»
   // и «не ответил»: раньше считались только закрытые, и половина работы пропадала.
