@@ -32,64 +32,76 @@ show('Свежесть визитов по филиалам (не встал л�
   FROM visits GROUP BY 1,2 ORDER BY 1`);
 
 // Воронка обычного обзвона — те же пороги, что в src/rules.js (пора записаться: просрочка
-// 3–60 дн., ≥3 визитов, ритм ≤180; реактивация: не был >2× ритма, но ≤180 дн., ≥2 визитов).
-// ПРИБЛИЖЁННО: считается по карточкам, а движок — по людям (дубли в двух филиалах, звонок
-// из соседнего филиала, ручные списки). Показывает, где кончаются кандидаты.
-show('Воронка: в окне правила → записаны → на паузе после звонка → остаток', `
-  WITH c AS (
-    SELECT c.branch, c.visits_count AS vc, c.avg_interval_days AS iv,
+// 3–60 дн., ≥3 визитов, ритм ≤180; реактивация: не был >2× ритма, но ≤180 дн., ≥2 визитов)
+// и та же пауза после звонка (rules.js, cooldownLeft): последний звонок ЧЕЛОВЕКУ по всем
+// его карточкам (здесь — по хвосту телефона), срок по результату: отказ 90 дн., «просил не
+// звонить» 60, иначе 14 (пора записать) / 60 (реактивация); визит после звонка снимает паузу.
+// Неявки (у движка они проверяются раньше) здесь не учтены.
+const BASE = `
+  c AS (
+    SELECT c.id, c.branch, c.phone, c.last_visit, c.visits_count AS vc, c.avg_interval_days AS iv,
            julianday('now') - julianday(c.last_visit) AS since,
-           julianday('now') - julianday(c.predicted_next) AS overdue,
-           EXISTS(SELECT 1 FROM visits v WHERE v.client_id = c.id AND v.status = 'upcoming'
-                  AND v.date >= datetime('now')) AS booked,
-           (SELECT MAX(a.created_at) FROM task_actions a WHERE a.client_id = c.id) AS call_at
+           julianday('now') - julianday(c.predicted_next) AS overdue
     FROM clients c
     WHERE COALESCE(c.do_not_call,0) = 0 AND COALESCE(c.free_client,0) = 0
       AND c.last_visit IS NOT NULL AND c.avg_interval_days IS NOT NULL),
-  r AS (
-    SELECT branch, booked, call_at,
-      CASE WHEN since > 2*iv AND since <= 180 AND vc >= 2 THEN 'reactivation'
-           WHEN overdue BETWEEN 3 AND 60 AND vc >= 3 AND iv <= 180 THEN 'rebook' END AS rule
-    FROM c)
+  w AS (
+    SELECT *, CASE WHEN since > 2*iv AND since <= 180 AND vc >= 2 THEN 'reactivation'
+                   WHEN overdue BETWEEN 3 AND 60 AND vc >= 3 AND iv <= 180 THEN 'rebook' END AS rule,
+           EXISTS(SELECT 1 FROM visits v WHERE v.client_id = c.id AND v.status = 'upcoming'
+                  AND v.date >= datetime('now')) AS booked
+    FROM c),
+  pc AS (
+    SELECT w.*, (SELECT a.created_at || '|' || COALESCE(a.result,'') FROM task_actions a JOIN clients d ON d.id = a.client_id
+                 WHERE d.id = w.id OR (length(w.phone) >= 10 AND substr(d.phone,-10) = substr(w.phone,-10))
+                 ORDER BY a.created_at DESC LIMIT 1) AS lc
+    FROM w WHERE rule IS NOT NULL),
+  x AS (
+    SELECT *, substr(lc, 1, instr(lc,'|') - 1) AS call_at, substr(lc, instr(lc,'|') + 1) AS call_res FROM pc),
+  y AS (
+    SELECT *, CASE WHEN lc IS NULL OR last_visit > call_at THEN 0
+      ELSE MAX(0, (CASE call_res WHEN 'refused' THEN 90 WHEN 'no_calls' THEN 60
+                                 ELSE CASE rule WHEN 'rebook' THEN 14 ELSE 60 END END)
+                  - CAST(julianday(date('now')) - julianday(substr(call_at,1,10)) AS INTEGER)) END AS pause_left
+    FROM x)`;
+
+show('Воронка: в окне правила → записаны → пауза после отказа / после звонка → остаток', `
+  WITH ${BASE}
   SELECT branch, rule, COUNT(*) AS in_window, SUM(booked) AS booked,
-    SUM(NOT booked AND call_at IS NOT NULL AND call_at >= date('now', CASE rule WHEN 'rebook' THEN '-14 day' ELSE '-60 day' END)) AS paused,
-    SUM(NOT booked AND (call_at IS NULL OR call_at < date('now', CASE rule WHEN 'rebook' THEN '-14 day' ELSE '-60 day' END))) AS left
-  FROM r WHERE rule IS NOT NULL GROUP BY 1,2 ORDER BY 1,2`);
+    SUM(NOT booked AND pause_left > 0 AND call_res = 'refused') AS pause_refused,
+    SUM(NOT booked AND pause_left > 0 AND call_res <> 'refused') AS pause_other,
+    SUM(NOT booked AND pause_left = 0) AS left
+  FROM y GROUP BY 1,2 ORDER BY 1,2`);
 
 // Почему «остаток» воронки не превращается в задачи: первая причина, по которой движок
-// (src/rules.js) пропускает человека. Дубль — приближённо: та же десятизначная хвостовка
-// телефона у другой карточки с большим числом визитов (движок группирует точнее, people.js).
+// пропускает человека. Дубль — приближённо: та же хвостовка телефона у другой карточки
+// с большим числом визитов (движок группирует точнее, src/people.js).
 show('Остаток воронки: что его отсекает (первая причина)', `
-  WITH c AS (
-    SELECT c.id, c.branch, c.phone, c.visits_count AS vc, c.avg_interval_days AS iv,
-           julianday('now') - julianday(c.last_visit) AS since,
-           julianday('now') - julianday(c.predicted_next) AS overdue,
-           EXISTS(SELECT 1 FROM visits v WHERE v.client_id = c.id AND v.status = 'upcoming'
-                  AND v.date >= datetime('now')) AS booked,
-           (SELECT MAX(a.created_at) FROM task_actions a WHERE a.client_id = c.id) AS call_at
-    FROM clients c
-    WHERE COALESCE(c.do_not_call,0) = 0 AND COALESCE(c.free_client,0) = 0
-      AND c.last_visit IS NOT NULL AND c.avg_interval_days IS NOT NULL),
-  r AS (
-    SELECT *, CASE WHEN since > 2*iv AND since <= 180 AND vc >= 2 THEN 'reactivation'
-                   WHEN overdue BETWEEN 3 AND 60 AND vc >= 3 AND iv <= 180 THEN 'rebook' END AS rule
-    FROM c),
-  left_ AS (
-    SELECT * FROM r WHERE rule IS NOT NULL AND NOT booked
-      AND (call_at IS NULL OR call_at < date('now', CASE rule WHEN 'rebook' THEN '-14 day' ELSE '-60 day' END))),
+  WITH ${BASE},
   why AS (
     SELECT branch, rule, CASE
       WHEN id IN (SELECT client_id FROM vip_clients UNION SELECT client_id FROM deposit_clients
                   UNION SELECT client_id FROM alice_clients) THEN '1 ручной список (VIP/Депозит/Алиса)'
-      WHEN EXISTS(SELECT 1 FROM list_members m JOIN lists l ON l.id = m.list_id WHERE m.client_id = left_.id
+      WHEN EXISTS(SELECT 1 FROM list_members m JOIN lists l ON l.id = m.list_id WHERE m.client_id = y.id
                   AND l.status = 'active' AND m.status IN ('pending','snoozed')) THEN '2 в активном списке обзвона'
-      WHEN length(replace(phone,'+','')) >= 10 AND EXISTS(SELECT 1 FROM clients d WHERE d.id <> left_.id
-                  AND substr(d.phone,-10) = substr(left_.phone,-10)
-                  AND (d.visits_count > left_.vc OR (d.visits_count = left_.vc AND d.id < left_.id))) THEN '3 дубль, задача в другом филиале'
-      WHEN EXISTS(SELECT 1 FROM tasks t WHERE t.client_id = left_.id AND t.status IN ('open','snoozed')) THEN '4 уже есть задача'
+      WHEN length(phone) >= 10 AND EXISTS(SELECT 1 FROM clients d WHERE d.id <> y.id
+                  AND substr(d.phone,-10) = substr(y.phone,-10)
+                  AND (d.visits_count > y.vc OR (d.visits_count = y.vc AND d.id < y.id))) THEN '3 дубль, задача в другом филиале'
+      WHEN EXISTS(SELECT 1 FROM tasks t WHERE t.client_id = y.id AND t.status IN ('open','snoozed')) THEN '4 уже есть задача'
       ELSE '5 свободен' END AS reason
-    FROM left_)
+    FROM y WHERE NOT booked AND pause_left = 0)
   SELECT branch, rule, reason, COUNT(*) AS n FROM why GROUP BY 1,2,3 ORDER BY 1,2,3`);
+
+// «Отказ» закрывает человека на 90 дней. Если так отмечают и «не ответил / игнорирует»
+// (05.10.2026 в журнале Баскова все шесть «отказов» — с заметкой «ИГНОР»), пул обзвона
+// выгорает на три месяца вперёд. Для «не ответил» есть своя кнопка — короткая пауза.
+show('Отказы за 90 дней: всего и с заметкой «игнор / не отвечает / не берёт»', `
+  SELECT c.branch, COALESCE(a.admin,'—') AS admin, COUNT(*) AS refused,
+         SUM(lower(COALESCE(a.note,'')) LIKE '%игнор%' OR lower(COALESCE(a.note,'')) LIKE '%не отвеч%'
+             OR lower(COALESCE(a.note,'')) LIKE '%не бер%' OR lower(COALESCE(a.note,'')) LIKE '%не ответ%') AS ignore_note
+  FROM task_actions a JOIN clients c ON c.id = a.client_id
+  WHERE a.result = 'refused' AND a.created_at >= date('now','-90 day')
+  GROUP BY 1,2 ORDER BY 1, refused DESC`);
 
 show('Активные списки обзвона: сколько людей ждут звонка (их движок в задачи не берёт)', `
   SELECT l.id, l.name, l.assignee, substr(l.created_at,1,10) AS created,
