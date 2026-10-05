@@ -35,6 +35,7 @@
   // --- состояние ------------------------------------------------------------
   const S = {
     salons: [], salon: null, tab: 'staff', group: '',
+    psec: '', pq: '', openCats: new Set(), // прайс: раздел, строка поиска, раскрытые категории
     staff: [], services: [],            // мастера и прайс салона
     screen: 'home', stack: [],
     master: null, masterServices: [], reviews: null,
@@ -81,7 +82,7 @@
     // отступы у оформлений разные — бегунки переставить на новые места
     indicator($('salons'), 'salons', false);
     indicator(app.querySelector('.tabs'), 'tabs', false);
-    indicator(app.querySelector('.rail-in'), 'rail', false, '[aria-pressed="true"]');
+    railInd(false);
   }
   function initLook() {
     const fromUrl = new URLSearchParams(location.search).get('look');
@@ -189,18 +190,15 @@
       <span class="svc-t">${esc(s.title)}${s.duration ? `<small>${dur(s.duration)}</small>` : ''}</span>
       <span class="price">${s.price_max > s.price_min ? 'от ' : ''}${rub(s.price_min)}</span>
     </div>`;
-  // fadeIn — цены пришли вторым запросом (страница мастера): просто проявляются;
-  // иначе (вкладка «Цены») — встают лесенкой вместе с экраном
-  function svcGroups(list, hideSingle, fadeIn) {
+  // Услуги → категории, в порядке прайса YClients (прайс салона и цены мастера)
+  function byCategory(list) {
     const cats = [];
     for (const s of list) {
       let c = cats.find(x => x.name === s.category);
       if (!c) cats.push(c = { name: s.category, items: [] });
       c.items.push(s);
     }
-    // у мастера одного направления заголовок категории повторял бы шапку — прячем
-    const head = !(hideSingle && cats.length === 1);
-    return cats.map((c, i) => `<section class="cat ${fadeIn ? 'in' : 'rv1'}"${fadeIn ? '' : dl(160 + Math.min(i, 8) * 60)}>${head ? `<h2 class="eyebrow">${esc(c.name)}</h2>` : ''}${c.items.map(svcRow).join('')}</section>`).join('');
+    return cats;
   }
 
   // Направление мастера: админ может выбрать его в CRM, иначе — по должности (position)
@@ -237,6 +235,7 @@
     skin: '<path d="M12 3.2c2.8 3.5 5 6.3 5 9.3a5 5 0 0 1-10 0c0-3 2.2-5.8 5-9.3z"/><path d="M9.7 13a2.4 2.4 0 0 0 2.3 2.4"/>',
     massage: '<ellipse cx="12" cy="18.3" rx="7.5" ry="2.4"/><ellipse cx="12" cy="13" rx="5.4" ry="2.2"/><ellipse cx="12" cy="8.2" rx="3.4" ry="1.8"/><path d="M12 6.4c0-1.7.8-2.8 2.4-3.4"/>',
     pmu: '<path d="M14.6 4.2l5.2 5.2-9.4 9.4-4.4 1 1-4.4z"/><path d="M12.6 6.2l5.2 5.2M4 20l2-2"/>',
+    depil: '<path d="M5 19.5C5 11 10 5.6 19.5 4.5 18.6 14 13.2 19.5 5 19.5z"/><path d="M5 19.5l8.5-8.5"/>',
     other: '<circle cx="6" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18" cy="12" r="1.4"/>',
   };
   const iconOf = (g) => (g === '' ? 'all' : (GROUPS.find(([n]) => n === g) || [])[2] || 'other');
@@ -300,7 +299,7 @@
     app.querySelectorAll('.ri').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.group === g)));
     clocks();
     r.outerHTML = roster(grouped(S.staff));
-    indicator(app.querySelector('.rail-in'), 'rail', true, '[aria-pressed="true"]');
+    railInd(true);
     // на телефоне пункт меню у края ряда — подвинуть его в середину
     const on = app.querySelector('.ri[aria-pressed="true"]');
     if (on) centerInRow(on, calm() ? 'auto' : 'smooth');
@@ -311,13 +310,120 @@
     row.scrollTo({ left: Math.max(0, el.offsetLeft - (row.clientWidth - el.offsetWidth) / 2), behavior });
   }
 
+  // --- прайс: разделы → категории (раскрываются по нажатию) + поиск -------------------
+  // В YClients у салона ~250 услуг в 40+ категориях — сплошным списком это несколько
+  // экранов прокрутки (Антон, 05.10.2026). Категории раскладываем по разделам по словам
+  // в названии; бренды уходов («Dermadrop», «GENEO+») — к косметологии. Проверка идёт
+  // сверху вниз: «Перманентный макияж» — перманент, а не макияж; «Уход для волос» — волосы,
+  // а не уход по лицу; «Кобидо массаж лица» — косметология. Не подошло никуда — «Другое».
+  const PSECS = [
+    ['Перманент', /перманент|татуаж|pmu/i, 'pmu'],
+    ['Волосы', /волос|стрижк|укладк|окрашив|в один тон|тониров|блонд|декапир|кератин|ботокс для/i, 'hair'],
+    ['Маникюр и педикюр', /маникюр|педикюр|ногт|подолог|nail/i, 'nail'],
+    ['Брови и ресницы', /бров|ресниц|лэш|lash/i, 'lash'],
+    ['Косметология', /лиц|космет|пилинг|чистк|hydrafacial|dermadrop|geneo|heleo|glow|qms|clinical|marini|idenel|asce|экзосом|joelle|la mente|водород|инъекц|мезо|биоревит/i, 'skin'],
+    ['Массаж и тело', /массаж|обёрт|оберт|эндосфер|прессотерап|дренаж|целлюлит|emtone|тел[оа]|spa|спа/i, 'massage'],
+    ['Макияж', /макияж|визаж/i, 'makeup'],
+    ['Депиляция', /депиляц|эпиляц|шугаринг|lycon|воск/i, 'depil'],
+  ];
+  // порядок показа — как у мастеров: волосы, макияж, брови, ногти, лицо, тело, перманент
+  const PSEC_ORDER = ['Волосы', 'Макияж', 'Брови и ресницы', 'Маникюр и педикюр', 'Косметология',
+    'Массаж и тело', 'Перманент', 'Депиляция', 'Другое'];
+  const secOf = (cat) => (PSECS.find(([, re]) => re.test(cat)) || ['Другое'])[0];
+  const secIcon = (sec) => (sec === '' ? 'all' : (PSECS.find(([n]) => n === sec) || [])[2] || 'other');
+  const svcWord = (n) => plural(n, 'услуга', 'услуги', 'услуг');
+
+  const priceCats = () => byCategory(S.services).map(c => ({ ...c, sec: secOf(c.name || '') }));
+
+  function priceList() {
+    const cats = priceCats();
+    const secs = PSEC_ORDER.map(name => [name, cats.filter(c => c.sec === name)])
+      .filter(([, cs]) => cs.length);
+    if (S.psec && !secs.some(([n]) => n === S.psec)) S.psec = '';
+    const count = (cs) => cs.reduce((a, c) => a + c.items.length, 0);
+    const item = (sec, n, i) => `<button class="ri" type="button" data-psec="${esc(sec)}" aria-pressed="${S.psec === sec}" style="--i:${i}">
+        <span class="ri-ic">${icon(secIcon(sec))}</span><span class="ri-l">${esc(sec || 'Все услуги')}<span class="ri-n">${n}</span></span></button>`;
+    const rail = secs.length > 1 ? `<nav class="rail rv1"${dl(60)} aria-label="Раздел прайса"><div class="rail-in">
+        ${item('', S.services.length, 0)}${secs.map(([sec, cs], i) => item(sec, count(cs), i + 1)).join('')}
+      </div></nav>` : '';
+    const search = `<label class="psearch rv1"${dl(100)}>
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <input id="pq" type="search" inputmode="search" autocomplete="off" placeholder="Найти услугу, например «окрашивание»" value="${esc(S.pq)}" aria-label="Найти услугу"></label>`;
+    return `<div class="staff-l">${rail}<div class="roster">${search}<div id="pl">${priceBody(cats)}</div></div></div>`;
+  }
+
+  // Содержимое под поиском: заголовок раздела и категории. Перерисовывается отдельно от
+  // меню и поля поиска — так при наборе не теряется фокус, а меню не прыгает.
+  function priceBody(cats = priceCats()) {
+    const q = S.pq.trim().toLowerCase();
+    let shown, title, open;
+    if (q.length >= 2) {
+      // поиск — по всему прайсу, независимо от раздела; найденное сразу раскрыто
+      shown = cats.map(c => (c.name.toLowerCase().includes(q) ? c
+        : { ...c, items: c.items.filter(sv => sv.title.toLowerCase().includes(q)) })).filter(c => c.items.length);
+      title = `Найдено: ${shown.reduce((a, c) => a + c.items.length, 0)}`;
+      open = () => true;
+    } else {
+      shown = S.psec ? cats.filter(c => c.sec === S.psec) : cats;
+      title = S.psec || 'Все услуги';
+      // одна категория в разделе — раскрыта сразу, нажимать нечего
+      open = (c) => shown.length === 1 || S.openCats.has('p|' + c.name);
+    }
+    if (!shown.length) return `<p class="empty pl-empty">Ничего не нашлось. Попробуйте другое слово — или позвоните, администратор подскажет.</p>`;
+    const total = shown.reduce((a, c) => a + c.items.length, 0);
+    return `<div class="roster-h rv2"><h2>${esc(title)}</h2><span>${q.length >= 2 ? '' : `${total} ${svcWord(total)}`}</span></div>
+      <div class="pl">${accList(shown, 'p', open, 'rv2')}</div>`;
+  }
+
+  // Категории аккордеоном — общий кусок для прайса и страницы мастера: заголовок
+  // категории, «N услуг · от X ₽», услуги раскрываются по нажатию. scope отделяет
+  // раскрытое в прайсе от раскрытого у мастера (S.openCats хранит «scope|категория»).
+  function accList(cats, scope, open, rvCls) {
+    return cats.map((c, i) => {
+      const min = Math.min(...c.items.map(sv => sv.price_min || 0).filter(Boolean));
+      const isOpen = open(c);
+      return `<section class="acc${rvCls ? ' ' + rvCls : ''}${isOpen ? ' open' : ''}"${rvCls ? dl(Math.min(i, 10) * 40) : ''}>
+          <button class="acc-h" type="button" data-acc="${esc(scope + '|' + c.name)}" aria-expanded="${isOpen}">
+            <span class="acc-t">${esc(c.name)}</span>
+            <span class="acc-m">${c.items.length} ${svcWord(c.items.length)}${Number.isFinite(min) ? ` · от ${rub(min)}` : ''}</span>
+            <span class="acc-ch" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8"/></svg></span>
+          </button>
+          <div class="acc-b"${isOpen ? '' : ' inert'}><div class="acc-in">${c.items.map(sv => svcRow(sv)).join('')}</div></div>
+        </section>`;
+    }).join('');
+  }
+
+  // Раскрыть / свернуть категорию — прямо в DOM, без перерисовки: тогда работает плавная
+  // анимация высоты (portal.css, .acc-b), а раскрытое запоминается в S.openCats
+  function toggleCat(btn) {
+    const sec = btn.closest('.acc'), name = btn.dataset.acc;
+    const isOpen = !sec.classList.contains('open');
+    sec.classList.toggle('open', isOpen);
+    btn.setAttribute('aria-expanded', String(isOpen));
+    sec.querySelector('.acc-b').toggleAttribute('inert', !isOpen);
+    if (isOpen) S.openCats.add(name); else S.openCats.delete(name);
+  }
+
+  function pickPsec(sec) {
+    S.psec = sec; S.pq = '';
+    const pl = $('pl');
+    if (!pl) return render();
+    app.querySelectorAll('.ri').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.psec === sec)));
+    const pq = $('pq'); if (pq) pq.value = '';
+    clocks();
+    pl.innerHTML = priceBody();
+    railInd(true);
+    const on = app.querySelector('.ri[aria-pressed="true"]');
+    if (on) centerInRow(on, calm() ? 'auto' : 'smooth');
+  }
+
   function home() {
     const tabs = `<div class="tabs rv" role="tablist"${dl(180)}>
       <button type="button" role="tab" data-tab="staff" aria-selected="${S.tab === 'staff'}">Мастера</button>
       <button type="button" role="tab" data-tab="services" aria-selected="${S.tab === 'services'}">Цены</button></div>`;
     const loading = !S.staff.length && !S.error;
     let body;
-    if (S.tab !== 'staff') body = loading ? skel(4) : `<div class="prices">${svcGroups(S.services)}</div>`;
+    if (S.tab !== 'staff') body = loading ? skel(4) : priceList();
     else if (loading) body = `<div class="cards">${'<div class="card skel-card"></div>'.repeat(4)}</div>`;
     else {
       const groups = grouped(S.staff);
@@ -341,6 +447,16 @@
   const alsoLine = (m) => !m.also?.length ? '' : `<div class="m-also">${S.salons.length === 2
     ? 'Принимает в обоих салонах' : 'Принимает также: ' + esc(m.also.join(', '))}</div>`;
 
+  // Цены мастера: у стилиста — десятки услуг в «Блондировании», «В один тон», «Уходах»…
+  // Сплошным списком это экраны прокрутки (Антон, 05.10.2026), поэтому тоже аккордеоном.
+  // Одна категория у мастера — сразу раскрыта и без заголовка-кнопки: сворачивать нечего.
+  function masterPrices() {
+    const cats = byCategory(S.masterServices);
+    if (cats.length === 1) return `<div class="in">${cats[0].items.map(sv => svcRow(sv)).join('')}</div>`;
+    const scope = 'm' + S.master.id;
+    return `<div class="pl in">${accList(cats, scope, (c) => S.openCats.has(scope + '|' + c.name))}</div>`;
+  }
+
   function master() {
     const m = S.master;
     // .mp-side / .mp-main: на компьютере — две колонки (portal.css), на телефоне — одна
@@ -351,7 +467,7 @@
       <section class="sec rv"${dl(240)}><span class="eyebrow">Работы</span>
         ${m.works?.length ? `<div class="works">${m.works.map((w, i) => tile(w, i)).join('')}</div>` : '<p class="empty">Мастер ещё не добавил работы.</p>'}</section>
       <section class="sec rv"${dl(300)}><span class="eyebrow">Услуги и цены</span>${errBox()}
-        ${S.masterServices.length ? svcGroups(S.masterServices, true, true) : skel(3)}</section>
+        ${S.masterServices.length ? masterPrices() : skel(3)}</section>
       <section class="sec rv"${dl(360)} id="reviews"><div class="sec-h"><span class="eyebrow">Отзывы</span>
         <button class="link" type="button" data-act="review">Оставить отзыв</button></div>
         ${S.reviews === null ? skel(2) : S.reviews.length ? S.reviews.map(r => `
@@ -524,8 +640,10 @@
     const screen = [S.screen, S.salon?.id, S.tab, S.master?.id].join('|');
     clock('t0', screen);
     clock('t1', screen + '|' + (S.staff.length > 0));
-    clock('t2', screen + '|' + (S.staff.length > 0) + '|' + S.group);
+    clock('t2', screen + '|' + (S.staff.length > 0) + '|' + S.group + '|' + S.psec);
   }
+  // бегунок меню — у мастеров и у цен свой, чтобы не «ехал» с чужого места при смене вкладки
+  const railInd = (animate) => indicator(app.querySelector('.rail-in'), 'rail-' + S.tab, animate, '[aria-pressed="true"]');
 
   function render() {
     $('salons').innerHTML = S.salons.map(s =>
@@ -541,7 +659,7 @@
     if (on) centerInRow(on);
     indicator($('salons'), 'salons');
     indicator(app.querySelector('.tabs'), 'tabs');
-    indicator(app.querySelector('.rail-in'), 'rail', true, '[aria-pressed="true"]');
+    railInd(true);
     bar();
   }
 
@@ -552,7 +670,7 @@
   window.addEventListener('resize', () => {
     indicator($('salons'), 'salons', false);
     indicator(app.querySelector('.tabs'), 'tabs', false);
-    indicator(app.querySelector('.rail-in'), 'rail', false, '[aria-pressed="true"]');
+    railInd(false);
   });
 
   // --- события --------------------------------------------------------------
@@ -565,6 +683,8 @@
     if (d.salon) return loadSalon(d.salon);
     if (d.tab) { S.tab = d.tab; return render(); }
     if ('group' in d) return pickGroup(d.group);
+    if ('psec' in d) return pickPsec(d.psec);
+    if (d.acc) return toggleCat(el);
     if (d.master) return openMaster(d.master, el.querySelector('.card-ph'));
     if (d.work) return openWork(Number(d.work));
     if (d.star) { S.rform.rating = Number(d.star); S.error = ''; return render(); }
@@ -662,6 +782,16 @@
     if (t.id === 'rphone') { t.value = maskPhone(t.value); S.rform.phone = t.value.replace(/\D/g, '').length > 1 ? t.value : ''; }
     else if (t.id === 'rtext') S.rform.text = t.value;
     else if (t.id === 'rauthor') S.rform.author = t.value;
+    else if (t.id === 'pq') {
+      S.pq = t.value;
+      // поиск идёт по всему прайсу — выделение раздела переводим на «Все услуги»
+      if (S.psec && S.pq.trim().length >= 2) {
+        S.psec = '';
+        app.querySelectorAll('.ri').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.psec === '')));
+        railInd(true);
+      }
+      const pl = $('pl'); if (pl) pl.innerHTML = priceBody();
+    }
   });
   document.addEventListener('change', (e) => {
     if (e.target.id === 'rconsent') S.rform.consent = e.target.checked;

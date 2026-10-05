@@ -162,8 +162,6 @@ button.tile{cursor:zoom-in}
 @media (prefers-reduced-motion: reduce){.card-ph img{transition:none}.skel-card{animation:none}}
 
 /* ── услуги ──────────────────────────────────────────────────────────────── */
-.cat{padding-top:22px}
-.cat h2{margin:0 0 4px}
 .svc{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:start;padding-block:14px;border-bottom:1px solid var(--line)}
 .svc:last-child{border-bottom:0}
 .svc-t{display:grid;gap:2px}
@@ -303,8 +301,6 @@ main[data-screen="review"],main[data-screen="reviewDone"]{max-width:600px}
   .cards{grid-template-columns:repeat(4,minmax(0,1fr));gap:30px 18px;padding-top:20px}
   .card .m-name{font-size:19px}
   .works{grid-template-columns:repeat(4,1fr);gap:8px}
-  .prices{column-count:2;column-gap:56px}
-  .prices .cat{break-inside:avoid}
   .hero{grid-template-columns:minmax(0,280px) minmax(0,1fr);gap:28px}
 }
 @media (min-width:1024px){
@@ -529,3 +525,37 @@ main[data-screen="review"],main[data-screen="reviewDone"]{max-width:600px}
 }
 .salon .btn-wa,.salon:not(.current) .btn-wa{background:#25D366;color:#08321A}
 .salon .btn-tg,.salon:not(.current) .btn-tg{background:#2AABEE;color:#FFFFFF}
+
+/* ── прайс: разделы, поиск, категории аккордеоном ───────────────────────────────
+   Меню разделов — тот же .rail, что у мастеров. Категория раскрывается плавно:
+   высота анимируется через grid-template-rows 0fr → 1fr (без замера высоты в JS). */
+.psearch{position:relative;display:block;margin-bottom:8px}
+.psearch svg{position:absolute;left:15px;top:50%;translate:0 -50%;color:var(--muted);pointer-events:none}
+.psearch input{width:100%;font:inherit;font-size:16px;color:var(--ink);background:var(--panel);
+  border:1px solid var(--line-strong);border-radius:999px;padding:11px 16px 11px 42px;-webkit-appearance:none;appearance:none}
+.psearch input:focus{outline:none;border-color:var(--ink)}
+.psearch input::placeholder{color:var(--muted)}
+.pl{max-width:780px;padding-top:6px}
+.pl-empty{padding-top:18px}
+.acc{border-bottom:1px solid var(--line)}
+.acc:last-child{border-bottom:0}
+.acc-h{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"t ch" "m ch";gap:3px 14px;align-items:center;
+  width:100%;text-align:left;background:none;border:0;padding:15px 2px;cursor:pointer;color:var(--ink)}
+.acc-t{grid-area:t;font-family:var(--serif);font-size:19px;line-height:1.25;overflow-wrap:anywhere}
+.acc-m{grid-area:m;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.acc-ch{grid-area:ch;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;
+  border:1px solid var(--line-strong);color:var(--ink-2)}
+.acc.open .acc-ch{rotate:180deg;background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.acc-b{display:grid;grid-template-rows:0fr}
+.acc.open .acc-b{grid-template-rows:1fr}
+.acc-in{overflow:hidden;min-height:0}
+.acc-in .svc{padding-inline:2px}
+.acc-in .svc:last-child{border-bottom:0;padding-bottom:20px}
+@media (hover:hover){.acc-h:hover .acc-ch{border-color:var(--ink);color:var(--ink)}}
+@media (prefers-reduced-motion: no-preference){
+  .acc-b{transition:grid-template-rows .45s var(--ease)}
+  .acc-in{opacity:0;transition:opacity .3s ease}
+  .acc.open .acc-in{opacity:1;transition-delay:.08s}
+  .acc-ch{transition:rotate .4s var(--ease),background-color .25s ease,color .25s ease,border-color .25s ease}
+}
+@media (prefers-reduced-motion: reduce){.acc-in{opacity:1}}

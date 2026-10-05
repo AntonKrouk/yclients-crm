@@ -56,6 +56,47 @@ show('Воронка: в окне правила → записаны → на �
     SUM(NOT booked AND (call_at IS NULL OR call_at < date('now', CASE rule WHEN 'rebook' THEN '-14 day' ELSE '-60 day' END))) AS left
   FROM r WHERE rule IS NOT NULL GROUP BY 1,2 ORDER BY 1,2`);
 
+// Почему «остаток» воронки не превращается в задачи: первая причина, по которой движок
+// (src/rules.js) пропускает человека. Дубль — приближённо: та же десятизначная хвостовка
+// телефона у другой карточки с большим числом визитов (движок группирует точнее, people.js).
+show('Остаток воронки: что его отсекает (первая причина)', `
+  WITH c AS (
+    SELECT c.id, c.branch, c.phone, c.visits_count AS vc, c.avg_interval_days AS iv,
+           julianday('now') - julianday(c.last_visit) AS since,
+           julianday('now') - julianday(c.predicted_next) AS overdue,
+           EXISTS(SELECT 1 FROM visits v WHERE v.client_id = c.id AND v.status = 'upcoming'
+                  AND v.date >= datetime('now')) AS booked,
+           (SELECT MAX(a.created_at) FROM task_actions a WHERE a.client_id = c.id) AS call_at
+    FROM clients c
+    WHERE COALESCE(c.do_not_call,0) = 0 AND COALESCE(c.free_client,0) = 0
+      AND c.last_visit IS NOT NULL AND c.avg_interval_days IS NOT NULL),
+  r AS (
+    SELECT *, CASE WHEN since > 2*iv AND since <= 180 AND vc >= 2 THEN 'reactivation'
+                   WHEN overdue BETWEEN 3 AND 60 AND vc >= 3 AND iv <= 180 THEN 'rebook' END AS rule
+    FROM c),
+  left_ AS (
+    SELECT * FROM r WHERE rule IS NOT NULL AND NOT booked
+      AND (call_at IS NULL OR call_at < date('now', CASE rule WHEN 'rebook' THEN '-14 day' ELSE '-60 day' END))),
+  why AS (
+    SELECT branch, rule, CASE
+      WHEN id IN (SELECT client_id FROM vip_clients UNION SELECT client_id FROM deposit_clients
+                  UNION SELECT client_id FROM alice_clients) THEN '1 ручной список (VIP/Депозит/Алиса)'
+      WHEN EXISTS(SELECT 1 FROM list_members m JOIN lists l ON l.id = m.list_id WHERE m.client_id = left_.id
+                  AND l.status = 'active' AND m.status IN ('pending','snoozed')) THEN '2 в активном списке обзвона'
+      WHEN length(replace(phone,'+','')) >= 10 AND EXISTS(SELECT 1 FROM clients d WHERE d.id <> left_.id
+                  AND substr(d.phone,-10) = substr(left_.phone,-10)
+                  AND (d.visits_count > left_.vc OR (d.visits_count = left_.vc AND d.id < left_.id))) THEN '3 дубль, задача в другом филиале'
+      WHEN EXISTS(SELECT 1 FROM tasks t WHERE t.client_id = left_.id AND t.status IN ('open','snoozed')) THEN '4 уже есть задача'
+      ELSE '5 свободен' END AS reason
+    FROM left_)
+  SELECT branch, rule, reason, COUNT(*) AS n FROM why GROUP BY 1,2,3 ORDER BY 1,2,3`);
+
+show('Активные списки обзвона: сколько людей ждут звонка (их движок в задачи не берёт)', `
+  SELECT l.id, l.name, l.assignee, substr(l.created_at,1,10) AS created,
+         SUM(m.status = 'pending') AS pending, SUM(m.status = 'snoozed') AS snoozed, SUM(m.status = 'done') AS done
+  FROM lists l JOIN list_members m ON m.list_id = l.id
+  WHERE l.status = 'active' GROUP BY l.id ORDER BY pending DESC`);
+
 show('Клиенты: всего / годятся в кандидаты (есть last_visit и ритм) / свежие', `
   SELECT branch, COUNT(*) AS clients,
          SUM(last_visit IS NOT NULL AND avg_interval_days IS NOT NULL) AS with_rhythm,
