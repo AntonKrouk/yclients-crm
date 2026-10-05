@@ -35,10 +35,20 @@ app.use(express.json({ limit: '20kb' }));
 
 // --- помощники ---------------------------------------------------------------
 
-// Телефон, адрес и часы работы филиалов — data/portal-salons.json, правится без выката:
-// {"387958": {"phone": "+7 (812) 000-00-00", "address": "…", "hours": "Ежедневно 10:00–22:00"}}
+// Телефон, адрес, часы и мессенджеры филиалов — data/portal-salons.json, правится без выката:
+// {"387958": {"phone": "+7 (812) 000-00-00", "address": "…", "hours": "Ежедневно 10:00–22:00",
+//             "whatsapp": "+7 999 000-00-00", "telegram": "prive7_salon"}}
+// whatsapp — номер (любая запись, берём цифры); telegram — имя (@prive7, t.me/prive7 или
+// просто prive7) либо номер телефона. Нет ни у одного салона — кнопки «Написать» нет.
 function salonInfo() {
   try { return JSON.parse(fs.readFileSync(SALONS_FILE, 'utf8')); } catch { return {}; }
+}
+const waNumber = (v) => { let d = String(v || '').replace(/\D/g, ''); if (d.length === 11 && d[0] === '8') d = '7' + d.slice(1); return d.length >= 10 ? d : ''; };
+function tgSlug(v) {
+  const s = String(v || '').trim().replace(/^(https?:\/\/)?(t\.me|telegram\.me)\//i, '').replace(/^@/, '');
+  if (/^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(s)) return s;
+  const d = waNumber(s);
+  return d ? '+' + d : ''; // t.me/+79991234567 — чат по номеру
 }
 function salons() {
   if (yc.isDemo()) return demo.SALONS;
@@ -46,6 +56,7 @@ function salons() {
   return yc.companies().map(c => ({
     id: Number(c.id), name: c.name || c.id,
     phone: info[c.id]?.phone || '', address: info[c.id]?.address || '', hours: info[c.id]?.hours || '',
+    whatsapp: waNumber(info[c.id]?.whatsapp), telegram: tgSlug(info[c.id]?.telegram),
   }));
 }
 const salonById = (id) => salons().find(s => String(s.id) === String(id));

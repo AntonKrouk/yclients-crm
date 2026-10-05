@@ -70,8 +70,8 @@
   Записи нет, в YClients не пишет — мастеров и прайс только читает (book_staff / book_services).
   Общая логика с CRM — `src/vitrina.js`; в CRM вкладка «Витрина» (`/api/vitrina/*`): скрыть
   мастера, имя, направление, «о мастере», фото, портфолио, проверка отзывов. Фото — файлами в
-  `data/portfolio/`, в ночной бэкап идут архивом по дню недели. Телефоны филиалов —
-  `data/portal-salons.json`. План и решения — `docs/portal-mvp.md`.
+  `data/portfolio/`, в ночной бэкап идут архивом по дню недели. Телефоны, WhatsApp и Telegram
+  филиалов — `data/portal-salons.json` (копия в репо — `deploy/portal-salons.json`). План и решения — `docs/portal-mvp.md`.
 - **Вид витрины**: основное оформление «Стекло» (тёмное, матовое стекло, медный акцент) —
   `data-look="glass"` на `<html>`, стили в конце `portal.css`; прежнее светлое «Бумага» —
   по ссылке `?look=paper` (запоминается в браузере). Превью без сервера — `npm run portal:preview`.

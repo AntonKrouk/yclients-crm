@@ -271,7 +271,10 @@
 
   const stars = (n) => `<span class="stars" aria-label="${n} из 5">${'★'.repeat(n)}<span>${'★'.repeat(5 - n)}</span></span>`;
   const STAR_SVG = '<svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true"><path d="M12 2.8l2.7 5.9 6.4.7-4.8 4.3 1.4 6.3L12 16.8 6.3 20l1.4-6.3L2.9 9.4l6.4-.7z" fill="currentColor"/></svg>';
-  const PHONE_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6.6 3.5h3l1.5 4-2 1.3a11 11 0 0 0 6.1 6.1l1.3-2 4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.6 5.7a2 2 0 0 1 2-2.2z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+  const CHAT_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4.5 5.5h15v10.5H10l-4.5 3.5V16h-1z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+  const WA_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4.4 19.6l1.1-3.9a8.1 8.1 0 1 1 3 2.9z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9.2 8.3c.3-.4.7-.4 1-.3l.9 2-.7.9c.6 1.1 1.5 2 2.6 2.6l.9-.7 2 .9c.1.3.1.7-.3 1-.9.7-2.3.6-3.8-.3a9.4 9.4 0 0 1-3-3c-.9-1.5-1-2.9-.3-3.8z" fill="currentColor"/></svg>';
+  const TG_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M21 4.6 3.6 11.3c-.7.3-.7 1.3 0 1.6l4.2 1.5 1.6 4.9c.2.6 1 .8 1.5.3l2.3-2.2 4.3 3.2c.6.4 1.4.1 1.6-.6l3-13.9c.2-.9-.6-1.6-1.1-1.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7.8 14.4 17.5 8l-7.4 7.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+  const PHONE_SVG ='<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6.6 3.5h3l1.5 4-2 1.3a11 11 0 0 0 6.1 6.1l1.3-2 4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.6 5.7a2 2 0 0 1 2-2.2z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>';
 
   const errBox = () => (S.error ? `<p class="err" role="alert">${esc(S.error)}</p>` : '');
   const skel = (n) => Array.from({ length: n }, () => '<div class="skel"></div>').join('');
@@ -405,6 +408,8 @@
   // --- телефоны салонов -----------------------------------------------------
   // Текущий салон — первым: клиент смотрит его мастеров и чаще всего звонит туда же.
   function openCall() {
+    $('sheetTitle').textContent = 'Позвонить в салон';
+    $('sheetSub').textContent = 'Администратор подберёт время и мастера.';
     const list = [...S.salons].sort((a, b) => (String(b.id) === String(S.salon?.id)) - (String(a.id) === String(S.salon?.id)));
     $('sheetList').innerHTML = list.map(s => {
       const current = String(s.id) === String(S.salon?.id);
@@ -424,6 +429,35 @@
   }
   const closeSheet = () => { $('sheet').hidden = true; };
 
+  // --- написать в мессенджер ------------------------------------------------
+  // WhatsApp открывается с готовым текстом («хочу записаться к мастеру …»); Telegram
+  // текст в личный чат подставлять не умеет — просто открывает переписку с салоном.
+  const canWrite = () => S.salons.some(s => s.whatsapp || s.telegram);
+  function waText(s) {
+    const m = S.screen !== 'home' ? S.master : null;
+    const here = m && (String(s.id) === String(S.salon?.id) || (m.also || []).includes(s.name));
+    return here ? `Здравствуйте! Хочу записаться к мастеру ${m.name}, салон Privé7 ${s.name}.`
+      : `Здравствуйте! Хочу записаться в Privé7, салон ${s.name}.`;
+  }
+  function openWrite() {
+    const list = [...S.salons].sort((a, b) => (String(b.id) === String(S.salon?.id)) - (String(a.id) === String(S.salon?.id)));
+    $('sheetTitle').textContent = 'Написать в салон';
+    $('sheetSub').textContent = 'Ответим в мессенджере: подберём время и мастера.';
+    $('sheetList').innerHTML = list.map(s => {
+      const current = String(s.id) === String(S.salon?.id);
+      const wa = s.whatsapp ? `<a class="btn btn-wa" href="https://wa.me/${esc(s.whatsapp)}?text=${encodeURIComponent(waText(s))}" target="_blank" rel="noopener">${WA_SVG}<span>WhatsApp</span></a>` : '';
+      const tg = s.telegram ? `<a class="btn btn-tg" href="https://t.me/${esc(s.telegram)}" target="_blank" rel="noopener">${TG_SVG}<span>Telegram</span></a>` : '';
+      return `<div class="salon${current ? ' current' : ''}">
+        <div class="salon-h"><span class="salon-n">${esc(s.name)}</span>${current ? '<span class="tag">Вы смотрите этот салон</span>' : ''}</div>
+        ${s.address ? `<div class="salon-a">${esc(s.address)}</div>` : ''}
+        ${wa || tg ? `<div class="salon-btns">${wa}${tg}</div>` : '<div class="salon-a">Мессенджеры уточняются — позвоните, пожалуйста</div>'}
+        ${s.hours ? `<div class="salon-a">${esc(s.hours)}</div>` : ''}
+      </div>`;
+    }).join('');
+    $('sheet').hidden = false;
+    $('sheetClose').focus();
+  }
+
   async function copyPhone(btn) {
     const v = btn.dataset.copy;
     try { await navigator.clipboard.writeText(v); btn.textContent = 'Скопировано'; }
@@ -439,20 +473,25 @@
 
   // --- отрисовка ------------------------------------------------------------
   function bar() {
-    const b = $('bar'), sum = $('barSum'), btn = $('barBtn');
-    let label = 'Позвонить в салон', text = '', enabled = true, call = true;
+    const b = $('bar'), sum = $('barSum'), btn = $('barBtn'), write = canWrite();
+    // с кнопкой «Написать» рядом надпись короче — две кнопки должны влезть на телефоне
+    let label = write ? 'Позвонить' : 'Позвонить в салон', text = '', enabled = true, call = true;
+    const how = write ? 'звонком или в мессенджере' : 'по телефону салона';
     if (S.screen === 'review') {
       call = false; label = S.busy ? 'Отправляем…' : 'Отправить отзыв'; enabled = Boolean(S.rform.rating) && !S.busy;
       text = S.rform.rating ? `<b class="gold">${'★'.repeat(S.rform.rating)}</b><span>${RATING_WORDS[S.rform.rating]}</span>` : '<span>Поставьте оценку</span>';
     } else if (S.screen === 'master' && S.master) {
-      text = `<b>Записаться к мастеру</b><span>${esc(S.master.name)}, по телефону салона</span>`;
+      text = `<b>Записаться к мастеру</b><span>${esc(S.master.name)}, ${how}</span>`;
     } else {
-      text = `<b>Записаться</b><span>по телефону салона</span>`;
+      text = `<b>Записаться</b><span>${how}</span>`;
     }
     b.hidden = !S.salon;
+    b.classList.toggle('two', call && write);
     sum.innerHTML = text;
     btn.innerHTML = call ? `${PHONE_SVG}<span>${label}</span>` : esc(label);
     btn.disabled = !enabled;
+    $('barWrite').hidden = !(call && write);
+    $('barWrite').innerHTML = `${CHAT_SVG}<span>Написать</span>`;
   }
 
   // «Часы» появления (см. «движение» в portal.css): когда сменился экран (--t0), пришли
@@ -537,6 +576,7 @@
     if (el.id === 'lbNext') return stepWork(1);
     if (el.id === 'sheetClose') return closeSheet();
     if (el.id === 'barBtn') return S.screen === 'review' ? submitReview() : openCall();
+    if (el.id === 'barWrite') return openWrite();
   });
   $('lb').addEventListener('click', (e) => { if (e.target.id === 'lb') $('lb').hidden = true; });
   $('sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') closeSheet(); });

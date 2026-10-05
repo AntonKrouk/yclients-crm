@@ -518,3 +518,14 @@ main[data-screen="review"],main[data-screen="reviewDone"]{max-width:600px}
   .lb-nav{top:auto;bottom:calc(18px + env(safe-area-inset-bottom,0px));translate:none}
   .lb-prev{left:20px} .lb-next{right:20px}
 }
+
+/* ── «Написать»: вторая кнопка в нижней панели и кнопки мессенджеров ────────────
+   На узком телефоне подпись слева убираем — две кнопки делят ширину поровну.
+   WhatsApp и Telegram — в своих фирменных цветах: их узнают с первого взгляда. */
+.btn-soft{background:var(--sunk);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line-strong)}
+@media (max-width:480px){
+  .bar.two .bar-sum{display:none}
+  .bar.two .btn{flex:1;padding-inline:12px}
+}
+.salon .btn-wa,.salon:not(.current) .btn-wa{background:#25D366;color:#08321A}
+.salon .btn-tg,.salon:not(.current) .btn-tg{background:#2AABEE;color:#FFFFFF}

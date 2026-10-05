@@ -9,8 +9,10 @@
 (function (root) {
   // Телефоны — заглушки: настоящие номера живут в data/portal-salons.json на сервере
   const SALONS = [
-    { id: 387958, name: 'Басков', phone: '+7 (812) 000-00-01', address: '', hours: 'Ежедневно 10:00–22:00' },
-    { id: 898298, name: 'Мытнинская', phone: '+7 (812) 000-00-02', address: '', hours: 'Ежедневно 10:00–22:00' },
+    { id: 387958, name: 'Басков', phone: '+7 (812) 000-00-01', address: '', hours: 'Ежедневно 10:00–22:00',
+      whatsapp: '79000000001', telegram: 'prive7_demo_baskov' },
+    { id: 898298, name: 'Мытнинская', phone: '+7 (812) 000-00-02', address: '', hours: 'Ежедневно 10:00–22:00',
+      whatsapp: '79000000002', telegram: 'prive7_demo_mytninskaya' },
   ];
 
   const SERVICES = [
