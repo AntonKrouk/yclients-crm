@@ -50,11 +50,17 @@ img{max-width:100%}
   border-bottom:1px solid var(--line);display:flex;align-items:center;gap:12px;
   padding:12px max(16px, calc((100% - 600px) / 2))}
 .back{border:0;background:none;padding:4px;margin-left:-6px;cursor:pointer;display:flex;color:var(--ink)}
-.mark{font-family:var(--serif);letter-spacing:.3em;font-size:15px;white-space:nowrap}
-.mark span{color:var(--accent-ink)}
-.salons{margin-left:auto;display:flex;border:1px solid var(--line-strong);border-radius:999px;padding:2px;gap:2px}
-.salons button{border:0;background:none;border-radius:999px;padding:5px 12px;font-size:13px;cursor:pointer;color:var(--ink-2)}
+/* Логотип — тот же файл, что у CRM (белый на прозрачном), но маской: цвет берётся
+   из темы, на светлой бумаге он тёмный, в тёмной теме светлый. 196×56 → 3,5 : 1. */
+.mark{display:block;flex:0 0 auto;height:24px;aspect-ratio:3.5;background:var(--ink);
+  -webkit-mask:url(/prive-logo.png) left center/contain no-repeat;mask:url(/prive-logo.png) left center/contain no-repeat}
+.salons{margin-left:auto;display:flex;border:1px solid var(--line-strong);border-radius:999px;padding:2px;gap:2px;position:relative}
+.salons button{border:0;background:none;border-radius:999px;padding:5px 12px;font-size:13px;cursor:pointer;color:var(--ink-2);position:relative;z-index:1}
 .salons button[aria-selected="true"]{background:var(--ink);color:var(--paper)}
+/* выбранный салон — «бегунок» под кнопками (ставит portal.js); пока не поставлен — фон у кнопки */
+.salons::before{content:'';position:absolute;top:2px;bottom:2px;left:0;width:var(--iw,0px);
+  transform:translateX(var(--ix,0px));border-radius:999px;background:var(--ink)}
+.salons.has-ind button[aria-selected="true"]{background:none}
 
 .demo-note{margin:0;padding:8px 16px;background:var(--accent-soft);color:var(--accent-ink);font-size:12.5px;text-align:center}
 
@@ -69,6 +75,10 @@ main{max-width:600px;margin:0 auto;padding-inline:16px}
 .tabs button{border:0;background:none;padding:10px 0;cursor:pointer;color:var(--muted);
   text-transform:uppercase;letter-spacing:.14em;font-size:11px;font-weight:600;border-bottom:1.5px solid transparent;margin-bottom:-1px}
 .tabs button[aria-selected="true"]{color:var(--ink);border-color:var(--ink)}
+.tabs{position:relative}
+.tabs::before{content:'';position:absolute;left:0;bottom:-1px;height:1.5px;width:var(--iw,0px);
+  transform:translateX(var(--ix,0px));background:var(--ink)}
+.tabs.has-ind button[aria-selected="true"]{border-color:transparent}
 
 /* ── мастера ─────────────────────────────────────────────────────────────── */
 .m-name{font-family:var(--serif);font-size:20px;line-height:1.2}
@@ -266,3 +276,77 @@ main[data-screen="review"],main[data-screen="reviewDone"]{max-width:600px}
   .mp-side .hero-t{order:-1}  /* имя над фото: на невысоком экране ноутбука иначе уходит за край */
   .mp-main>.sec:first-child{padding-top:20px}
 }
+
+/* ── движение ─────────────────────────────────────────────────────────────────
+   Всё — только при prefers-reduced-motion: no-preference: кого укачивает, тот видит
+   спокойный сайт без анимаций. Появление экрана (.rv*) ведёт portal.js: --t0/--t1/--t2 —
+   сколько миллисекунд назад показан экран / пришли данные / выбран фильтр. Экран
+   перерисовывается целиком (пришли цены, отзывы), и без этой поправки анимации
+   начинались бы заново; с ней — продолжаются с того же места или уже доиграны. */
+:root{--ease:cubic-bezier(.2,.7,.2,1)}
+@media (prefers-reduced-motion: no-preference){
+  .rv{--t:var(--t0,0ms)} .rv1{--t:var(--t1,0ms)} .rv2{--t:var(--t2,0ms)}
+  .rv,.rv1,.rv2{animation:rise .7s var(--ease) both;animation-delay:calc(var(--d,0ms) + var(--t))}
+  /* карточки ниже первого экрана проявляются по мере прокрутки — где браузер умеет */
+  @supports (animation-timeline: view()){
+    .card.late{animation:rise linear both;animation-timeline:view();animation-range:entry 0% entry 80%;animation-delay:0s}
+  }
+  /* фото мастера: шторка снизу вверх и лёгкий «наезд» камеры */
+  .rv-ph{animation:unveil 1s var(--ease) both;animation-delay:var(--t0,0ms)}
+  .rv-ph>*{animation:settle 1.6s var(--ease) both;animation-delay:var(--t0,0ms)}
+  .rv-tile{animation:bloom .6s var(--ease) both;animation-delay:calc(var(--d,0ms) + var(--t0,0ms))}
+  .in{animation:fade .5s ease-out both}
+
+  /* логотип при загрузке — проявляется слева направо; в прокрутке шапка чуть плотнее */
+  .mark{animation:wipe 1.2s var(--ease) .15s backwards;transform-origin:left center;transition:scale .4s var(--ease)}
+  .top{transition:box-shadow .4s ease,background-color .4s ease}
+  .top.scrolled .mark{scale:.9}
+
+  .salons.ind-anim::before,.tabs.ind-anim::before{transition:transform .45s var(--ease),width .45s var(--ease)}
+  .salons button{transition:color .3s ease}
+
+  .card .card-ph{transition:box-shadow .5s var(--ease),scale .5s var(--ease)}
+  .card:hover .card-ph{box-shadow:0 22px 34px -26px rgba(20,16,12,.55)}
+  .card:active .card-ph{scale:.98}
+  .card-ph img{transition:transform .8s var(--ease)}
+  .card:hover .card-ph img{transform:scale(1.05)}
+  .tile{transition:scale .3s var(--ease)}
+  .tile:active{scale:.96}
+
+  .lb:not([hidden]){animation:fade .3s ease-out both}
+  .lb:not([hidden]) .lb-fig{animation:bloom .5s var(--ease) both}
+  .sheet:not([hidden]){animation:fade .25s ease-out both}
+  .sheet-in{animation:up .45s var(--ease) both}
+  .bar:not([hidden]){animation:slide-up .7s var(--ease) .35s both}
+  .btn{transition:scale .2s var(--ease),filter .2s}
+  .btn:active:not(:disabled){scale:.97}
+
+  .star[data-on] svg{animation:pop .45s var(--ease) both;animation-delay:var(--d,0ms)}
+  .done .ok{animation:pop .6s var(--ease) both}
+  .done .ok path{stroke-dasharray:1;animation:draw .55s ease-out .3s both}
+}
+@keyframes rise{from{opacity:0;transform:translateY(18px)}}
+@keyframes fade{from{opacity:0}}
+@keyframes bloom{from{opacity:0;transform:scale(.94)}}
+@keyframes unveil{from{clip-path:inset(100% 0 0 0)}}
+@keyframes settle{from{transform:scale(1.14)}}
+@keyframes wipe{from{clip-path:inset(0 100% 0 0);opacity:.2}}
+@keyframes slide-up{from{transform:translateY(100%)}}
+@keyframes pop{0%{transform:scale(.55);opacity:0}55%{transform:scale(1.15);opacity:1}}
+@keyframes draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+@keyframes up{from{transform:translateY(40px);opacity:.6}}
+
+/* Шапка в прокрутке: полупрозрачная, с размытием того, что под ней */
+.top.scrolled{box-shadow:0 12px 28px -26px rgba(20,16,12,.6)}
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))){
+  .top.scrolled{background:color-mix(in srgb,var(--paper) 78%,transparent);
+    -webkit-backdrop-filter:blur(14px) saturate(1.3);backdrop-filter:blur(14px) saturate(1.3)}
+}
+
+/* Переход «карточка → страница мастера»: фото перетекает из списка в шапку и обратно
+   (View Transitions; в браузерах без них — обычная смена экрана) */
+.top{view-transition-name:top}
+.bar{view-transition-name:bar}
+::view-transition-group(mph){animation-duration:.55s;animation-timing-function:var(--ease)}
+::view-transition-old(root),::view-transition-new(root){animation-duration:.35s}
+::view-transition-old(mph),::view-transition-new(mph){height:100%}

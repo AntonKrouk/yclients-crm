@@ -47,7 +47,7 @@ function page(title, body) {
 <link rel="stylesheet" href="/portal.css">
 </head>
 <body>
-<header class="top"><a class="mark" href="/">PRIVÉ<span>7</span></a></header>
+<header class="top"><a class="mark" href="/" aria-label="Privé7 — к мастерам"></a></header>
 <main class="legal">
 <span class="eyebrow">Редакция от ${DATE}</span>
 <h1>${esc(title)}</h1>

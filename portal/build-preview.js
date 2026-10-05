@@ -12,9 +12,13 @@ const html = read('public/index.html');
 const body = html.slice(html.indexOf('<!--app-->') + 10, html.indexOf('<!--/app-->'));
 const out = process.argv[2] || path.join(dir, 'preview.html');
 
+// логотип в стилях — ссылкой на файл; в однофайловом превью кладём его внутрь
+const logo = 'data:image/png;base64,' + fs.readFileSync(path.join(dir, 'public/prive-logo.png')).toString('base64');
+const css = read('public/portal.css').replace(/\/prive-logo\.png/g, logo);
+
 fs.writeFileSync(out, [
   '<title>Privé7 Мастера</title>',
-  `<style>\n${read('public/portal.css')}</style>`,
+  `<style>\n${css}</style>`,
   body,
   `<script>\n${read('demo.js')}</script>`,
   '<script>window.PORTAL_API = async (m, p, q, b) => PortalDemo.handle(m, p, q, b);</script>',

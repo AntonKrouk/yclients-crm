@@ -43,19 +43,49 @@
   };
   const RATING_WORDS = ['', 'Очень плохо', 'Плохо', 'Нормально', 'Хорошо', 'Отлично'];
 
+  // --- движение ---------------------------------------------------------------
+  // Кого укачивает (настройка «уменьшить движение»), тому без анимаций — и здесь, и в CSS
+  const RM = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+  const calm = () => Boolean(RM && RM.matches);
+  const dl = (ms) => ` style="--d:${ms}ms"`;
+
+  // Переход между экранами через View Transitions: фото мастера перетекает из карточки
+  // в шапку его страницы и обратно. update() меняет экран и может вернуть элемент,
+  // в который «приземляется» фото. Где браузер не умеет — просто смена экрана.
+  function morph(update, fromEl) {
+    if (!document.startViewTransition || calm()) { update(); return null; }
+    if (fromEl) fromEl.style.viewTransitionName = 'mph';
+    let toEl = null;
+    const vt = document.startViewTransition(() => {
+      toEl = update();
+      if (toEl) toEl.style.viewTransitionName = 'mph';
+    });
+    // имя должно быть у одного элемента на странице — снимаем, иначе следующий переход сломается
+    vt.finished.catch(() => {}).then(() => { if (toEl) toEl.style.viewTransitionName = ''; });
+    return vt;
+  }
+
   function go(screen) {
+    if (S.screen === 'home') S.homeY = window.scrollY; // вернёмся к той же карточке
     S.stack.push(S.screen);
     S.screen = screen; S.error = '';
     try { history.pushState({ s: screen }, ''); } catch { /* превью */ }
     render(); window.scrollTo(0, 0);
   }
-  function back() {
+  // animate=false — браузер уже сам показал анимацию «назад» (свайп в Safari)
+  function back(animate = true) {
     if (!S.stack.length) return;
-    S.screen = S.stack.pop(); S.error = '';
-    if (S.screen === 'home') S.master = null;
-    render(); window.scrollTo(0, 0);
+    const from = S.master?.id;
+    const update = () => {
+      S.screen = S.stack.pop(); S.error = '';
+      if (S.screen === 'home') S.master = null;
+      render();
+      window.scrollTo(0, S.screen === 'home' ? S.homeY || 0 : 0);
+      return S.screen === 'home' && from != null ? app.querySelector(`[data-master="${from}"] .card-ph`) : null;
+    };
+    if (animate) morph(update); else update();
   }
-  window.addEventListener('popstate', () => back());
+  window.addEventListener('popstate', (e) => back(!e.hasUAVisualTransition));
 
   // --- загрузка -------------------------------------------------------------
   async function loadSalon(id) {
@@ -73,11 +103,14 @@
     render();
   }
 
-  async function openMaster(id) {
+  // fromEl — фото в карточке, из которого «вырастает» шапка страницы мастера
+  async function openMaster(id, fromEl) {
     S.master = S.staff.find(m => String(m.id) === String(id));
     if (!S.master) return;
     S.masterServices = []; S.reviews = null;
-    go('master');
+    // фото прилетит из карточки — своя анимация появления ему не нужна
+    S.heroAnim = !(fromEl && document.startViewTransition && !calm());
+    const vt = morph(() => go('master'), fromEl);
     try {
       const [svc, rev] = await Promise.all([
         call('GET', '/p/api/services', { salon: S.salon.id, staff: S.master.id }),
@@ -85,6 +118,8 @@
       ]);
       S.masterServices = svc; S.reviews = rev;
     } catch (e) { S.error = e.message; S.reviews = S.reviews || []; }
+    // не перерисовываем страницу посреди перелёта фото — дождёмся его конца
+    if (vt) await vt.finished.catch(() => {});
     render();
   }
 
@@ -121,14 +156,16 @@
   function tile(w, i) {
     const inner = w.src ? `<img src="${esc(w.src)}" alt="${esc(w.caption)}" loading="lazy">` : '';
     const bg = w.tone ? ` style="background:linear-gradient(145deg,${esc(w.tone[0])},${esc(w.tone[1])})"` : '';
-    return `<button class="tile" type="button" data-work="${i}" aria-label="${esc(w.caption || 'Работа')}"${bg}>${inner}</button>`;
+    return `<button class="tile rv-tile" type="button"${dl(320 + Math.min(i, 11) * 45)} data-work="${i}" aria-label="${esc(w.caption || 'Работа')}"${bg}>${inner}</button>`;
   }
   const svcRow = (s) => `
     <div class="svc">
       <span class="svc-t">${esc(s.title)}${s.duration ? `<small>${dur(s.duration)}</small>` : ''}</span>
       <span class="price">${s.price_max > s.price_min ? 'от ' : ''}${rub(s.price_min)}</span>
     </div>`;
-  function svcGroups(list, hideSingle) {
+  // fadeIn — цены пришли вторым запросом (страница мастера): просто проявляются;
+  // иначе (вкладка «Цены») — встают лесенкой вместе с экраном
+  function svcGroups(list, hideSingle, fadeIn) {
     const cats = [];
     for (const s of list) {
       let c = cats.find(x => x.name === s.category);
@@ -137,7 +174,7 @@
     }
     // у мастера одного направления заголовок категории повторял бы шапку — прячем
     const head = !(hideSingle && cats.length === 1);
-    return cats.map(c => `<section class="cat">${head ? `<h2 class="eyebrow">${esc(c.name)}</h2>` : ''}${c.items.map(svcRow).join('')}</section>`).join('');
+    return cats.map((c, i) => `<section class="cat ${fadeIn ? 'in' : 'rv1'}"${fadeIn ? '' : dl(160 + Math.min(i, 8) * 60)}>${head ? `<h2 class="eyebrow">${esc(c.name)}</h2>` : ''}${c.items.map(svcRow).join('')}</section>`).join('');
   }
 
   // Направление мастера: админ может выбрать его в CRM, иначе — по должности (position)
@@ -175,8 +212,9 @@
   const photo = (m, cls) => `<span class="${cls}"${!m.avatar && m.tone ? ` style="background:linear-gradient(160deg,${esc(m.tone[0])},${esc(m.tone[1])})"` : ''}>${m.avatar
     ? `<img src="${esc(m.avatar)}" alt="" loading="lazy">`
     : `<span class="mono">${initials(m.name)}</span>`}</span>`;
-  const masterCard = (m) => `
-          <button class="card" type="button" data-master="${m.id}">
+  // Первые десять карточек встают лесенкой, остальные — по мере прокрутки (.late)
+  const masterCard = (m, i) => `
+          <button class="card rv2${i >= 10 ? ' late' : ''}" type="button"${dl(140 + Math.min(i, 10) * 60)} data-master="${m.id}">
             ${photo(m, 'card-ph')}
             <span class="card-b">
               <span class="m-name">${esc(m.name)}</span>
@@ -194,7 +232,7 @@
 
   // --- экраны ---------------------------------------------------------------
   function home() {
-    const tabs = `<div class="tabs" role="tablist">
+    const tabs = `<div class="tabs rv" role="tablist"${dl(180)}>
       <button type="button" role="tab" data-tab="staff" aria-selected="${S.tab === 'staff'}">Мастера</button>
       <button type="button" role="tab" data-tab="services" aria-selected="${S.tab === 'services'}">Цены</button></div>`;
     const loading = !S.staff.length && !S.error;
@@ -204,18 +242,18 @@
     else {
       const groups = grouped(S.staff);
       if (S.group && !groups.some(([g]) => g === S.group)) S.group = '';
-      const chips = groups.length > 1 ? `<div class="chips" role="group" aria-label="Направление">
+      const chips = groups.length > 1 ? `<div class="chips rv1"${dl(60)} role="group" aria-label="Направление">
         <button class="chip" type="button" data-group="" aria-pressed="${!S.group}">Все</button>
         ${groups.map(([g, ms]) => `<button class="chip" type="button" data-group="${esc(g)}" aria-pressed="${S.group === g}">${esc(g)} <span>${ms.length}</span></button>`).join('')}
       </div>` : '';
       // Одна сплошная сетка: разделы по одному мастеру оставляли бы полстроки пустыми.
       // Направление над именем не подписываем (Антон, 04.10.2026): специализация и так под именем.
       const shown = S.group ? groups.filter(([g]) => g === S.group) : groups;
-      body = chips + `<div class="cards">${shown.flatMap(([, ms]) => ms.map(m => masterCard(m))).join('')}</div>`;
+      body = chips + `<div class="cards">${shown.flatMap(([, ms]) => ms).map((m, i) => masterCard(m, i)).join('')}</div>`;
     }
-    return `<section class="intro"><span class="eyebrow">Privé7 · ${esc(S.salon?.name || '')}</span>
-      <h1>${S.tab === 'staff' ? 'Наши мастера' : 'Услуги и цены'}</h1>
-      <p>${S.tab === 'staff' ? 'Посмотрите работы и отзывы. Записаться можно по телефону салона.' : 'Точную стоимость мастер назовёт на консультации, она зависит от длины, объёма и сложности.'}</p></section>
+    return `<section class="intro"><span class="eyebrow rv">Privé7 · ${esc(S.salon?.name || '')}</span>
+      <h1 class="rv"${dl(60)}>${S.tab === 'staff' ? 'Наши мастера' : 'Услуги и цены'}</h1>
+      <p class="rv"${dl(120)}>${S.tab === 'staff' ? 'Посмотрите работы и отзывы. Записаться можно по телефону салона.' : 'Точную стоимость мастер назовёт на консультации, она зависит от длины, объёма и сложности.'}</p></section>
       ${tabs}${errBox()}${body}`;
   }
 
@@ -227,17 +265,17 @@
     const m = S.master;
     // .mp-side / .mp-main: на компьютере — две колонки (portal.css), на телефоне — одна
     return `<div class="mp"><div class="mp-side">
-      <section class="hero">${photo(m, 'hero-ph')}<div class="hero-t"><h1>${esc(m.name)}</h1><div class="m-spec">${esc(m.specialization)}</div>${alsoLine(m)}${rating(m)}</div></section>
-      ${m.bio ? `<section class="sec bio"><p>${esc(m.bio).replace(/\n+/g, '</p><p>')}</p></section>` : ''}
+      <section class="hero">${photo(m, 'hero-ph' + (S.heroAnim ? ' rv-ph' : ''))}<div class="hero-t rv"${dl(S.heroAnim ? 260 : 160)}><h1>${esc(m.name)}</h1><div class="m-spec">${esc(m.specialization)}</div>${alsoLine(m)}${rating(m)}</div></section>
+      ${m.bio ? `<section class="sec bio rv"${dl(320)}><p>${esc(m.bio).replace(/\n+/g, '</p><p>')}</p></section>` : ''}
       </div><div class="mp-main">
-      <section class="sec"><span class="eyebrow">Работы</span>
+      <section class="sec rv"${dl(240)}><span class="eyebrow">Работы</span>
         ${m.works?.length ? `<div class="works">${m.works.map((w, i) => tile(w, i)).join('')}</div>` : '<p class="empty">Мастер ещё не добавил работы.</p>'}</section>
-      <section class="sec"><span class="eyebrow">Услуги и цены</span>${errBox()}
-        ${S.masterServices.length ? svcGroups(S.masterServices, true) : skel(3)}</section>
-      <section class="sec" id="reviews"><div class="sec-h"><span class="eyebrow">Отзывы</span>
+      <section class="sec rv"${dl(300)}><span class="eyebrow">Услуги и цены</span>${errBox()}
+        ${S.masterServices.length ? svcGroups(S.masterServices, true, true) : skel(3)}</section>
+      <section class="sec rv"${dl(360)} id="reviews"><div class="sec-h"><span class="eyebrow">Отзывы</span>
         <button class="link" type="button" data-act="review">Оставить отзыв</button></div>
         ${S.reviews === null ? skel(2) : S.reviews.length ? S.reviews.map(r => `
-          <article class="rev"><div class="rev-h">${stars(r.rating)}<span class="rev-d">${shortDate(r.date)}</span></div>
+          <article class="rev in"><div class="rev-h">${stars(r.rating)}<span class="rev-d">${shortDate(r.date)}</span></div>
             ${r.text ? `<p>${esc(r.text)}</p>` : ''}<span class="rev-a">${esc(r.author)}</span></article>`).join('')
         : '<p class="empty">Отзывов пока нет. Ваш может стать первым.</p>'}</section>
       </div></div>`;
@@ -245,14 +283,14 @@
 
   function review() {
     const f = S.rform, m = S.master;
-    return `<section class="intro"><span class="eyebrow">Отзыв о мастере · ${esc(m.name)}</span><h1>Как прошёл визит?</h1>
-      <p>Отзыв прочитают мастер и руководство салона. Регистрация не нужна.</p></section>
-      <div class="picker" role="radiogroup" aria-label="Оценка">
-        ${[1, 2, 3, 4, 5].map(n => `<button type="button" class="star" role="radio" data-star="${n}" aria-checked="${f.rating === n}"
+    return `<section class="intro"><span class="eyebrow rv">Отзыв о мастере · ${esc(m.name)}</span><h1 class="rv"${dl(60)}>Как прошёл визит?</h1>
+      <p class="rv"${dl(120)}>Отзыв прочитают мастер и руководство салона. Регистрация не нужна.</p></section>
+      <div class="picker rv"${dl(180)} role="radiogroup" aria-label="Оценка">
+        ${[1, 2, 3, 4, 5].map(n => `<button type="button" class="star" role="radio" data-star="${n}" aria-checked="${f.rating === n}"${dl((n - 1) * 45)}
           aria-label="${n} из 5 — ${RATING_WORDS[n]}"${n <= f.rating ? ' data-on' : ''}>${STAR_SVG}</button>`).join('')}
       </div>
       <p class="picker-l">${f.rating ? RATING_WORDS[f.rating] : 'Нажмите на звезду'}</p>
-      <form class="form" id="rform" novalidate>
+      <form class="form rv"${dl(240)} id="rform" novalidate>
         <div class="field"><label for="rtext">${f.rating && f.rating <= 3 ? 'Что пошло не так? Мы разберёмся' : 'Что понравилось, что стоит улучшить'}</label>
           <textarea id="rtext" maxlength="1000" placeholder="Например: аккуратная работа, помогла выбрать оттенок">${esc(f.text)}</textarea></div>
         <div class="field"><label for="rauthor">Как подписать отзыв</label>
@@ -279,12 +317,12 @@
     else if (S.rform.publish) text = 'Опубликуем его после проверки, обычно в течение дня. Мастер обязательно прочитает.';
     else text = 'Отзыв получит только салон, на сайте его не будет. Мастер обязательно прочитает.';
     return `<section class="done"><div class="ok${low ? ' ok-warm' : ''}"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">${low
-      ? '<path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="1.6"/>'
-      : '<path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2"/>'}</svg></div>
-      <h1>${low ? 'Спасибо, что рассказали' : 'Спасибо за отзыв'}</h1>
-      ${stars(S.rform.rating)}
-      <p>${text}</p>
-      <button class="btn-ghost" type="button" id="toMaster">Вернуться к мастеру</button></section>`;
+      ? '<path pathLength="1" d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="1.6"/>'
+      : '<path pathLength="1" d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2"/>'}</svg></div>
+      <h1 class="rv"${dl(200)}>${low ? 'Спасибо, что рассказали' : 'Спасибо за отзыв'}</h1>
+      <div class="rv"${dl(260)}>${stars(S.rform.rating)}</div>
+      <p class="rv"${dl(320)}>${text}</p>
+      <button class="btn-ghost rv"${dl(380)} type="button" id="toMaster">Вернуться к мастеру</button></section>`;
   }
 
   // --- телефоны салонов -----------------------------------------------------
@@ -340,19 +378,59 @@
     btn.disabled = !enabled;
   }
 
+  // «Часы» появления (см. «движение» в portal.css): когда сменился экран (--t0), пришли
+  // данные (--t1), выбран фильтр (--t2). Ключ тот же — часы идут дальше, и анимации
+  // перерисованного экрана продолжаются с того же места, а не начинаются заново.
+  const CLOCKS = {};
+  function clock(name, key) {
+    const c = CLOCKS[name] || (CLOCKS[name] = {});
+    if (c.key !== key) { c.key = key; c.at = performance.now(); }
+    app.style.setProperty('--' + name, Math.round(c.at - performance.now()) + 'ms');
+  }
+
+  // Бегунок под выбранной кнопкой (салон, вкладка): едет со старого места на новое
+  const IND = {};
+  function indicator(box, name, animate = true) {
+    const on = box && box.offsetParent && box.querySelector('[aria-selected="true"]');
+    if (!on) return;
+    const now = { x: on.offsetLeft, w: on.offsetWidth }, was = IND[name];
+    IND[name] = now;
+    const set = (p) => { box.style.setProperty('--ix', p.x + 'px'); box.style.setProperty('--iw', p.w + 'px'); };
+    box.classList.add('has-ind');
+    if (!animate || !was || (was.x === now.x && was.w === now.w)) return set(now);
+    box.classList.remove('ind-anim'); set(was);
+    void box.offsetWidth; // зафиксировать старое место, чтобы был переход
+    box.classList.add('ind-anim'); set(now);
+  }
+
   function render() {
     $('salons').innerHTML = S.salons.map(s =>
       `<button type="button" role="tab" data-salon="${s.id}" aria-selected="${String(S.salon?.id) === String(s.id)}">${esc(s.name)}</button>`).join('');
     $('salons').hidden = S.screen !== 'home';
     $('back').hidden = !S.stack.length;
+    const screen = [S.screen, S.salon?.id, S.tab, S.master?.id].join('|');
+    clock('t0', screen);
+    clock('t1', screen + '|' + (S.staff.length > 0));
+    clock('t2', screen + '|' + (S.staff.length > 0) + '|' + S.group);
     const screens = { home, master, review, reviewDone };
     app.innerHTML = S.salon ? screens[S.screen]() : `<section class="intro">${errBox() || skel(3)}</section>`;
     app.dataset.screen = S.screen; // ширина колонки зависит от экрана: форма отзыва уже, список мастеров шире
     // полоса фильтров перерисовывается с начала — возвращаем выбранный фильтр в поле зрения
     const on = app.querySelector('.chip[aria-pressed="true"]');
     if (on && on.parentElement) on.parentElement.scrollLeft = Math.max(0, on.offsetLeft - on.parentElement.offsetLeft - 16);
+    indicator($('salons'), 'salons');
+    indicator(app.querySelector('.tabs'), 'tabs');
     bar();
   }
+
+  // Шапка в прокрутке — плотнее, с тенью и размытием (portal.css: .top.scrolled)
+  const topBar = document.querySelector('.top');
+  const onScroll = () => topBar.classList.toggle('scrolled', window.scrollY > 8);
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', () => {
+    indicator($('salons'), 'salons', false);
+    indicator(app.querySelector('.tabs'), 'tabs', false);
+  });
 
   // --- события --------------------------------------------------------------
   document.addEventListener('click', (e) => {
@@ -363,7 +441,7 @@
     if (d.salon) return loadSalon(d.salon);
     if (d.tab) { S.tab = d.tab; return render(); }
     if ('group' in d) { S.group = d.group; return render(); }
-    if (d.master) return openMaster(d.master);
+    if (d.master) return openMaster(d.master, el.querySelector('.card-ph'));
     if (d.work) return openWork(Number(d.work));
     if (d.star) { S.rform.rating = Number(d.star); S.error = ''; return render(); }
     if (d.act === 'review') return openReview();
