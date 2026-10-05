@@ -31,6 +31,31 @@ show('Свежесть визитов по филиалам (не встал л�
          SUM(date >= date('now','+1 day')) AS future
   FROM visits GROUP BY 1,2 ORDER BY 1`);
 
+// Воронка обычного обзвона — те же пороги, что в src/rules.js (пора записаться: просрочка
+// 3–60 дн., ≥3 визитов, ритм ≤180; реактивация: не был >2× ритма, но ≤180 дн., ≥2 визитов).
+// ПРИБЛИЖЁННО: считается по карточкам, а движок — по людям (дубли в двух филиалах, звонок
+// из соседнего филиала, ручные списки). Показывает, где кончаются кандидаты.
+show('Воронка: в окне правила → записаны → на паузе после звонка → остаток', `
+  WITH c AS (
+    SELECT c.branch, c.visits_count AS vc, c.avg_interval_days AS iv,
+           julianday('now') - julianday(c.last_visit) AS since,
+           julianday('now') - julianday(c.predicted_next) AS overdue,
+           EXISTS(SELECT 1 FROM visits v WHERE v.client_id = c.id AND v.status = 'upcoming'
+                  AND v.date >= datetime('now')) AS booked,
+           (SELECT MAX(a.created_at) FROM task_actions a WHERE a.client_id = c.id) AS call_at
+    FROM clients c
+    WHERE COALESCE(c.do_not_call,0) = 0 AND COALESCE(c.free_client,0) = 0
+      AND c.last_visit IS NOT NULL AND c.avg_interval_days IS NOT NULL),
+  r AS (
+    SELECT branch, booked, call_at,
+      CASE WHEN since > 2*iv AND since <= 180 AND vc >= 2 THEN 'reactivation'
+           WHEN overdue BETWEEN 3 AND 60 AND vc >= 3 AND iv <= 180 THEN 'rebook' END AS rule
+    FROM c)
+  SELECT branch, rule, COUNT(*) AS in_window, SUM(booked) AS booked,
+    SUM(NOT booked AND call_at IS NOT NULL AND call_at >= date('now', CASE rule WHEN 'rebook' THEN '-14 day' ELSE '-60 day' END)) AS paused,
+    SUM(NOT booked AND (call_at IS NULL OR call_at < date('now', CASE rule WHEN 'rebook' THEN '-14 day' ELSE '-60 day' END))) AS left
+  FROM r WHERE rule IS NOT NULL GROUP BY 1,2 ORDER BY 1,2`);
+
 show('Клиенты: всего / годятся в кандидаты (есть last_visit и ритм) / свежие', `
   SELECT branch, COUNT(*) AS clients,
          SUM(last_visit IS NOT NULL AND avg_interval_days IS NOT NULL) AS with_rhythm,
