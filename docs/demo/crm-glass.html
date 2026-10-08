@@ -746,7 +746,6 @@ details.col summary span{margin-left:auto;font-size:12px;color:var(--ink-3)}
 /* ---------- responsive ---------- */
 @media (max-width:1040px){
   .s3{grid-column:span 6}.s4,.s5,.s6,.s7,.s8{grid-column:span 12}
-  .plan,.pulse{grid-column:span 6}
   .air{display:none}
   .order-first{order:-1}
 }
@@ -762,7 +761,6 @@ details.col summary span{margin-left:auto;font-size:12px;color:var(--ink-3)}
 @media (max-width:640px){
   body{padding-block:0;padding-inline:0}
   .app{border-radius:0;border:0}
-  .plan,.pulse{grid-column:span 12}
   .drawer{align-items:flex-end}
   .panel{width:100%;height:auto;max-height:90vh;max-height:90dvh;border-left:0;border-top:1px solid var(--glass-line);
     border-radius:24px 24px 0 0;transform:translateY(104%)}
@@ -829,68 +827,26 @@ details.col summary span{margin-left:auto;font-size:12px;color:var(--ink-3)}
   <!-- ===== ЗАДАЧИ ===== -->
   <div class="view" id="view-tasks">
     <div class="grid">
-      <div class="card plan s4 rise" style="--i:0">
+      <div class="card plan s5 rise" style="--i:0">
         <div class="card-h"><div><h3>План дня</h3><p class="muted small">Сначала новички и неявки, потом ритм</p></div><span class="tagp t-mute" id="planCount">4 из 15</span></div>
         <div class="progress"><div class="bar"><i id="planBar"></i></div><span class="pct" id="planPct">27%</span></div>
         <ul class="checks" id="planList"></ul>
         <p class="muted small opt-note" id="deepNote">Deep Sleep — 4 человека, если останется время</p>
       </div>
-      <div class="air s4" aria-hidden="true">
+      <div class="air s7" aria-hidden="true">
         <div class="floaty f1"><span class="dot t-warn" id="f1i"></span><div><b id="f1b">Перезвонить в 15:00</b><span id="f1s">Елена Морозова</span></div></div>
         <div class="floaty f2"><span class="dot t-good" id="f2i"></span><div><b id="f2b">Ольга · записан</b><span id="f2s">2 мин назад</span></div></div>
       </div>
-      <div class="card pulse s4 rise" style="--i:2">
-        <div class="card-h"><div><h3>Пульс недели</h3><p class="muted small">Чем заканчиваются звонки</p></div><span class="tagp t-mute">7 дней</span></div>
-        <div class="gauge">
-          <svg viewBox="0 0 200 112" aria-hidden="true">
-            <path class="track" d="M22 100 A78 78 0 0 1 178 100"/>
-            <path id="gC" style="stroke:var(--warn)"/><path id="gB" style="stroke:var(--good)"/><path id="gN" style="stroke:var(--info)"/>
-          </svg>
-          <div class="g-c"><small>Конверсия в запись</small><b id="gPct">34,2%</b></div>
-        </div>
-        <ul class="legend">
-          <li><i class="sw" style="background:var(--good)"></i>Записали<span class="tagp t-good">растёт</span><b id="lgB">41</b></li>
-          <li><i class="sw" style="background:var(--warn)"></i>Перезвонить<span class="tagp t-warn">в работе</span><b id="lgC">33</b></li>
-          <li><i class="sw" style="background:var(--info)"></i>Нет ответа и отказы<span class="tagp t-info">повторить</span><b id="lgN">46</b></li>
-        </ul>
-      </div>
-    </div>
-
-    <div class="grid">
-      <div class="card tile s3 rise" style="--i:3"><div class="lbl">Звонков сегодня</div>
-        <div class="num"><b id="kCalls">24</b><span class="delta">+8 к вчера</span></div><div class="sub">по филиалу, все админы</div>
-        <div class="spark" id="spCalls" data-seed="11" data-col="info" data-hi="8"></div></div>
-      <div class="card tile s3 rise" style="--i:4"><div class="lbl">Записано</div>
-        <div class="num"><b id="kBooked">7</b><span class="delta" id="kRevenue">52 300 ₽</span></div><div class="sub">визиты из обзвона, сегодня</div>
-        <div class="spark" id="spBooked" data-seed="23" data-col="good" data-hi="6"></div></div>
-      <div class="card tile s3 rise" style="--i:5"><div class="lbl">Конверсия</div>
-        <div class="num"><b id="kConv">29,2%</b><span class="delta">+2,4 п.п.</span></div><div class="sub">записей на звонок</div>
-        <div class="spark" id="spConv" data-seed="37" data-col="accent" data-hi="7"></div></div>
-      <div class="card tile s3 rise" style="--i:6"><div class="lbl">Ждут перезвона</div>
-        <div class="num"><b id="kWait">11</b><span class="delta" style="color:var(--warn);background:var(--warn-soft)" id="kWaitNext">ближ. 15:00</span></div><div class="sub">договорились о времени</div>
-        <div class="spark" id="spWait" data-seed="41" data-col="warn" data-hi="5"></div></div>
     </div>
 
     <div class="grid">
       <div class="stack s5">
-        <div class="card rise" style="--i:7">
-          <div class="card-h"><div><h3>Прогноз выручки · 30 дней</h3><p class="muted small">по ритму постоянных клиентов</p></div></div>
-          <div class="fc-n"><b id="fcTotal">1 284 600 ₽</b><span class="delta">+12% к сентябрю</span></div>
-          <div class="fc-labs"><span class="fc-lab" style="flex-grow:62">62%</span><span class="fc-lab" style="flex-grow:27">27%</span><span class="fc-lab" style="flex-grow:11">11%</span></div>
-          <div class="fc-bar"><div class="fc-seg a" style="flex-grow:62"></div><div class="fc-seg b" style="flex-grow:27"></div><div class="fc-seg c" style="flex-grow:11"></div></div>
-          <div class="fc-leg">
-            <span><i style="background:var(--info)"></i>В записи <b id="fcA">796 000 ₽</b></span>
-            <span><i style="background:var(--warn)"></i>Ждём по ритму <b id="fcB">347 000 ₽</b></span>
-            <span><i style="background:var(--good)"></i>Под риском</span>
-          </div>
-          <div class="fc-foot"><span>Точность прогноза<br><span class="muted small">сверка с сентябрём</span></span><b>87%</b></div>
-        </div>
-        <div class="card rise" style="--i:8">
+        <div class="card rise" style="--i:2">
           <div class="card-h"><div><h3>Журнал звонков</h3><p class="muted small">все админы, оба филиала</p></div><span class="live">Live</span></div>
           <ul class="jlist" id="jList"></ul>
         </div>
       </div>
-      <div class="card tasks s7 order-first rise" style="--i:7" id="tasksCard">
+      <div class="card tasks s7 order-first rise" style="--i:1" id="tasksCard">
         <div class="card-h">
           <div><h3>Задачи на сегодня</h3><p class="muted small" id="tasksSub">звонит Мария</p></div>
           <div class="seg" id="taskTabs" role="tablist" aria-label="Разделы задач">
@@ -907,7 +863,56 @@ details.col summary span{margin-left:auto;font-size:12px;color:var(--ink-3)}
 
   <div class="view" id="view-analytics" hidden></div>
   <div class="view" id="view-calls" hidden></div>
-  <div class="view" id="view-overview" hidden></div>
+  <div class="view" id="view-overview" hidden>
+    <div id="ovLive">
+    <div class="sec-title" style="margin-top:4px">Сегодня · обновляется само</div>
+    <div class="grid" style="margin-top:12px">
+      <div class="card tile s3 rise" style="--i:0"><div class="lbl">Звонков сегодня</div>
+        <div class="num"><b id="kCalls">24</b><span class="delta">+8 к вчера</span></div><div class="sub">по филиалу, все админы</div>
+        <div class="spark" id="spCalls" data-seed="11" data-col="info" data-hi="8"></div></div>
+      <div class="card tile s3 rise" style="--i:1"><div class="lbl">Записано</div>
+        <div class="num"><b id="kBooked">7</b><span class="delta" id="kRevenue">52 300 ₽</span></div><div class="sub">визиты из обзвона, сегодня</div>
+        <div class="spark" id="spBooked" data-seed="23" data-col="good" data-hi="6"></div></div>
+      <div class="card tile s3 rise" style="--i:2"><div class="lbl">Конверсия</div>
+        <div class="num"><b id="kConv">29,2%</b><span class="delta">+2,4 п.п.</span></div><div class="sub">записей на звонок</div>
+        <div class="spark" id="spConv" data-seed="37" data-col="accent" data-hi="7"></div></div>
+      <div class="card tile s3 rise" style="--i:3"><div class="lbl">Ждут перезвона</div>
+        <div class="num"><b id="kWait">11</b><span class="delta" style="color:var(--warn);background:var(--warn-soft)" id="kWaitNext">ближ. 15:00</span></div><div class="sub">договорились о времени</div>
+        <div class="spark" id="spWait" data-seed="41" data-col="warn" data-hi="5"></div></div>
+    </div>
+    <div class="grid">
+      <div class="card s7 rise" style="--i:4">
+        <div class="card-h"><div><h3>Прогноз выручки · 30 дней</h3><p class="muted small">по ритму постоянных клиентов</p></div></div>
+        <div class="fc-n"><b id="fcTotal">1 284 600 ₽</b><span class="delta">+12% к сентябрю</span></div>
+        <div class="fc-labs"><span class="fc-lab" style="flex-grow:62">62%</span><span class="fc-lab" style="flex-grow:27">27%</span><span class="fc-lab" style="flex-grow:11">11%</span></div>
+        <div class="fc-bar"><div class="fc-seg a" style="flex-grow:62"></div><div class="fc-seg b" style="flex-grow:27"></div><div class="fc-seg c" style="flex-grow:11"></div></div>
+        <div class="fc-leg">
+          <span><i style="background:var(--info)"></i>В записи <b id="fcA">796 000 ₽</b></span>
+          <span><i style="background:var(--warn)"></i>Ждём по ритму <b id="fcB">347 000 ₽</b></span>
+          <span><i style="background:var(--good)"></i>Под риском</span>
+        </div>
+        <div class="fc-foot"><span>Точность прогноза<br><span class="muted small">сверка с сентябрём</span></span><b>87%</b></div>
+      </div>
+      <div class="card pulse s5 rise" style="--i:5">
+        <div class="card-h"><div><h3>Пульс недели</h3><p class="muted small">Чем заканчиваются звонки</p></div><span class="tagp t-mute">7 дней</span></div>
+        <div class="gauge">
+          <svg viewBox="0 0 200 112" aria-hidden="true">
+            <path class="track" d="M22 100 A78 78 0 0 1 178 100"/>
+            <path id="gC" style="stroke:var(--warn)"/><path id="gB" style="stroke:var(--good)"/><path id="gN" style="stroke:var(--info)"/>
+          </svg>
+          <div class="g-c"><small>Конверсия в запись</small><b id="gPct">34,2%</b></div>
+        </div>
+        <ul class="legend">
+          <li><i class="sw" style="background:var(--good)"></i>Записали<span class="tagp t-good">растёт</span><b id="lgB">41</b></li>
+          <li><i class="sw" style="background:var(--warn)"></i>Перезвонить<span class="tagp t-warn">в работе</span><b id="lgC">33</b></li>
+          <li><i class="sw" style="background:var(--info)"></i>Нет ответа и отказы<span class="tagp t-info">повторить</span><b id="lgN">46</b></li>
+        </ul>
+      </div>
+    </div>
+    </div>
+    <div class="sec-title">За период</div>
+    <div id="ovDyn"></div>
+  </div>
   <div class="view" id="view-clients" hidden></div>
   <div class="view" id="view-vip" hidden></div>
   <div class="view" id="view-deposit" hidden></div>
@@ -2071,8 +2076,9 @@ function ovNums(){
   return {proc, booked, self:Math.round(booked * .14), deepC:Math.round(ovDays() * 1.4), deepB:Math.round(ovDays() * .1)};
 }
 RENDER.overview = () => {
-  const box = $('#view-overview');
-  box.innerHTML = `<div class="grid" style="margin-top:0"><div class="card s5 rise" style="--i:0"><div class="card-h"><div><h3>Период</h3><p class="muted small" id="ovHint">Кликните первый день периода, затем последний</p></div><span class="tagp t-acc" id="ovLbl"></span></div>
+  const box = $('#ovDyn');
+  replayLive();
+  box.innerHTML = `<div class="grid" style="margin-top:12px"><div class="card s5 rise" style="--i:6"><div class="card-h"><div><h3>Период</h3><p class="muted small" id="ovHint">Кликните первый день периода, затем последний</p></div><span class="tagp t-acc" id="ovLbl"></span></div>
       <div id="ovCal"></div><div class="presets" id="ovPre">${[[1,'Сегодня'],[7,'7 дней'],[30,'30 дней'],[90,'90 дней'],['m','Этот месяц']].map(([k, l]) => `<button class="pill sm" data-p="${k}">${l}</button>`).join('')}</div></div>
     <div class="stack s7"><div class="kpis k7" id="ovK" style="margin-top:0"></div>
       <div class="card rise" style="--i:8"><div class="card-h"><div><h3>Открытые задачи по типам</h3><p class="muted small">сейчас, оба филиала</p></div></div><div id="ovTypes"></div></div></div></div>
@@ -2094,6 +2100,13 @@ RENDER.overview = () => {
   mount($('#ovChart'), drawWeekly);
   ovAll(true);
 };
+// блок «Сегодня» живёт в разметке постоянно (его обновляют звонки и симуляция), при каждом заходе — заново доигрываем счётчики и дугу
+function replayLive(){
+  if (RM) return;
+  ['#kCalls','#kBooked','#kRevenue','#kConv','#kWait','#fcTotal','#fcA','#fcB','#gPct','#lgB','#lgC','#lgN'].forEach(s => { $(s).dataset.v = 0; });
+  $$('.fc-seg,.fc-lab').forEach(s => { s.style.flexGrow = .001; });
+  requestAnimationFrame(() => requestAnimationFrame(() => { updateKpis(); updateForecast(); updatePulse(false); animatePulse(); }));
+}
 function ovCal(){
   const first = new Date(ov.y, ov.m, 1), shift = (first.getDay() + 6) % 7, days = new Date(ov.y, ov.m + 1, 0).getDate(), t = day0(now());
   const canNext = new Date(ov.y, ov.m + 1, 1) <= t;
@@ -2624,7 +2637,7 @@ document.addEventListener('click', e => { const g = e.target.closest('[data-go]'
 // =====================================================================
 // BOOT
 // =====================================================================
-$$('#view-tasks .spark').forEach(spark);
+$$('#ovLive .spark').forEach(spark);
 renderJournal(null); updateFloat(); updateCounts(); renderTasks(false);
 ['#kCalls','#kBooked','#kRevenue','#kConv','#kWait','#fcTotal','#fcA','#fcB','#planPct','#gPct','#lgB','#lgC','#lgN'].forEach(s => { $(s).dataset.v = 0; });
 if (!RM) $$('.fc-seg,.fc-lab').forEach(s => { s.style.flexGrow = .001; });
