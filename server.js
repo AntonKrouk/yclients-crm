@@ -102,8 +102,10 @@ const INDEX_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8').
 const INDEX_HTML_YC = INDEX_HTML.replace('</head>',
   `<link rel="stylesheet" href="/app-yc.css?v=${ASSET_V}"></head>`);
 
-// Тема «Стекло» (как демо docs/demo/crm-glass.html): /?theme=glass. Пока на пробу —
-// у всех остальных прежний вид. Класс на <html> нужен скрипту: «Обзор» и «Задачи»
+// Тема «Стекло» (как демо docs/demo/crm-glass.html). Становится основной сама в момент
+// GLASS_FROM (Антон попросил переключить утром 11.10.2026, до начала смены, — без выката
+// в это время). До него стекло — по /?theme=glass, после — прежний вид по /?theme=paper.
+// Срок можно сдвинуть переменной GLASS_FROM в .env, не трогая код. Класс на <html> нужен скрипту: «Обзор» и «Задачи»
 // в стекле собраны по-другому. Версия файла — по его собственному отпечатку,
 // иначе правки одной темы не сбрасывали бы кэш браузера.
 const INDEX_HTML_GLASS = INDEX_HTML.replace('<html lang="ru">', '<html lang="ru" class="glass">')
@@ -114,8 +116,11 @@ const INDEX_HTML_GLASS = INDEX_HTML.replace('<html lang="ru">', '<html lang="ru"
     + `<link rel="stylesheet" href="/app-glass.css?v=${ASSET_V}${assetHash('app-glass.css')}"></head>`);
 
 // Саму страницу не кэшируем никогда — она лёгкая, а внутри лежат ссылки на версии файлов.
+const GLASS_FROM = Date.parse(process.env.GLASS_FROM || '2026-10-11T08:00:00+03:00');
 app.get(['/', '/index.html'], (req, res) => {
-  const page = req.query.theme === 'yc' ? INDEX_HTML_YC : req.query.theme === 'glass' ? INDEX_HTML_GLASS : INDEX_HTML;
+  const t = req.query.theme;
+  const page = t === 'yc' ? INDEX_HTML_YC : t === 'glass' ? INDEX_HTML_GLASS : t === 'paper' ? INDEX_HTML
+    : Date.now() >= GLASS_FROM ? INDEX_HTML_GLASS : INDEX_HTML;
   res.set('Cache-Control', 'no-cache').type('html').send(page);
 });
 app.use(express.static(PUBLIC_DIR, {
