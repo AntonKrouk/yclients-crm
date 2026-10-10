@@ -22,7 +22,7 @@ const DASH_PW = process.env.DASHBOARD_PASSWORD || '';
 const SECRET = process.env.SESSION_SECRET || DASH_PW || 'dev-secret';
 const CRON_SECRET = process.env.CRON_SECRET || '';
 const AUTH_ON = Boolean(DASH_PW);
-const PUBLIC_ASSETS = new Set(['/app.css', '/app-yc.css', '/app.js', '/manifest.webmanifest', '/prive-logo.png',
+const PUBLIC_ASSETS = new Set(['/app.css', '/app-yc.css', '/app-glass.css', '/app.js', '/manifest.webmanifest', '/prive-logo.png',
   '/favicon.ico', '/apple-touch-icon.png', '/apple-touch-icon-precomposed.png']);
 // Пароль входит в подпись куки: сменили DASHBOARD_PASSWORD — все старые входы (в т.ч. у
 // уволившегося админа) перестают действовать, даже если SESSION_SECRET задан отдельно.
@@ -102,10 +102,21 @@ const INDEX_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8').
 const INDEX_HTML_YC = INDEX_HTML.replace('</head>',
   `<link rel="stylesheet" href="/app-yc.css?v=${ASSET_V}"></head>`);
 
+// Тема «Стекло» (как демо docs/demo/crm-glass.html): /?theme=glass. Пока на пробу —
+// у всех остальных прежний вид. Класс на <html> нужен скрипту: «Обзор» и «Задачи»
+// в стекле собраны по-другому. Версия файла — по его собственному отпечатку,
+// иначе правки одной темы не сбрасывали бы кэш браузера.
+const INDEX_HTML_GLASS = INDEX_HTML.replace('<html lang="ru">', '<html lang="ru" class="glass">')
+  .replace('<meta name="theme-color" content="#F6F4F0">', '<meta name="theme-color" content="#F2F3F5">')
+  .replace('</head>', '<link rel="preconnect" href="https://fonts.googleapis.com">'
+    + '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+    + '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&display=swap">'
+    + `<link rel="stylesheet" href="/app-glass.css?v=${ASSET_V}${assetHash('app-glass.css')}"></head>`);
+
 // Саму страницу не кэшируем никогда — она лёгкая, а внутри лежат ссылки на версии файлов.
 app.get(['/', '/index.html'], (req, res) => {
-  res.set('Cache-Control', 'no-cache').type('html')
-    .send(req.query.theme === 'yc' ? INDEX_HTML_YC : INDEX_HTML);
+  const page = req.query.theme === 'yc' ? INDEX_HTML_YC : req.query.theme === 'glass' ? INDEX_HTML_GLASS : INDEX_HTML;
+  res.set('Cache-Control', 'no-cache').type('html').send(page);
 });
 app.use(express.static(PUBLIC_DIR, {
   maxAge: '365d',
@@ -2209,6 +2220,128 @@ app.get('/api/stats', (req, res) => {
     results_today: resultMap,
     by_admin: byAdmin,
     clients_total: db.prepare(`SELECT COUNT(*) n FROM clients ${branch ? 'WHERE branch = ?' : ''}`).get(...bArgs).n,
+  });
+});
+
+// Раздел «Сегодня» во вкладке «Обзор» (тема «Стекло»): четыре плитки со столбиками за
+// 30 дней, «пульс недели» и прогноз выручки на 30 дней. Здесь считаются ВСЕ звонки —
+// и по автозадачам, и по спискам «Обзвонов», и спящие: это картина дня салона, а не
+// оценка администратора (та — ниже, в «За период», по прежним правилам /api/stats).
+const mskDayOf = (iso) => new Date(new Date(iso).getTime() + 3 * 3600e3).toISOString().slice(0, 10);
+app.get('/api/overview/live', (req, res) => {
+  const branch = (req.query.branch || '').trim();
+  const bw = branch ? 'AND c.branch = ?' : '';
+  const bArgs = branch ? [branch] : [];
+  const today = mskToday();
+  const DAYS = 30;
+  const from = shiftDay(today, -(DAYS - 1));
+  const days = Array.from({ length: DAYS }, (_, i) => shiftDay(from, i));
+
+  // «Написали» новичку — не звонок, в звонки и конверсию не берём
+  const rows = db.prepare(`
+    SELECT a.result, COALESCE(a.auto_booked,0) AS auto_booked, a.created_at, c.id AS client_id, c.phone
+    FROM task_actions a JOIN clients c ON c.id = a.client_id
+    WHERE a.created_at >= ? AND a.result <> 'written' ${bw}
+  `).all(mskMidnight(from), ...bArgs);
+  const upcoming = upcomingByPerson();
+  const won = (r) => r.result === 'booked' || r.result === 'coming'
+    || r.auto_booked === 1 || bookedWithinWindow(upcoming, r, r.created_at);
+
+  const perDay = new Map(days.map(d => [d, { calls: 0, booked: 0, cb: 0 }]));
+  const pulse = { booked: 0, callback: 0, other: 0 };
+  const weekFrom = shiftDay(today, -6);
+  for (const r of rows) {
+    const day = mskDayOf(r.created_at), d = perDay.get(day);
+    if (!d) continue;
+    const w = won(r);
+    d.calls++;
+    if (w) d.booked++;
+    if (r.result === 'callback' || r.result === 'no_answer') d.cb++;
+    if (day >= weekFrom) {
+      if (w) pulse.booked++;
+      else if (r.result === 'callback') pulse.callback++;
+      else pulse.other++;
+    }
+  }
+  const series = days.map(d => ({ day: d, ...perDay.get(d) }));
+  const T = series[series.length - 1], Y = series[series.length - 2];
+  const week = series.slice(-7), weekCalls = week.reduce((s, d) => s + d.calls, 0);
+
+  // Ждут перезвона — отложенные автозадачи и участники активных списков: о времени договорились.
+  // «Просил не звонить» тоже лежит отложенным (на 60 дней), но это не договорённость — не берём.
+  // Срок хранится московским временем строкой «2026-10-10» или «2026-10-10 15:00»; ближайший —
+  // только из сегодняшних с указанным часом, иначе «ближайший» ни о чём не говорит.
+  const waiting = [
+    ...db.prepare(`SELECT t.due_date AS at FROM tasks t JOIN clients c ON c.id = t.client_id
+      WHERE t.status = 'snoozed' ${bw} AND COALESCE((SELECT a.result FROM task_actions a
+        WHERE a.task_id = t.id ORDER BY a.id DESC LIMIT 1),'') <> 'no_calls'`).all(...bArgs),
+    ...db.prepare(`SELECT m.callback_at AS at FROM list_members m
+      JOIN lists l ON l.id = m.list_id JOIN clients c ON c.id = m.client_id
+      WHERE m.status = 'snoozed' AND l.status = 'active' AND COALESCE(m.result,'') <> 'no_calls' ${bw}`).all(...bArgs),
+  ];
+  const nowMs = Date.now();
+  const nowHm = new Date(nowMs + 3 * 3600e3).toISOString().slice(11, 16);
+  const nextToday = waiting.map(w => String(w.at || ''))
+    .filter(s => s.slice(0, 10) === today && /^\d{2}:\d{2}$/.test(s.slice(11, 16)) && s.slice(11, 16) >= nowHm)
+    .map(s => s.slice(11, 16)).sort()[0] || null;
+
+  // ── Прогноз выручки на 30 дней ──
+  // 1) «В записи» — будущие записи. Цена в записи YClients есть не всегда: где её нет,
+  //    берём средний чек человека. Напоминания о ДР (записи без услуги) не считаем.
+  // 2) «Ждём по ритму» — записи нет, но по его обычному интервалу визит выпадает на эти 30 дней.
+  // 3) «Под риском» — визит уже просрочен, но не больше чем на один интервал: позвоним — вернётся.
+  //    В итог прогноза не входит: эти деньги ещё надо заработать звонком.
+  const DAY_MS = 86400e3;
+  const horizon = new Date(nowMs + 30 * DAY_MS).toISOString();
+  const groups = people.groupByPerson(db.prepare(`SELECT id, phone, branch, last_visit, avg_interval_days,
+      visits_count, spent, COALESCE(free_client,0) AS free_client FROM clients`).all());
+  const avgCheck = new Map();
+  for (const g of groups) {
+    const visits = g.reduce((s, c) => s + (c.visits_count || 0), 0);
+    avgCheck.set(people.personKey(g[0]), visits ? g.reduce((s, c) => s + (c.spent || 0), 0) / visits : 0);
+  }
+  const fc = { booked: 0, booked_n: 0, rhythm: 0, rhythm_n: 0, risk: 0, risk_n: 0 };
+  for (const v of db.prepare(`SELECT v.cost, v.client_id, c.phone FROM visits v JOIN clients c ON c.id = v.client_id
+      WHERE v.status = 'upcoming' AND v.date >= datetime('now') AND v.date < ?
+        AND COALESCE(v.service,'') <> '' ${bw}`).all(horizon, ...bArgs)) {
+    fc.booked += v.cost > 0 ? v.cost : (avgCheck.get(people.personKey({ id: v.client_id, phone: v.phone })) || 0);
+    fc.booked_n++;
+  }
+  for (const g of groups) {
+    const main = g[0], k = people.personKey(main);
+    // человек относится к филиалу своей главной карточки — как в движке задач
+    if (branch && main.branch !== branch) continue;
+    if (g.some(c => c.free_client) || upcoming.has(k)) continue;   // без оплаты / уже записан
+    const last = g.map(c => c.last_visit).filter(Boolean).sort().pop();
+    const every = main.avg_interval_days, check = avgCheck.get(k);
+    if (!last || !(every > 0) || !(check > 0)) continue;
+    const due = new Date(last).getTime() + every * DAY_MS;
+    if (due >= nowMs && due < nowMs + 30 * DAY_MS) { fc.rhythm += check; fc.rhythm_n++; }
+    else if (due < nowMs && due >= nowMs - every * DAY_MS) { fc.risk += check; fc.risk_n++; }
+  }
+  // для сравнения — сколько салон на самом деле заработал за прошлые 30 дней
+  const fact30 = db.prepare(`SELECT COALESCE(SUM(v.cost),0) s FROM visits v JOIN clients c ON c.id = v.client_id
+    WHERE v.status = 'completed' AND v.date >= ? AND v.date < datetime('now') ${bw}`)
+    .get(new Date(nowMs - 30 * DAY_MS).toISOString(), ...bArgs).s;
+  const round = (x) => Math.round(x / 100) * 100;
+
+  res.json({
+    today,
+    tiles: {
+      calls: T.calls, calls_yesterday: Y.calls,
+      booked: T.booked, booked_yesterday: Y.booked,
+      conversion: T.calls ? Math.round(T.booked / T.calls * 1000) / 10 : 0,
+      conversion_week: weekCalls ? Math.round(week.reduce((s, d) => s + d.booked, 0) / weekCalls * 1000) / 10 : 0,
+      waiting: waiting.length, next_callback: nextToday,
+    },
+    series,
+    pulse,
+    forecast: {
+      booked: round(fc.booked), booked_n: fc.booked_n,
+      rhythm: round(fc.rhythm), rhythm_n: fc.rhythm_n,
+      risk: round(fc.risk), risk_n: fc.risk_n,
+      fact_prev30: round(fact30),
+    },
   });
 });
 

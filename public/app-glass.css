@@ -1,0 +1,314 @@
+/* ── Тема «Стекло» ───────────────────────────────────────────────────────────
+   Оформление из демо docs/demo/crm-glass.html: светлое матовое стекло поверх
+   медленно плывущих цветных пятен, гротеск Onest, скругления и пилюли, жёлтый
+   акцент у главных действий и чёрная кнопка «Записать».
+
+   Подключается при /?theme=glass и идёт ПОСЛЕ app.css (сервер доклеивает ссылку
+   и ставит <html class="glass">), поэтому здесь — только переопределения.
+   Разметку тема не меняет: левое меню и бургер на телефоне остаются как были.  */
+
+:root{
+  --paper:#F2F3F5;
+  --panel:rgba(255,255,255,.55);         /* стекло карточек */
+  --panel2:rgba(18,21,28,.05);           /* утопленная плашка, наведение, дорожки полос */
+  --line:rgba(17,20,28,.09);
+  --line-strong:rgba(17,20,28,.16);
+  --ink:#12151C; --ink-2:#4A5162; --muted:#7E8597;
+  --accent:#FFD84A;                      /* заливки, полосы, точки — жёлтый из демо */
+  --accent-2:#12151C;                    /* цифры и главные кнопки — чёрным, как в демо */
+  --accent-soft:rgba(255,216,74,.28);
+  --accent-ink:#2B2200;
+  --gold:#B7791F;
+  --green:#1C9A5F; --green-soft:rgba(28,154,95,.13);
+  --red:#DA4A4E;   --red-soft:rgba(218,74,78,.12);
+  --amber:#E5702A; --amber-soft:rgba(229,112,42,.14);
+  --violet:#7E5BEF; --violet-soft:rgba(126,91,239,.13);
+  --blue:#3B79F0;  --blue-soft:rgba(59,121,240,.13);
+  --radius:14px;
+  --serif:"Onest",-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --sans:"Onest",-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  /* своё для стекла */
+  --glass-line:rgba(255,255,255,.92);
+  --glass-strong:rgba(255,255,255,.78);
+  --sheet:rgba(250,251,252,.94);
+  --shadow:0 20px 44px -26px rgba(18,21,28,.35);
+  --blur:blur(22px) saturate(160%);
+  --r-lg:22px; --r-md:16px;
+}
+
+/* фон — у <html>: у body он прозрачный, иначе закрыл бы пятна на слое z-index:-1 */
+body{background:transparent;font-size:14.5px;font-variant-numeric:tabular-nums}
+::selection{background:var(--accent);color:var(--accent-ink)}
+:focus-visible{outline:2px solid var(--blue)}
+
+/* Цветные пятна под стеклом. Висят на фиксированном слое за всем содержимым:
+   стекло без того, что сквозь него видно, — просто серая карточка. */
+body::before,body::after{content:"";position:fixed;z-index:-1;border-radius:50%;pointer-events:none}
+body::before{width:900px;height:900px;left:calc(50% - 300px);top:-380px;opacity:.9;
+  background:radial-gradient(circle at 40% 36%,#fff 0 12%,#FFE27A 34%,#FFB36B 52%,transparent 70%);
+  animation:g-drift1 28s ease-in-out infinite alternate}
+body::after{width:760px;height:760px;left:-220px;bottom:-260px;opacity:.85;
+  background:radial-gradient(circle,#A7E7C5 0,transparent 66%),radial-gradient(circle at 120% 0,#AFC8FF 0,transparent 60%);
+  animation:g-drift2 34s ease-in-out infinite alternate}
+html.glass{background:radial-gradient(circle at 100% 20%,rgba(175,200,255,.55) 0,transparent 40%) #E7E9ED}
+@keyframes g-drift1{to{transform:translate3d(-80px,40px,0) scale(1.06)}}
+@keyframes g-drift2{to{transform:translate3d(90px,-60px,0) scale(1.08)}}
+
+/* Разрядка капсом — приём бумажной темы. Здесь подписи обычные, спокойным регистром. */
+.eyebrow,.section-title,th,.tab,.stile .l,.cinfo .k,.kpi .l,.collap>summary,
+.vip-m,.sc-tag,.sc-cat,.bd-dow span,.sc-ai-hd,.fld,.admin-bar-lbl,.segfld,.segfld>span,
+.type-badge,.status-badge,.dnc-badge,.jr-res,.cb-badge,.branch-tag,.pill,.list-tag,
+.badge,.dtab,.dclose,.mem-group>summary,.lb-assignee,.book-item-n,.adm-import-hd,
+.vt-group,.vt-cat,.vsum,.topbar-view,.brand-tx,.brand-tx small,.topbar-tx,.btn,.res,.dact{
+  text-transform:none;letter-spacing:0}
+.section-title{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted);margin:30px 4px 12px}
+.section-hint{margin-left:4px}
+
+/* ── стекло: всё, что было «бумажной» плашкой с линейкой ─────────────────── */
+.card,.kpi,.task,.listblock,.jr-item,.vip-card,.bd-row,.sc-card,.admin-bar,.collap,.empty,
+.man-chip,.book-item,.cinfo,.statTiles,.monthchart{
+  background:var(--panel);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);
+  border:1px solid var(--glass-line);border-radius:var(--r-lg);
+  box-shadow:inset 0 1px 0 var(--glass-line),var(--shadow)}
+/* Строки-списки в бумажной теме склеены встык (margin -1px). Здесь — отдельные карточки. */
+.task,.listblock,.jr-item,.vip-card,.bd-row,.sc-card,.collap{margin-bottom:10px}
+.task:hover,.bd-row:hover{background:var(--glass-strong)}
+.vip-card,.sc-card,.bd-row{border-left:1px solid var(--glass-line)}
+.empty{border-radius:var(--r-lg);color:var(--ink-2)}
+
+/* Сетки плиток в бумажной теме — волосяная решётка (gap 1px на фоне линейки).
+   Здесь каждая плитка — своё стекло с зазором. */
+.grid{gap:12px;background:transparent}
+.kpis{border:none}
+.kpi{padding:16px 18px}
+.kpi .n{font-family:var(--sans);font-weight:600;font-size:30px;letter-spacing:-.035em;color:var(--ink)}
+.kpi .l{font-size:12.5px;color:var(--ink-2);margin-top:6px}
+.statTiles,.cinfo{gap:1px;overflow:hidden}
+.stile,.cinfo>div{background:rgba(255,255,255,.5)}
+.stile .n{font-weight:600;letter-spacing:-.02em;color:var(--ink)}
+
+/* ── левое меню ───────────────────────────────────────────────────────────── */
+header{background:rgba(255,255,255,.42);-webkit-backdrop-filter:blur(26px) saturate(170%);
+  backdrop-filter:blur(26px) saturate(170%);border-right:1px solid var(--glass-line)}
+.brand{border-bottom-color:var(--line)}
+.brand-tx{font-family:var(--sans);font-weight:600;font-size:13px}
+.brand-tx small{font-size:11px;font-weight:400;margin-top:4px}
+.badge{border-radius:999px;font-size:11px;font-weight:600;padding:3px 10px;background:var(--glass-strong);border-color:var(--line)}
+.badge.live{background:var(--green-soft);border-color:transparent}
+.tabs{border:none;gap:2px}
+.tab{border:none!important;border-radius:999px;padding:10px 14px;font-size:14px;font-weight:500;color:var(--ink-2);
+  transition:background .3s,color .2s,box-shadow .3s}
+.tab:hover{background:rgba(255,255,255,.6);color:var(--ink)}
+.tab.active{background:#fff;color:var(--ink);box-shadow:0 4px 14px -6px rgba(0,0,0,.25)}
+.branch-sel{border-radius:999px;background-color:var(--glass-strong);border-color:var(--glass-line);padding-left:14px}
+.topbar{background:rgba(242,243,245,.7);-webkit-backdrop-filter:blur(22px);backdrop-filter:blur(22px);border-bottom-color:var(--glass-line)}
+.topbar-tx{font-family:var(--sans);font-weight:600;letter-spacing:0;font-size:13px}
+.topbar-view{font-size:12px;font-weight:600}
+.nav-backdrop{background:rgba(28,32,42,.25);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px)}
+
+/* ── кнопки — пилюли ──────────────────────────────────────────────────────── */
+.btn{border-radius:999px;padding:9px 16px;font-size:13px;font-weight:500;
+  background:var(--glass-strong);border-color:var(--glass-line);color:var(--ink);
+  transition:transform .2s,background .3s,box-shadow .3s}
+.btn:hover{background:#fff;border-color:var(--glass-line);transform:translateY(-1px)}
+.btn.primary{background:var(--ink);border-color:var(--ink);color:#fff}
+.btn.primary:hover{background:#2A2F3A;border-color:#2A2F3A}
+.btn:disabled:hover{background:var(--glass-strong);transform:none}
+
+/* кнопки результата звонка: «Записать» — чёрная, «Написал» — жёлтая, как в демо */
+.res{border-radius:999px;padding:9px 8px;font-size:12.5px;font-weight:500;background:rgba(255,255,255,.78);
+  border-color:var(--line);color:var(--ink-2);transition:transform .15s,background .2s,border-color .2s,color .2s}
+.res:hover{transform:translateY(-1px);background:var(--blue-soft);border-color:rgba(59,121,240,.4);color:var(--blue)}
+.res.booked{background:var(--ink);border-color:var(--ink);color:#fff}
+.res.booked:hover{background:#2A2F3A;border-color:#2A2F3A;color:#fff}
+.res.callback{border-color:rgba(229,112,42,.4);color:var(--amber)}
+.res.callback:hover{background:var(--amber-soft);border-color:var(--amber);color:var(--amber)}
+.res.refused{border-color:rgba(218,74,78,.35);color:var(--red)}
+.res.refused:hover{background:var(--red-soft);border-color:var(--red);color:var(--red)}
+.res.wide{background:var(--accent);border-color:transparent;color:var(--accent-ink);font-weight:600}
+.res.wide:hover{background:#FFE06E;color:var(--accent-ink);border-color:transparent}
+
+/* ── задачи ───────────────────────────────────────────────────────────────── */
+.task{padding:16px 18px}
+.tname{font-family:var(--sans);font-weight:600;font-size:16px;letter-spacing:-.01em}
+.treason{color:var(--ink-2)}
+.type-badge,.status-badge,.dnc-badge,.cb-badge,.jr-res,.branch-tag,.pill,.list-tag,.dep-tag,.disc-tag,.prio{
+  border-radius:999px;font-size:11px;font-weight:600;padding:3px 9px}
+.branch-tag,.pill{background:rgba(255,255,255,.7);border-color:var(--line);color:var(--ink-2)}
+.t-new_client{background:var(--accent);border-color:transparent;color:var(--accent-ink)}
+#newList .task{box-shadow:inset 3px 0 0 var(--accent),var(--shadow)}
+#newList .task.callback-today,.task.callback-today{box-shadow:inset 3px 0 0 var(--red),var(--shadow)}
+.task.callback-today{background:linear-gradient(120deg,var(--red-soft),var(--panel) 60%);border-color:rgba(218,74,78,.35)}
+.cb-badge{background:#fff}
+textarea,input.search{background:rgba(255,255,255,.78);border-color:var(--line);border-radius:12px}
+textarea:focus,input.search:focus{border-color:var(--muted)}
+.admin-bar{padding:12px 16px}
+.admin-bar select,.jr-filters select,.an-head select,.bd-cal-head select,.vt-head select,.vt-rfilter select,
+.ov-fld input,.segfld input,.segfld select,.fld input,.fld select,.admin-add input,.vt-cap{
+  background-color:rgba(255,255,255,.78);border-color:var(--line);border-radius:12px}
+.admin-manage,.bd-nav{border-radius:50%;background:var(--glass-strong);border-color:var(--glass-line)}
+
+/* ── таблицы ──────────────────────────────────────────────────────────────── */
+table{background:transparent}
+.card>table{margin:-6px 0}
+th{font-size:12px;font-weight:500;color:var(--muted);border-bottom-color:var(--line)}
+tr.crow:hover td{background:rgba(255,255,255,.55)}
+
+/* ── журнал, списки обзвона, VIP, скрипты ────────────────────────────────── */
+.jr-name,.lb-name,.vip-nm,.sc-t,.bd-who .nm,.vt-name,.an-t{font-family:var(--sans);font-weight:600;letter-spacing:-.01em}
+.jr-booking,.vip-next{border-left-color:var(--green)}
+.lb-progress,.brk .bar{height:6px;border-radius:999px;background:rgba(18,21,28,.1);overflow:hidden}
+.lb-progress>div,.brk .bar>div{border-radius:inherit;background:linear-gradient(90deg,var(--green),#7CC48A)}
+.lb-assignee,.dact,.sc-cat,.sc-chip,.row-add,.vt-sub,.sn-quick button{border-radius:999px}
+.vip-m b,.vc,.brk .v b,.seg-summary b,.jr-meta b{color:var(--ink);font-family:var(--sans);font-weight:600}
+.vip-note,.bd-note,.note-box,.seg-hint,.sc-ai,.vt-shared{border-radius:12px;border-color:transparent}
+.sc-cat.on{background:var(--ink);border-color:var(--ink);color:#fff}
+.sc-msg{border-radius:14px}
+.an-caveat{border-radius:16px;border-left:0}
+.an-b2{fill:rgba(59,121,240,.18);stroke:var(--blue)}
+.an-leg i.an-b2{background:rgba(59,121,240,.18);border-color:var(--blue)}
+.an-hb-t{border-radius:999px;height:12px}
+.an-hb-f{border-radius:999px}
+.an-line,.an-dot{stroke:var(--amber)}
+.an-dot,.an-dotv{fill:var(--amber)}
+
+/* ── календари ДР и «Обзора» ─────────────────────────────────────────────── */
+.bd-cell{border-radius:12px;background:rgba(255,255,255,.6);border-color:transparent}
+.bd-cell.has{background:var(--violet-soft)}
+.bd-cell.sel{background:var(--ink)}
+.bd-cell.today{box-shadow:inset 0 0 0 1.5px var(--ink)}
+.ov-cal .bd-cell.in{background:var(--accent-soft)}
+.ov-now{font-family:var(--sans);font-weight:600}
+
+/* ── модалки, карточка клиента, тост ─────────────────────────────────────── */
+.modal-overlay,.overlay{background:rgba(28,32,42,.22);-webkit-backdrop-filter:blur(5px);backdrop-filter:blur(5px)}
+.modal{background:var(--sheet);-webkit-backdrop-filter:blur(30px) saturate(170%);backdrop-filter:blur(30px) saturate(170%);
+  border:1px solid var(--glass-line);border-radius:24px;box-shadow:0 40px 80px -30px rgba(0,0,0,.5)}
+.modal-title{font-family:var(--sans);font-weight:600;letter-spacing:-.02em;font-size:20px}
+.drawer{background:var(--sheet);-webkit-backdrop-filter:blur(30px) saturate(170%);backdrop-filter:blur(30px) saturate(170%);
+  border-left:1px solid var(--glass-line)}
+.drawer .head{background:transparent}
+.dname{font-family:var(--sans);font-weight:600;letter-spacing:-.02em;font-size:22px}
+.dtab{font-size:13px;font-weight:500}
+.dtab.active{color:var(--ink);border-bottom-color:var(--ink)}
+.dact.on{background:var(--accent);border-color:transparent;color:var(--accent-ink)}
+.ev.visit::before{background:var(--blue);border-color:var(--blue)}
+.ev.call::before{background:var(--amber);border-color:var(--amber)}
+.mbar .bar{background:var(--blue);border-radius:4px}
+.toast{background:var(--ink);color:#F6F7F9;border-radius:999px;font-size:13.5px;font-weight:500;letter-spacing:0;
+  box-shadow:0 18px 40px -16px rgba(0,0,0,.5)}
+
+@media(prefers-reduced-motion:reduce){ body::before,body::after{animation:none} }
+
+/* ═══ Блоки, которых в бумажной теме нет (рисует app.js при GLASS) ═══════════ */
+.gl-card-h{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.gl-card-h h3{margin:0;font-size:15.5px;font-weight:600;letter-spacing:-.01em}
+.gl-card-h .muted{margin:3px 0 0;font-size:12.5px}
+.gl-tag{font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;background:rgba(18,21,28,.08);color:var(--ink-2);white-space:nowrap}
+
+/* ── «Задачи»: «План дня» слева, карточка с вкладками справа ── */
+.gl-tasks{display:grid;grid-template-columns:minmax(240px,300px) minmax(0,1fr);gap:16px;align-items:start}
+.gl-plan{position:sticky;top:20px;padding:18px}
+.gl-progress{display:flex;align-items:center;gap:12px;margin:14px 0 12px}
+.gl-progress b{font-size:13px;min-width:38px;text-align:right}
+.gl-bar{flex:1;height:7px;border-radius:999px;background:rgba(18,21,28,.1);overflow:hidden}
+.gl-bar i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--green),#9CCB6A);transition:width 1s cubic-bezier(.2,.85,.25,1)}
+.gl-checks{list-style:none;margin:0;padding:6px;border-radius:16px;background:rgba(255,255,255,.72);border:1px solid var(--glass-line)}
+.gl-checks li{display:flex;align-items:center;gap:10px;padding:8px;border-radius:10px;font-size:13.5px;color:var(--ink-2);cursor:pointer}
+.gl-checks li:hover{background:rgba(18,21,28,.04)}
+.gl-checks li b{margin-left:auto;font-size:12.5px;color:var(--ink)}
+.gl-ck{width:18px;height:18px;border-radius:50%;border:1.5px solid var(--line-strong);flex:none;display:grid;place-items:center}
+.gl-ck svg{width:11px;height:11px;color:#fff;transform:scale(0);transition:transform .35s}
+.gl-checks li.done .gl-ck{background:var(--green);border-color:var(--green)}
+.gl-checks li.done .gl-ck svg{transform:scale(1)}
+.gl-checks li.done .t{text-decoration:line-through;color:var(--muted)}
+.gl-checks li.done b{color:var(--green)}
+.gl-note{margin:10px 2px 0;font-size:12.5px;cursor:pointer}
+.gl-tmain{padding:18px;min-width:0}
+.gl-tmain-h{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.gl-tmain-h h3{margin:0;font-size:15.5px;font-weight:600}
+.gl-tmain-h .muted{margin:3px 0 0;font-size:12.5px}
+.gl-tmain .section-title{display:none}          /* заголовки разделов заменены вкладками */
+.gl-tmain .section-hint{margin:0 0 12px 2px}
+.gl-tmain .task{background:rgba(255,255,255,.72);-webkit-backdrop-filter:none;backdrop-filter:none;
+  border-radius:var(--r-md);box-shadow:none}
+.gl-tmain .task:hover{box-shadow:0 14px 30px -22px rgba(0,0,0,.45)}
+.gl-tmain #newList .task{box-shadow:inset 3px 0 0 var(--accent)}
+.gl-tmain .task.callback-today{box-shadow:inset 3px 0 0 var(--red)}
+.gl-tmain .empty{background:rgba(255,255,255,.5);box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}
+#view-tasks>.kpis{display:none}                 /* плитки-счётчики заменил «План дня» */
+.gl-seg{display:inline-flex;padding:4px;border-radius:999px;background:var(--panel);border:1px solid var(--glass-line);gap:2px;max-width:100%;overflow-x:auto;scrollbar-width:none}
+.gl-seg::-webkit-scrollbar{display:none}
+.gl-seg button{height:32px;padding:0 13px;border:0;background:none;border-radius:999px;cursor:pointer;color:var(--ink-2);
+  font:500 13px var(--sans);display:inline-flex;align-items:center;gap:7px;white-space:nowrap;transition:background .3s,color .2s}
+.gl-seg button.on{background:#fff;color:var(--ink);box-shadow:0 4px 14px -6px rgba(0,0,0,.28)}
+.gl-seg button i{font-style:normal;font-size:11.5px;font-weight:600;min-width:20px;height:20px;padding:0 6px;border-radius:999px;
+  display:inline-grid;place-items:center;background:rgba(18,21,28,.1)}
+.gl-seg button.on i{background:var(--ink);color:#fff}
+
+/* ── «Обзор»: раздел «Сегодня» ── */
+.gl-today{margin-top:0}
+.gl-per{margin-top:30px}
+.gl-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.gl-row2{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:16px;margin-top:16px}
+.gl-tile,.gl-fc,.gl-pulse{padding:18px}
+.gl-lbl{font-size:13px;color:var(--ink-2);font-weight:500}
+.gl-num{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 8px;margin-top:10px}
+.gl-num b{font-size:30px;font-weight:600;letter-spacing:-.035em;line-height:1}
+.gl-delta{font-size:11.5px;font-weight:600;padding:3px 7px;border-radius:999px;color:var(--green);background:var(--green-soft);white-space:nowrap}
+.gl-delta.down{color:var(--red);background:var(--red-soft)}
+.gl-delta.flat{color:var(--ink-2);background:rgba(18,21,28,.08)}
+.gl-delta.warn{color:var(--amber);background:var(--amber-soft)}
+.gl-vs{font-size:11.5px;color:var(--muted)}
+.gl-sub{font-size:12px;color:var(--muted);margin-top:6px}
+.gl-spark{display:flex;align-items:flex-end;gap:3px;height:46px;margin-top:14px}
+.gl-spark i{flex:1;min-width:2px;border-radius:2px;background:rgba(18,21,28,.12);transform-origin:bottom}
+.gl-spark i.hi{background:var(--c)}
+#ovLive.anim .gl-spark i{animation:gl-grow .9s cubic-bezier(.2,.85,.25,1) both;animation-delay:var(--d,0ms)}
+#ovLive.anim .card{animation:gl-rise .8s cubic-bezier(.2,.85,.25,1) both}
+@keyframes gl-grow{from{transform:scaleY(.06)}}
+@keyframes gl-rise{from{opacity:0;transform:translateY(14px) scale(.985)}}
+.gl-fc-n{display:flex;align-items:baseline;flex-wrap:wrap;gap:10px;margin-top:12px}
+.gl-fc-n b{font-size:32px;font-weight:600;letter-spacing:-.035em;line-height:1}
+.gl-fc-labs,.gl-fc-bar{display:flex;gap:6px}
+.gl-fc-labs{margin-top:20px;font-size:12px;font-weight:600;color:var(--ink-2);min-height:16px}
+.gl-fc-labs span,.gl-fc-seg{flex-basis:0;min-width:0}
+.gl-fc-bar{height:34px;margin-top:6px}
+.gl-fc-seg{border-radius:9px}
+.gl-fc-seg.s0{background:repeating-linear-gradient(90deg,var(--blue) 0 3px,transparent 3px 7px)}
+.gl-fc-seg.s1{background:var(--amber)}
+.gl-fc-seg.s2{background:repeating-linear-gradient(90deg,var(--green) 0 13px,transparent 13px 17px)}
+.gl-fc-leg{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:12px;color:var(--ink-2)}
+.gl-fc-leg span{display:inline-flex;align-items:center;gap:6px;cursor:help}
+.gl-fc-leg i{width:8px;height:8px;border-radius:50%;display:inline-block}
+.gl-fc-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:14px;padding:11px 14px;
+  border-radius:14px;background:var(--accent-soft);font-size:12.5px}
+.gl-fc-foot b{font-size:14px}
+.gl-gauge{position:relative;max-width:240px;margin:6px auto 0}
+.gl-gauge svg{display:block;width:100%;height:auto;overflow:visible}
+.gl-gauge path{fill:none;stroke-width:14;stroke-linecap:round}
+.gl-gauge .track{stroke:rgba(18,21,28,.1)}
+.gl-g-c{position:absolute;left:0;right:0;bottom:2px;text-align:center}
+.gl-g-c small{display:block;color:var(--muted);font-size:11.5px}
+.gl-g-c b{font-size:30px;letter-spacing:-.03em;font-weight:600}
+.gl-legend{list-style:none;margin:12px 0 0;padding:0}
+.gl-legend li{display:flex;align-items:center;gap:9px;font-size:12.5px;padding:7px 2px;border-top:1px solid var(--line)}
+.gl-legend li:first-child{border-top:0}
+.gl-legend i{width:9px;height:9px;border-radius:3px;flex:none}
+.gl-legend b{margin-left:auto}
+
+@media(max-width:1100px){
+  .gl-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .gl-row2{grid-template-columns:1fr}
+}
+@media(max-width:899px){
+  .gl-tasks{grid-template-columns:1fr}
+  .gl-plan{position:static}
+}
+@media(max-width:560px){
+  .gl-tiles{gap:10px}
+  .gl-tile{padding:14px}
+  .gl-num b{font-size:24px}
+  .gl-tmain{padding:12px}
+}

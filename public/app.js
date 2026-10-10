@@ -291,7 +291,7 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   ['tasks','calls','overview','clients','vip','deposit','alice','bday','scripts','analytics','segments','vitrina'].forEach(name=>$('#view-'+name).style.display = name===v?'':'none');
   if(v==='tasks') loadTasks();
   if(v==='calls') loadCalls();
-  if(v==='overview') loadOverview();
+  if(v==='overview'){ ovLiveAnim=true; loadOverview(); }
   if(v==='clients') loadClients();
   if(v==='vip') loadList('vip');
   if(v==='deposit') loadList('deposit');
@@ -417,6 +417,7 @@ async function loadTasks(){
   list.innerHTML = rest.length
     ? rest.map(t=>taskCard(t,RES,false)).join('')
     : `<div class="empty">${await emptyTasksHint(deep.length)}</div>`;
+  if(GLASS) await glassTasks(counts, KL, newbies.length, rest.length, deep.length);
 }
 
 // Текст для пустого списка задач. Отложенные задачи на дашборде не видны до самого дня
@@ -1046,6 +1047,7 @@ function ovPeriodLabel(){
 }
 
 async function loadOverview(){
+  const live = GLASS ? loadOvLive() : null;   // раздел «Сегодня» темы «Стекло» — параллельно
   const s = await api(ovUrl('/api/stats'));
   if(s.period) ovPeriod=s.period;
   if(s.today) ovToday=s.today;
@@ -1084,6 +1086,7 @@ async function loadOverview(){
 
   renderOvCal();
   loadJournal();
+  if(live) await live;
 }
 const JR_RES={booked:'Записан',coming:'Придёт',refused:'Отказ',callback:'Перезвонить',no_answer:'Не ответил',no_calls:'Просил не звонить',wrong_number:'Неверный номер',done:'Обработан',written:'Написали',self_booked:'Сам записался'};
 const loadJournal = () => renderJournal(ovUrl('/api/overview/journal'), $('#jrResult').value, $('#ovJournal'));
@@ -2535,6 +2538,120 @@ $('#adminAdd').onclick = addAdmin;
 $('#admLoadYc').onclick = loadYcAdmins;
 $('#admImport').onclick = importYcAdmins;
 $('#adminNewName').onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); addAdmin(); } };
+
+// ═══ Тема «Стекло» (/?theme=glass) ════════════════════════════════════════════
+// Вид из демо docs/demo/crm-glass.html. Стили — в app-glass.css; здесь то, что CSS
+// не сделает: «План дня» и переключатель New / Обзвон / Deep Sleep на «Задачах» и раздел
+// «Сегодня» на «Обзоре». В обычной теме ничего из этого не запускается.
+const GLASS = document.documentElement.classList.contains('glass');
+const nf = n => Math.round(n||0).toLocaleString('ru-RU');
+const pct1 = v => (Math.round((v||0)*10)/10).toLocaleString('ru-RU',{minimumFractionDigits:1,maximumFractionDigits:1})+'%';
+
+// Задачи: слева «План дня», справа одна стеклянная карточка с вкладками. Узлы списков
+// переносятся в неё как есть — с теми же id, поэтому вся прежняя логика работает без правок.
+let taskTab = null;   // выбранная вкладка живёт до перезагрузки страницы, переживает перерисовки
+function glassTasksLayout(){
+  const view=$('#view-tasks');
+  const wrap=document.createElement('div'); wrap.className='gl-tasks';
+  wrap.innerHTML=`<aside class="card gl-plan" id="taskPlan"></aside>
+    <div class="card gl-tmain"><div class="gl-tmain-h"><div><h3>Задачи на сегодня</h3>
+      <p class="muted" id="taskSub"></p></div><div class="gl-seg" id="taskTabs"></div></div></div>`;
+  const main=wrap.querySelector('.gl-tmain');
+  const title=$('#taskList').previousElementSibling;          // «Задачи на сегодня» — заголовок теперь в карточке
+  [$('#newSection'), title, $('#taskList'), $('#deepSection')].forEach(n=>main.appendChild(n));
+  view.appendChild(wrap);
+  $('#taskTabs').onclick=e=>{ const b=e.target.closest('[data-tt]'); if(!b) return; taskTab=b.dataset.tt; glassTabs(); };
+  $('#taskPlan').onclick=e=>{ const r=e.target.closest('[data-tt]'); if(!r) return; taskTab=r.dataset.tt; glassTabs(); };
+}
+let glassCounts={new:0,call:0,deep:0};
+function glassTabs(){
+  const c=glassCounts;
+  if(!taskTab) taskTab = c.new ? 'new' : c.call ? 'call' : c.deep ? 'deep' : 'call';
+  $('#taskTabs').innerHTML=[['new','New'],['call','Обзвон'],['deep','Deep Sleep']].map(([k,l])=>
+    `<button type="button" class="${k===taskTab?'on':''}" data-tt="${k}">${l} <i>${c[k]}</i></button>`).join('');
+  $('#newSection').style.display  = taskTab==='new'  ? '' : 'none';
+  $('#taskList').style.display    = taskTab==='call' ? '' : 'none';
+  $('#deepSection').style.display = taskTab==='deep' ? '' : 'none';
+  if(taskTab==='new' && !c.new) $('#newList').innerHTML='<div class="empty">Новичкам на сегодня всё написано.</div>';
+  if(taskTab==='deep' && !c.deep) $('#deepList').innerHTML='<div class="empty">Спящих на сегодня нет.</div>';
+}
+async function glassTasks(counts,KL,newN,callN,deepN){
+  glassCounts={new:newN,call:callN,deep:deepN};
+  glassTabs();
+  const who=currentAdmin();
+  $('#taskSub').textContent=[who?'звонит '+who:'', currentBranch||'оба филиала'].filter(Boolean).join(' · ');
+  // Сколько уже отработано сегодня — из той же сводки, что «Обзор»: спящие не входят ни туда, ни сюда
+  let done=0; try{ done=(await api(bp('/api/stats'))).done_today||0; }catch{}
+  const open=newN+callN, tot=done+open, p=tot?Math.round(done/tot*100):100;
+  const rows=Object.entries(KL).filter(([k])=>k!=='deep_sleep').map(([k,l])=>{
+    const n=counts[k]||0, tt=k==='new_client'?'new':'call';
+    return `<li class="${n?'':'done'}" data-tt="${tt}"><span class="gl-ck">${ICON.check}</span><span class="t">${esc(l)}</span><b>${n||'готово'}</b></li>`;
+  }).join('');
+  $('#taskPlan').innerHTML=`<div class="gl-card-h"><div><h3>План дня</h3><p class="muted">Сначала новички и неявки, потом ритм</p></div>
+      <span class="gl-tag">${done} из ${tot}</span></div>
+    <div class="gl-progress"><div class="gl-bar"><i style="width:${p}%"></i></div><b>${p}%</b></div>
+    <ul class="gl-checks">${rows}</ul>
+    <p class="muted gl-note" data-tt="deep">${deepN?`Deep Sleep — ${plural(deepN,'человек','человека','человек')}, если останется время`:'Deep Sleep на сегодня разобран'}</p>`;
+}
+
+// Обзор: раздел «Сегодня» над календарём периода.
+let ovLiveAnim=true;   // анимации — при открытии вкладки, а не на каждом тихом обновлении раз в 45 с
+function glassOverviewLayout(){
+  const box=document.createElement('div'); box.id='ovLive';
+  const per=document.createElement('div'); per.className='section-title gl-per'; per.textContent='За период';
+  const view=$('#view-overview'); view.prepend(per); view.prepend(box);
+}
+const glSpark = (vals,col,hi=7) => { const m=Math.max(1,...vals);
+  return `<div class="gl-spark" style="--c:var(${col})">${vals.map((v,i)=>
+    `<i class="${i>=vals.length-hi?'hi':''}" style="height:${Math.max(6,Math.round(v/m*100))}%;--d:${i*16}ms"></i>`).join('')}</div>`; };
+const glDelta = (d,unit='') => d===0 ? `<span class="gl-delta flat">как вчера</span>`
+  : `<span class="gl-delta ${d<0?'down':''}">${d>0?'+':'−'}${String(Math.abs(d)).replace('.',',')}${unit}</span>`;
+function glArc(cx,cy,r,a0,a1){ const p=a=>[cx+r*Math.cos(a*Math.PI/180),cy+r*Math.sin(a*Math.PI/180)];
+  const [x0,y0]=p(a0),[x1,y1]=p(a1); return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${r} ${r} 0 ${a1-a0>180?1:0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`; }
+async function loadOvLive(){
+  const d=await api(bp('/api/overview/live')), t=d.tiles, s=d.series, f=d.forecast, pu=d.pulse;
+  const where=currentBranch||'оба филиала';
+  const conv=s.map(x=>x.calls?x.booked/x.calls:0);
+  const tiles=[
+    ['Звонков сегодня', nf(t.calls), glDelta(t.calls-t.calls_yesterday)+'<span class="gl-vs">к вчера</span>', `все админы · ${esc(where)}`, glSpark(s.map(x=>x.calls),'--blue')],
+    ['Записано', nf(t.booked), glDelta(t.booked-t.booked_yesterday)+'<span class="gl-vs">к вчера</span>', 'записались после звонка', glSpark(s.map(x=>x.booked),'--green')],
+    ['Конверсия', pct1(t.conversion), glDelta(Math.round((t.conversion-t.conversion_week)*10)/10,' п.п.')+'<span class="gl-vs">к неделе</span>', 'записей на звонок', glSpark(conv,'--accent')],
+    ['Ждут перезвона', nf(t.waiting), `<span class="gl-delta warn">${t.next_callback?'ближ. '+t.next_callback:'сегодня больше нет'}</span>`, 'договорились о времени', glSpark(s.map(x=>x.cb),'--amber')],
+  ].map(([l,n,dl,sub,sp])=>`<div class="card gl-tile"><div class="gl-lbl">${l}</div><div class="gl-num"><b>${n}</b>${dl}</div><div class="gl-sub">${sub}</div>${sp}</div>`).join('');
+
+  const total=f.booked+f.rhythm, all=Math.max(1,f.booked+f.rhythm+f.risk);
+  const part=[f.booked,f.rhythm,f.risk].map(v=>v/all*100);
+  const vsFact=f.fact_prev30>0 ? Math.round((total/f.fact_prev30-1)*100) : null;
+  const fc=`<div class="card gl-fc"><div class="gl-card-h"><div><h3>Прогноз выручки · 30 дней</h3><p class="muted">записи и ритм постоянных клиентов</p></div></div>
+    <div class="gl-fc-n"><b>${rub(total)}</b>${vsFact==null?'':`<span class="gl-delta ${vsFact<0?'down':''}">${vsFact>0?'+':vsFact<0?'−':''}${Math.abs(vsFact)}% к прошлым 30 дням</span>`}</div>
+    <div class="gl-fc-labs">${part.map(v=>`<span style="flex-grow:${v}">${v>=6?Math.round(v)+'%':''}</span>`).join('')}</div>
+    <div class="gl-fc-bar">${part.map((v,i)=>`<div class="gl-fc-seg s${i}" style="flex-grow:${v}"></div>`).join('')}</div>
+    <div class="gl-fc-leg">
+      <span title="Будущие записи в YClients; где цена в записи не указана — средний чек клиента"><i style="background:var(--blue)"></i>В записи <b>${rub(f.booked)}</b> · ${plural(f.booked_n,'запись','записи','записей')}</span>
+      <span title="Записи нет, но по его обычному интервалу визит выпадает на ближайшие 30 дней"><i style="background:var(--amber)"></i>Ждём по ритму <b>${rub(f.rhythm)}</b> · ${plural(f.rhythm_n,'человек','человека','человек')}</span>
+      <span title="Визит уже просрочен, но не больше чем на один обычный интервал — в итог не входит"><i style="background:var(--green)"></i>Под риском <b>${rub(f.risk)}</b> · ${plural(f.risk_n,'человек','человека','человек')}</span>
+    </div>
+    <div class="gl-fc-foot"><span>Факт за прошлые 30 дней<br><span class="muted">по закрытым визитам</span></span><b>${rub(f.fact_prev30)}</b></div></div>`;
+
+  const v=[pu.callback,pu.booked,pu.other], tot=v[0]+v[1]+v[2], GAP=16, span=180-GAP*2;
+  let a=180; const arcs=['--amber','--green','--blue'].map((c,i)=>{ const len=tot?span*v[i]/tot:0, from=a; a+=len+GAP;
+    return len>.5?`<path d="${glArc(100,100,78,from,from+len)}" style="stroke:var(${c})"/>`:''; }).join('');
+  const pulse=`<div class="card gl-pulse"><div class="gl-card-h"><div><h3>Пульс недели</h3><p class="muted">чем заканчиваются звонки</p></div><span class="gl-tag">7 дней</span></div>
+    <div class="gl-gauge"><svg viewBox="0 0 200 112" aria-hidden="true"><path class="track" d="M22 100 A78 78 0 0 1 178 100"/>${arcs}</svg>
+      <div class="gl-g-c"><small>Конверсия в запись</small><b>${pct1(tot?pu.booked/tot*100:0)}</b></div></div>
+    <ul class="gl-legend">
+      <li><i style="background:var(--green)"></i>Записались<b>${nf(pu.booked)}</b></li>
+      <li><i style="background:var(--amber)"></i>Перезвонить<b>${nf(pu.callback)}</b></li>
+      <li><i style="background:var(--blue)"></i>Нет ответа и отказы<b>${nf(pu.other)}</b></li>
+    </ul></div>`;
+
+  $('#ovLive').className=ovLiveAnim?'anim':'';
+  $('#ovLive').innerHTML=`<div class="section-title gl-today">Сегодня · обновляется само</div>
+    <div class="gl-tiles">${tiles}</div><div class="gl-row2">${fc}${pulse}</div>`;
+  ovLiveAnim=false;
+}
+
+if(GLASS){ glassTasksLayout(); glassOverviewLayout(); }
 
 // Старт
 loadAdmins();
