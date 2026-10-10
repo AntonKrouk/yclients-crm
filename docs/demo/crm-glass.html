@@ -230,20 +230,6 @@ p{margin:0}
 .checks li.done b{color:var(--good)}
 .plan .opt-note{margin-top:10px}
 
-/* space in the middle keeps the orb visible; two glass chips float in it */
-.air{position:relative;min-height:220px}
-.floaty{position:absolute;display:flex;align-items:center;gap:10px;max-width:92%;padding:10px 14px 10px 10px;border-radius:999px;
-  background:var(--glass-2);border:1px solid var(--glass-line);-webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);
-  box-shadow:var(--shadow);font-size:12.5px;animation:bob 6s ease-in-out infinite alternate}
-.floaty .dot{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;flex:none}
-.floaty .dot svg{width:15px;height:15px}
-.floaty b{display:block;font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.floaty span{display:block;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.floaty>div{min-width:0}
-.f1{top:16%;left:4%}
-.f2{bottom:14%;right:2%;animation-delay:-3s}
-@keyframes bob{from{transform:translateY(-7px)}to{transform:translateY(7px)}}
-
 /* pulse gauge */
 .gauge{position:relative;max-width:240px;margin:6px auto 0}
 .gauge svg{display:block;width:100%;height:auto;overflow:visible}
@@ -294,20 +280,6 @@ p{margin:0}
 .fc-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:14px;padding:11px 14px;border-radius:14px;
   background:var(--accent-soft);font-size:12.5px}
 .fc-foot b{font-size:14px}
-
-/* live journal */
-.live{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;color:var(--good);background:var(--good-soft);padding:4px 10px;border-radius:999px}
-.live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--good);animation:ping 1.8s infinite}
-@keyframes ping{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--good) 55%,transparent)}100%{box-shadow:0 0 0 9px transparent}}
-.jlist{list-style:none;margin:12px 0 0;padding:0;display:flex;flex-direction:column}
-.jrow{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--stroke);cursor:pointer}
-.jrow:first-child{border-top:0}
-.jrow.fresh{animation:jin .6s var(--ease)}
-@keyframes jin{from{opacity:0;transform:translateY(-10px)}}
-.jrow .txt{min-width:0;flex:1}
-.jrow .txt b{display:block;font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.jrow .txt span{font-size:12px;color:var(--ink-3)}
-.jrow.mine .txt span{color:var(--ink-2)}
 
 /* avatars */
 .ava{width:38px;height:38px;border-radius:50%;flex:none;display:grid;place-items:center;font-weight:600;font-size:13px;
@@ -748,8 +720,6 @@ details.col summary span{margin-left:auto;font-size:12px;color:var(--ink-3)}
 /* ---------- responsive ---------- */
 @media (max-width:1040px){
   .s3{grid-column:span 6}.s4,.s5,.s6,.s7,.s8{grid-column:span 12}
-  .air{display:none}
-  .order-first{order:-1}
 }
 @media (max-width:760px){
   .top{grid-template-columns:1fr auto}
@@ -828,26 +798,13 @@ details.col summary span{margin-left:auto;font-size:12px;color:var(--ink-3)}
   <!-- ===== ЗАДАЧИ ===== -->
   <div class="view" id="view-tasks">
     <div class="grid">
-      <div class="card plan s5 rise" style="--i:0">
+      <div class="card plan s4 rise" style="--i:0;align-self:start">
         <div class="card-h"><div><h3>План дня</h3><p class="muted small">Сначала новички и неявки, потом ритм</p></div><span class="tagp t-mute" id="planCount">4 из 15</span></div>
         <div class="progress"><div class="bar"><i id="planBar"></i></div><span class="pct" id="planPct">27%</span></div>
         <ul class="checks" id="planList"></ul>
         <p class="muted small opt-note" id="deepNote">Deep Sleep — 4 человека, если останется время</p>
       </div>
-      <div class="air s7" aria-hidden="true">
-        <div class="floaty f1"><span class="dot t-warn" id="f1i"></span><div><b id="f1b">Перезвонить в 15:00</b><span id="f1s">Елена Морозова</span></div></div>
-        <div class="floaty f2"><span class="dot t-good" id="f2i"></span><div><b id="f2b">Ольга · записан</b><span id="f2s">2 мин назад</span></div></div>
-      </div>
-    </div>
-
-    <div class="grid">
-      <div class="stack s5">
-        <div class="card rise" style="--i:2">
-          <div class="card-h"><div><h3>Журнал звонков</h3><p class="muted small">все админы, оба филиала</p></div><span class="live">Live</span></div>
-          <ul class="jlist" id="jList"></ul>
-        </div>
-      </div>
-      <div class="card tasks s7 order-first rise" style="--i:1" id="tasksCard">
+      <div class="card tasks s8 rise" style="--i:1" id="tasksCard">
         <div class="card-h">
           <div><h3>Задачи на сегодня</h3><p class="muted small" id="tasksSub">звонит Мария</p></div>
           <div class="seg" id="taskTabs" role="tablist" aria-label="Разделы задач">
@@ -1215,7 +1172,7 @@ const RES_C = {booked:'t-good', coming:'t-good', callback:'t-warn', no_answer:'t
 let tasks = CLIENTS.filter(c => c.type && !c.sync).map(c => ({...c}));
 let tab = 'new', branch = 'all', view = 'tasks', synced = false;
 const hist = new Map();   // client id -> действия в этой сессии
-const J = [];             // живой журнал (виджет на «Задачах»)
+const J = [];             // последние отметки — чтобы симуляция не звонила одним и тем же
 
 function reason(t){
   const m = M[t.master];
@@ -1416,7 +1373,7 @@ $('#meBtn').onclick = () => {
   openModal(`<div class="m-head"><div><h3>Кто звонит?</h3><p>Все отметки звонков запишутся на выбранного администратора.</p></div>${xBtn}</div>
     <div class="m-sec"><div class="opts" id="admOpts">${ADMINS.map(a => `<button class="opt${a === ADMIN ? ' on' : ''}" data-a="${a}"><b>${a}</b><small>администратор</small></button>`).join('')}</div></div>`, 'Кто звонит');
   $('#admOpts').onclick = e => { const b = e.target.closest('[data-a]'); if (!b) return; ADMIN = b.dataset.a;
-    $('#meBtn').textContent = ADMIN.slice(0, 2).toUpperCase(); closeModal(); setHero(); renderJournal(null); updateFloat(); renderTasks(false);
+    $('#meBtn').textContent = ADMIN.slice(0, 2).toUpperCase(); closeModal(); setHero(); renderTasks(false);
     toast(`Звонит ${ADMIN}`, I.user, 'var(--info)'); };
 };
 
@@ -1538,27 +1495,15 @@ function updatePlan(){
   $('#deepNote').textContent = deep ? `Deep Sleep — ${pl(deep, 'человек', 'человека', 'человек')}, если останется время` : 'Deep Sleep на сегодня разобран';
 }
 function ago(ts){ const m = Math.round((Date.now() - ts) / 60000); return m < 1 ? 'только что' : m < 60 ? `${m} мин назад` : m < 1440 ? `${Math.round(m / 60)} ч назад` : fmtDT(new Date(ts)); }
-function updateFloat(){
+// ближайший перезвон — в плитке «Ждут перезвона» на «Обзоре»
+function updateWaitNext(){
   const cb = tasks.find(t => t.cb);
-  $('#f1i').innerHTML = I.clock;
-  $('#f1b').textContent = cb ? `Перезвонить в ${cb.cb}` : 'Перезвонов на сегодня нет';
-  $('#f1s').textContent = cb ? cb.name : 'всё по договорённостям';
   $('#kWaitNext').textContent = cb ? `ближ. ${cb.cb}` : 'на завтра';
-  const j = J[0]; if (!j) return;
-  $('#f2i').className = 'dot ' + RES_C[j.res]; $('#f2i').innerHTML = j.res === 'booked' ? I.check : j.res === 'refused' ? I.cross : j.res === 'written' ? I.msg : I.clock;
-  $('#f2b').textContent = `${j.admin === ADMIN ? 'Вы' : j.admin} · ${RES_L[j.res].toLowerCase()}`;
-  $('#f2s').textContent = `${CL.get(j.cid).name} · ${ago(j.ts)}`;
 }
-function addJournal(e, fresh = true){
+function addJournal(e){
   J.unshift(e); if (J.length > 6) J.pop();
   OVJ.unshift({...e, note:e.note || ''});
-  renderJournal(fresh ? e : null); updateFloat();
-}
-function renderJournal(fresh){
-  $('#jList').innerHTML = J.map(e => `<li class="jrow${e === fresh ? ' fresh' : ''}${e.admin === ADMIN ? ' mine' : ''}" data-client="${e.cid}">
-      <span class="ava sm">${initials(CL.get(e.cid).name)}</span>
-      <div class="txt"><b>${esc(CL.get(e.cid).name)}</b><span>${e.admin === ADMIN ? 'Вы' : e.admin} · ${ago(e.ts)}</span></div>
-      <span class="tagp ${RES_C[e.res]}">${RES_L[e.res]}</span></li>`).join('');
+  updateWaitNext();
 }
 [['Ольга',104,'booked',2],['Ксения',105,'callback',6],['Ольга',106,'no_answer',11],['Мария',107,'booked',17],['Ксения',108,'refused',26]].reverse()
   .forEach(([a, cid, r, m]) => J.unshift({admin:a, cid, res:r, ts:Date.now() - m * 60000}));
@@ -1646,7 +1591,7 @@ function resetTasks(){
   const have = new Set(tasks.map(t => t.id));
   CLIENTS.filter(c => c.type && (!c.sync || synced) && !have.has(c.id) && !c.dnc && !inLists(c.id).length).forEach(c => tasks.push({...c}));
   tasks.sort((a, b) => a.id - b.id);
-  updateCounts(); updatePlan(); updateFloat(); renderTasks();
+  updateCounts(); updatePlan(); updateWaitNext(); renderTasks();
   toast('Демо-задачи вернулись в список', I.sync, 'var(--info)');
 }
 // снять задачу без звонка (клиента добавили в ручной список или «не беспокоить»)
@@ -1654,7 +1599,7 @@ function dropTask(id){
   const t = tasks.find(x => x.id === id); if (!t) return false;
   tasks = tasks.filter(x => x !== t);
   collapse($(`.task[data-id="${id}"]`), 1, 'no_calls').then(() => { if (!visible().length) renderTasks(false); });
-  updateCounts(); updatePlan(); updateFloat();
+  updateCounts(); updatePlan(); updateWaitNext();
   return true;
 }
 function finish(t, act, o = {}){
@@ -1672,7 +1617,7 @@ function finish(t, act, o = {}){
   addJournal({admin:ADMIN, cid:t.id, res:act, ts:Date.now(), note, mine:true});
   tasks = tasks.filter(x => x !== t);
   collapse($(`.task[data-id="${t.id}"]`), act === 'refused' ? -1 : 1, act).then(() => { if (!visible().length) renderTasks(false); });
-  updateCounts(); updateKpis(); updatePlan(); updatePulse(); updateFloat();
+  updateCounts(); updateKpis(); updatePlan(); updatePulse(); updateWaitNext();
   if (act === 'booked') updateForecast();
   const msg = {
     booked:`Записали: ${t.name} — ${o.whenText}`,
@@ -2639,7 +2584,7 @@ document.addEventListener('click', e => { const g = e.target.closest('[data-go]'
 // BOOT
 // =====================================================================
 $$('#ovLive .spark').forEach(spark);
-renderJournal(null); updateFloat(); updateCounts(); renderTasks(false);
+updateWaitNext(); updateCounts(); renderTasks(false);
 ['#kCalls','#kBooked','#kRevenue','#kConv','#kWait','#fcTotal','#fcA','#fcB','#planPct','#gPct','#lgB','#lgC','#lgN'].forEach(s => { $(s).dataset.v = 0; });
 if (!RM) $$('.fc-seg,.fc-lab').forEach(s => { s.style.flexGrow = .001; });
 requestAnimationFrame(() => requestAnimationFrame(() => { updateKpis(); updatePlan(); updateForecast(); updatePulse(false); animatePulse(); }));
@@ -2651,7 +2596,6 @@ positionThumbs();
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => positionThumbs());
 let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { positionThumbs(); redrawCharts(); }, 120); });
 setInterval(simulate, 11000);
-setInterval(() => { renderJournal(null); updateFloat(); }, 30000);
 })();
 </script>
 
