@@ -53,9 +53,14 @@ app.post('/api/login', (req, res) => {
   const ip = req.ip || '';
   const fails = recentFails(ip);
   if (fails.length >= LOGIN_MAX) {
+    console.warn(`[login] блок по лимиту, ${ip}`);
     return res.status(429).json({ error: 'Слишком много попыток. Попробуйте через 15 минут' });
   }
   if (sameSecret((req.body || {}).password || '', DASH_PW)) {
+    // Успешный вход пишем в журнал: смотреть `journalctl -u yclients-crm | grep login-ok`.
+    // «после N неудач» — признак подбора, который в итоге удался.
+    const ua = String(req.get('user-agent') || '').replace(/[^\x20-\x7e]/g, '').slice(0, 80);
+    console.log(`[login-ok] ${ip} после ${fails.length} неудач, ${ua}`);
     loginFails.delete(ip);
     const secure = req.get('x-forwarded-proto') === 'https' ? '; Secure' : '';
     res.setHeader('Set-Cookie', `sess=${sessionCookie()}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Lax${secure}`);
