@@ -2544,7 +2544,9 @@ async function bootstrap() {
   }
 }
 
-app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`YClients CRM на http://0.0.0.0:${PORT} (режим: ${yc.isDemo() ? 'DEMO' : 'LIVE'})`);
+// Только localhost: снаружи CRM открывается через nginx (443), как и витрина.
+const HOST = process.env.HOST || '127.0.0.1';
+app.listen(PORT, HOST, async () => {
+  console.log(`YClients CRM на http://${HOST}:${PORT} (режим: ${yc.isDemo() ? 'DEMO' : 'LIVE'})`);
   await bootstrap();
 });
