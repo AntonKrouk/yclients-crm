@@ -14,7 +14,8 @@
 | Код | `C:\Users\akruk\Desktop\Claude Code\yclients-crm` (Express + `node:sqlite`, порт 3020) |
 | Репо | `AntonKrouk/yclients-crm`, ветка **main**, приватный |
 | Прод | **https://prive7crm.ru** → VPS `root@194.187.122.175` (prive7crm-spb, Timeweb ID 8788221), код в `/opt/yclients-crm`, systemd `yclients-crm` |
-| База | `/opt/yclients-crm/data/crm.db`, бэкап 03:30 в Yandex Object Storage |
+| База | `/opt/yclients-crm/data/crm.db`, бэкап 03:30 в ДВА места: Yandex Object Storage (`prive7-crm-backup`, ключи `/root/.s3cred`) и Timeweb S3 (`prive7-crm-backup-tw`, приватный, 10 ГБ, ключи `/root/.s3cred-tw`); плюс автокопия диска сервера в панели Timeweb. Старые файлы в бакетах сами не удаляются |
+| Безопасность | 11.10.2026 проверено: взлома и скачивания базы не было (SSH-входы — свои, консоль Timeweb = IPv6 самого сервера). Фаервол — `ufw` (открыты 22, 80, 443, 8443), в панели Timeweb не настроен. CRM слушает только `127.0.0.1`. Успешные входы в CRM: `journalctl -u yclients-crm \| grep login-ok`. Отложено Антоном: SSH по ключу, DDoS-защита Timeweb (750 ₽/мес) |
 | Филиалы | `387958` = **Басков**, `898298` = **Мытнинская** (`YCLIENTS_COMPANY_ID` в `.env`) |
 | Версия на проде | `curl -s https://prive7crm.ru/api/health` → поле `version` = хеш коммита |
 
