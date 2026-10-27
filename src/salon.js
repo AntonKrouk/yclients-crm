@@ -19,6 +19,18 @@ const CLIENTS_PER_MASTER = 10;
 
 const err = (message, status = 400) => Object.assign(new Error(message), { status });
 
+// YClients бывает недоступен так, что соединение есть, а ответа нет (их сбой, VPN на компьютере) —
+// и запрос висит минутами. Сводке и живым экранам столько ждать нельзя: по истечении срока сводка
+// считается без смен, а «Сегодня» и окна отдают понятную ошибку. Сам запрос не обрываем: доедет —
+// ляжет в кэш, и следующий раз будет быстрым.
+function timeBox(p, ms, what) {
+  let timer;
+  const late = new Promise((_, rej) => {
+    timer = setTimeout(() => rej(err(`YClients не ответил за ${Math.round(ms / 1000)} с (${what})`, 504)), ms);
+  });
+  return Promise.race([p, late]).finally(() => clearTimeout(timer));
+}
+
 // --- Даты -------------------------------------------------------------------------
 // Копии помощников из server.js (там они объявлены внутри файла и наружу не выходят):
 // салон живёт по Москве, а даты в базе лежат ISO-строкой в UTC.
@@ -238,8 +250,10 @@ async function summary({ from, to, branch } = {}) {
   const schFrom = f < shiftDay(today, -400) ? shiftDay(today, -400) : f;
   const schTo = t > shiftDay(today, 30) ? shiftDay(today, 30) : t;
   try {
-    await refreshStaff();
-    if (schFrom <= schTo) await ensureSchedule(schFrom, schTo);
+    await timeBox((async () => {
+      await refreshStaff();
+      if (schFrom <= schTo) await ensureSchedule(schFrom, schTo);
+    })(), 8000, 'смены мастеров');
   } catch (e) { console.error('[salon] смены не обновлены:', e.message); }
 
   const bw = branch ? 'AND branch = ?' : '';
@@ -634,11 +648,14 @@ async function livesOf(branch, recordsMaxAge, what) {
   const comps = pickCompanies(branch);
   await yc.ensureAuth();
   const today = mskToday(), days = weekFrom(today);
+  // филиалы — одновременно: «Сегодня» по двум салонам открывается вдвое быстрее
   const lives = [], warnings = [];
-  for (const comp of comps) {
-    try { lives.push(await companyLive(comp, days, recordsMaxAge)); }
-    catch (e) { console.error(`[salon] ${what}, ${compName(comp)}:`, e.message); warnings.push(`${compName(comp)}: ${e.message}`); }
-  }
+  const got = await Promise.allSettled(comps.map(comp => timeBox(companyLive(comp, days, recordsMaxAge), 25000, compName(comp))));
+  got.forEach((g, i) => {
+    if (g.status === 'fulfilled') { lives.push(g.value); return; }
+    console.error(`[salon] ${what}, ${compName(comps[i])}:`, g.reason.message);
+    warnings.push(`${compName(comps[i])}: ${g.reason.message}`);
+  });
   if (!lives.length) throw err(`YClients не отдал журнал — ${warnings.join('; ')}`, 502);
   return { today, days, lives, warnings };
 }

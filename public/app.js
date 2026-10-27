@@ -195,7 +195,11 @@ async function loadBranches(){
   sel.innerHTML = '<option value="">Все филиалы</option>' + list.map(b=>`<option value="${b.branch}">${b.branch} · ${b.clients}</option>`).join('');
   sel.value = currentBranch;
   sel.onchange = ()=>{ currentBranch = sel.value; reloadCurrentView(); };
+  // тот же выбор кнопками — в шапке «Салона»
+  branchNames = list.map(b=>b.branch);
+  slRenderBranch();
 }
+let branchNames=[];
 function reloadCurrentView(){
   const v = document.querySelector('.tab.active')?.dataset.view;
   if(v==='salon') loadSalon();
@@ -2790,6 +2794,16 @@ function slSyncHead(){
   $('#slWhere').textContent=[currentBranch||'оба филиала', live?'вживую':`${slDM(SL.from)}–${slDM(SL.to)}`].join(' · ');
   $('#slToday').style.display=live?'':'none';
   $('#slPeriodView').style.display=live?'none':'';
+  slRenderBranch();
+}
+// Салон кнопками «Все · Басков · Мытнинская» прямо в шапке раздела. Это тот же currentBranch,
+// что у селекта «Все филиалы» в меню: переключили здесь — меню показывает то же, и наоборот.
+function slRenderBranch(){
+  const box=$('#slBranch'); if(!box) return;
+  if(branchNames.length<2){ box.style.display='none'; return; }
+  box.style.display='';
+  box.innerHTML=[['','Все'],...branchNames.map(b=>[b,b])].map(([v,l])=>
+    `<button type="button" data-br="${esc(v)}" class="${v===currentBranch?'on':''}">${esc(l)}</button>`).join('');
 }
 // Переключили период: «Сегодня» берёт журнал YClients, остальное — сводку из базы
 const slLoadMain = () => SL.period==='today' ? slLoadToday() : slLoadSum();
@@ -3236,6 +3250,11 @@ $('#view-salon').addEventListener('click',e=>{
   const q=s=>e.target.closest(s); let b;
   if(q('#slGear')) return slPop($('#slPop').hidden);
   if((b=q('[data-p]'))){ SL.period=b.dataset.p; [SL.from,SL.to]=slRange(SL.period); slSyncHead(); return slLoadMain(); }
+  if((b=q('[data-br]'))){
+    if(b.dataset.br===currentBranch) return;
+    currentBranch=b.dataset.br; $('#branchSel').value=currentBranch;   // меню слева показывает то же
+    return loadSalon();   // всё в разделе — под выбранный салон: день, сводка, окна
+  }
   if(q('#slTodayRefresh')) return slLoadToday(true);
   if((b=q('[data-sort]'))){
     const k=b.dataset.sort;
