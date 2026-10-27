@@ -34,9 +34,11 @@ const DASH_PW = process.env.DASHBOARD_PASSWORD || '';
 const SECRET = process.env.SESSION_SECRET || DASH_PW || 'dev-secret';
 const CRON_SECRET = process.env.CRON_SECRET || '';
 const AUTH_ON = Boolean(DASH_PW);
-// Пароль владельца (раздел «Салон»: выручка мастеров и загрузка — админам это видеть незачем).
-// Вводится в том же окне входа. Не задан — раздел недоступен никому.
+// Вход владелицы и управляющей (раздел «Салон»: выручка мастеров и загрузка — админам это видеть
+// незачем): логин manager и общий на двоих пароль. Админы входят как раньше — без логина, общим
+// паролем дашборда. Пароль не задан — раздел недоступен никому. Логин можно сменить в .env.
 const OWNER_PW = process.env.OWNER_PASSWORD || '';
+const OWNER_LOGIN = (process.env.OWNER_LOGIN || 'manager').trim().toLowerCase();
 const PUBLIC_ASSETS = new Set(['/app.css', '/app-yc.css', '/app-glass.css', '/app.js', '/manifest.webmanifest', '/prive-logo.png',
   '/favicon.ico', '/apple-touch-icon.png', '/apple-touch-icon-precomposed.png']);
 // Пароль входит в подпись куки: сменили DASHBOARD_PASSWORD — все старые входы (в т.ч. у
@@ -73,10 +75,13 @@ app.post('/api/login', (req, res) => {
     console.warn(`[login] блок по лимиту, ${ip}`);
     return res.status(429).json({ error: 'Слишком много попыток. Попробуйте через 15 минут' });
   }
-  // Пароль владельца проверяем первым; пустой OWNER_PW не должен совпасть с пустым вводом.
+  // С логином manager — только пароль владельца; без логина — пароль админов (и, по старой памяти,
+  // владельца). Пустой OWNER_PW не должен совпасть с пустым вводом.
   const typed = (req.body || {}).password || '';
-  const isOwnerPw = Boolean(OWNER_PW) && sameSecret(typed, OWNER_PW);
-  if (isOwnerPw || sameSecret(typed, DASH_PW)) {
+  const login = String((req.body || {}).login || '').trim().toLowerCase();
+  const asOwner = login === OWNER_LOGIN;
+  const isOwnerPw = Boolean(OWNER_PW) && (asOwner || !login) && sameSecret(typed, OWNER_PW);
+  if (isOwnerPw || (!asOwner && sameSecret(typed, DASH_PW))) {
     // Успешный вход пишем в журнал: смотреть `journalctl -u yclients-crm | grep login-ok`.
     // «после N неудач» — признак подбора, который в итоге удался. Вход владельца помечен «owner».
     const ua = String(req.get('user-agent') || '').replace(/[^\x20-\x7e]/g, '').slice(0, 80);
@@ -89,8 +94,8 @@ app.post('/api/login', (req, res) => {
   fails.push(Date.now());
   loginFails.set(ip, fails);
   if (loginFails.size > 5000) loginFails.clear(); // защита памяти от потока с разных IP
-  console.warn(`[login] неверный пароль с ${ip} (${fails.length}/${LOGIN_MAX})`);
-  res.status(401).json({ error: 'Неверный пароль' });
+  console.warn(`[login] неверный пароль${login ? ' (с логином)' : ''} с ${ip} (${fails.length}/${LOGIN_MAX})`);
+  res.status(401).json({ error: login ? 'Неверный логин или пароль' : 'Неверный пароль' });
 });
 app.post('/api/logout', (req, res) => {
   res.setHeader('Set-Cookie', 'sess=; Path=/; Max-Age=0');
@@ -120,7 +125,8 @@ app.use((req, res, next) => {
 
 // Кто я: экран по этому решает, показывать ли вкладку «Салон». configured=false — пароль
 // владельца не задан, раздел недоступен никому.
-app.get('/api/me', (req, res) => res.json({ owner: Boolean(req.isOwner), configured: Boolean(OWNER_PW) || !AUTH_ON }));
+// auth — включён ли вход вообще: без него кнопке «Выйти» показываться незачем.
+app.get('/api/me', (req, res) => res.json({ owner: Boolean(req.isOwner), configured: Boolean(OWNER_PW) || !AUTH_ON, auth: AUTH_ON }));
 
 // Все /api/salon/* — только владельцу. Одной спрятанной вкладки мало: данные по выручке
 // мастеров ушли бы любому, кто откроет адрес API.
@@ -1668,6 +1674,7 @@ app.post('/api/booking/create', async (req, res) => {
   const {
     client_id, staff_id, service_ids, datetime, seance_length, items,
     comment, send_sms, task_id, member_id, action_id, note, admin, company_id,
+    new_client, from_salon,
   } = req.body || {};
 
   // старая форма слала одну запись плоскими полями — понимаем оба вида
@@ -1675,9 +1682,23 @@ app.post('/api/booking/create', async (req, res) => {
     ? items
     : [{ staff_id, service_ids, datetime, seance_length }];
 
-  const client = getClient(client_id);
+  let client = client_id ? getClient(client_id) : null;
+  // Запись из свободного окна в «Салоне»: управляющая уже договорилась с человеком, а его ещё
+  // нет в нашей базе (новенький или не доехал синком). Имя и телефон — YClients сам найдёт
+  // карточку по телефону или заведёт новую, ночной синк её подтянет.
+  if (!client && !client_id && new_client) {
+    let phone = people.normPhone(new_client.phone);
+    if (phone.length === 10) phone = '7' + phone;
+    else if (phone.length === 11 && phone[0] === '8') phone = '7' + phone.slice(1);
+    const name = String(new_client.name || '').trim().slice(0, 100);
+    const cid = Number(company_id) || Number(list[0]?.company_id);
+    if (!name || !people.isRealPhone(phone) || phone.length !== 11 || !cid) {
+      return res.status(400).json({ error: 'Для нового клиента нужны имя и телефон' });
+    }
+    client = { id: null, name, phone, company_id: cid, yclients_id: null, branch: null };
+  }
   if (!client) return res.status(404).json({ error: 'Клиент не найден' });
-  if (!client.yclients_id || !client.company_id) return res.status(400).json({ error: 'У клиента нет карточки в YClients' });
+  if (client.id && (!client.yclients_id || !client.company_id)) return res.status(400).json({ error: 'У клиента нет карточки в YClients' });
   if (list.length > BOOKING_MAX_ITEMS) return res.status(400).json({ error: `За раз не больше ${BOOKING_MAX_ITEMS} записей` });
   for (const it of list) {
     if (!it.staff_id || !it.datetime || !Array.isArray(it.service_ids) || !it.service_ids.length) {
@@ -1737,6 +1758,8 @@ app.post('/api/booking/create', async (req, res) => {
   // Подтягиваем созданные записи к себе, чтобы они сразу были видны в ленте и в журнале
   let imported = 0;
   for (const c of created) {
+    // окна и «Сегодня» в «Салоне» держат журнал до 10 минут — новая запись должна закрыть окно сразу
+    salon.invalidate(c.salon.cid);
     try {
       if ((await sync.importRecord(c.salon.cid, c.salon.branchName, c.rec.id))?.ok) imported++;
     } catch (e) { console.error('[booking/import]', e.message); }
@@ -1762,10 +1785,13 @@ app.post('/api/booking/create', async (req, res) => {
 
   // Фиксируем звонок как «Записал»: задача/участник списка + лента клиента + карточка YClients.
   // action_id — запись пришла из исправления результата: правим прежний звонок, а не добавляем новый.
+  // Запись из «Салона» — не звонок админа: в журнал обзвона и в конверсию админов её не пишем,
+  // след — сама запись в YClients. Новичка в нашей базе ещё нет — писать некуда.
   let action = null;
   if (action_id) action = fixAction(action_id, { result: 'booked', note: fullNote, admin });
   else if (task_id) action = applyTaskAction(task_id, { result: 'booked', note: fullNote, admin });
   else if (member_id) action = applyMemberAction(member_id, { result: 'booked', note: fullNote, admin });
+  else if (from_salon || !client.id) { /* см. выше */ }
   else {
     db.prepare('INSERT INTO task_actions(task_id,client_id,admin,result,note,created_at) VALUES(NULL,?,?,?,?,?)')
       .run(client.id, admin || 'admin', 'booked', fullNote, new Date().toISOString());

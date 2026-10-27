@@ -51,6 +51,8 @@
   </div>
   <button class="btn primary" id="connectBtn" style="display:none">Подключить YClients</button>
   <button class="btn" id="syncBtn" title="Подтянуть свежие записи из YClients — несколько секунд">Обновить</button>
+  <!-- Выход — для всех: на общем компьютере управляющая входит под своим логином после админа -->
+  <button class="nav-out" id="logoutBtn" type="button" style="display:none">Выйти</button>
 </header>
 
 <!-- Модальное окно входа в YClients -->
@@ -100,6 +102,16 @@
   <div class="modal book-modal">
     <div class="modal-title">Записать к мастеру</div>
     <p class="modal-sub" id="bookWho"></p>
+    <!-- Запись в свободное окно из «Салона»: клиента выбирают здесь — поиском по базе, а если его
+         там нет (новенький), вводят имя и телефон. Из задач админов этот блок скрыт: клиент известен. -->
+    <div class="book-client" id="bookClient" style="display:none">
+      <label class="fld">Клиент<input type="text" id="bookClientQ" autocomplete="off" placeholder="Имя или телефон"></label>
+      <div class="book-client-res" id="bookClientRes"></div>
+      <div class="book-row" id="bookNew" style="display:none">
+        <label class="fld">Имя нового клиента<input type="text" id="bookNewName" autocomplete="off"></label>
+        <label class="fld">Телефон<input type="tel" id="bookNewPhone" autocomplete="off" placeholder="+7 900 000-00-00"></label>
+      </div>
+    </div>
     <!-- Строки записи: салон, мастер и услуга — у каждой свои. Мастер и услуга —
          комбобоксы, можно выбрать из списка, а можно просто начать печатать. Строк до
          четырёх: за один визит клиент часто идёт к нескольким мастерам, и каждая строка
@@ -271,7 +283,6 @@
           <button class="btn sl-gear" id="slGear" type="button" aria-expanded="false" aria-controls="slPop" title="Какие блоки показывать"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="2.4"/><path d="M8 1.5v1.8M8 12.7v1.8M14.5 8h-1.8M3.3 8H1.5M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3M12.6 12.6l-1.3-1.3M4.7 4.7L3.4 3.4"/></svg>Показатели</button>
           <div class="sl-pop" id="slPop" hidden></div>
         </div>
-        <button class="sl-out" id="slLogout" type="button" title="Выйти из CRM">Выйти</button>
       </div>
       <div class="sl-per">
         <div class="gl-seg sl-seg" id="slPeriod" aria-label="Период">

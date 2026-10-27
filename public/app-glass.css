@@ -348,3 +348,8 @@ tr.crow:hover td{background:rgba(255,255,255,.55)}
 .gl-row2.solo .gl-gauge{margin:0}
 .gl-row2.solo .gl-legend{margin:0}
 @media(max-width:760px){ .gl-row2.solo .gl-pulse{grid-template-columns:1fr} }
+
+/* «Салон» → запись в окно */
+.book-pick{border-radius:12px;background:rgba(255,255,255,.78);border-color:var(--line)}
+.book-pick:hover{background:#fff;border-color:var(--line-strong)}
+.book-pick.new{color:var(--ink)}

@@ -473,11 +473,19 @@ const BOOK_MAX_ROWS = 4;
 let bookRows = [];   // [{uid, staffAll, serviceAll, staffPicked, servicePicked}]
 let bookUid = 0;
 
+// ctx из задачи/списка: client_id, name. Из «Салона» (запись в свободное окно) ещё:
+//  from_salon — не звонок админа; pick — клиента выбирают в форме; who — кто записывает;
+//  prefill {company_id, staff_id, day, from, to} — салон, мастер, дата и время окна; title, onDone.
 function openBooking(ctx){
   bookCtx = ctx;
-  $('#bookWho').textContent = `${ctx.name||'Клиент'} — запись создастся прямо в YClients, в филиале клиента.`;
+  $('#bookWho').textContent = ctx.title
+    ? `${ctx.name?ctx.name+' · ':''}${ctx.title}. Запись создастся прямо в YClients.`
+    : `${ctx.name||'Клиент'} — запись создастся прямо в YClients, в филиале клиента.`;
   $('#bookError').textContent='';
   $('#bookComment').value='';
+  bookClientReset(Boolean(ctx.pick));
+  // «уже создана — просто отметить» — это про звонок админа; у записи из окна звонка нет
+  $('#bookJustMark').style.display = ctx.from_salon ? 'none' : '';
   // Филиалы обнуляем ДО создания строки: иначе строка успевала запросить мастеров ещё
   // по салону предыдущего клиента, и два ответа гонялись, кто запишется последним.
   bookBranches=[]; bookHomeCid='';
@@ -500,7 +508,11 @@ const norm = s => String(s||'').trim().toLowerCase();
 let bookBranches=[], bookHomeCid='';
 const fld       = (row,name) => $(`#bk${name}-${row.uid}`);
 const bookCid   = row => fld(row,'Br').value || '';
-const bookQ = (row,extra='') => `client_id=${bookCtx.client_id}${bookCid(row)?`&company_id=${bookCid(row)}`:''}${extra}`;
+// клиента в форме из «Салона» может ещё не быть — тогда мастеров и время ищем просто по салону
+const bookQ = (row,extra='') => [bookCtx.client_id?`client_id=${bookCtx.client_id}`:'',
+  bookCid(row)?`company_id=${bookCid(row)}`:''].filter(Boolean).join('&')+extra;
+// подстановка из окна мастера — только в первую строку формы
+const bookPre = row => bookRows[0]===row ? bookCtx?.prefill || null : null;
 const staffId   = row => row.staffAll.find(s=>norm(s.name)===norm(fld(row,'Staff').value))?.id || '';
 const serviceOf = row => row.serviceAll.find(s=>norm(s.title)===norm(fld(row,'Svc').value)) || null;
 
@@ -585,9 +597,11 @@ function renumberBookRows(){
 // Салон записи: по умолчанию тот, где числится клиент, но админ может выбрать соседний —
 // клиент нередко просит записать его туда, где удобнее в этот раз.
 async function loadBookBranches(){
-  const r = await api(`/api/booking/context?client_id=${bookCtx.client_id}`).catch(()=>null);
+  const r = await api(`/api/booking/context?client_id=${bookCtx.client_id||''}`).catch(()=>null);
   bookBranches = r?.branches || [];
-  bookHomeCid = r?.company_id ? String(r.company_id) : '';   // «родной» салон клиента
+  // «родной» салон клиента; запись в окно — всегда в салон этого окна
+  bookHomeCid = bookCtx?.prefill?.company_id ? String(bookCtx.prefill.company_id)
+    : r?.company_id ? String(r.company_id) : '';
   for(const row of bookRows){ fillBookBranches(row); await loadBookStaff(row); }
 }
 async function loadBookStaff(row){
@@ -602,9 +616,11 @@ async function loadBookStaff(row){
     dl.innerHTML=list.map(s=>
       `<option value="${esc(s.name)}" label="${s.favorite?'★ ':''}${esc(s.specialization||'')}"></option>`).join('');
     inp.placeholder='Введите имя или выберите из списка';
-    // подставляем любимого мастера только в первую строку: во второй ждут ДРУГОГО мастера,
-    // иначе админ каждый раз стирал бы подставленное имя
-    if(list[0]?.favorite && bookRows[0]===row){ inp.value=list[0].name; row.staffPicked=list[0].id; loadBookServices(row); }
+    // запись в окно — мастер этого окна; иначе любимый мастер клиента, и только в первую строку:
+    // во второй ждут ДРУГОГО мастера, иначе админ каждый раз стирал бы подставленное имя
+    const pre=bookPre(row), pick=pre && list.find(s=>String(s.id)===String(pre.staff_id));
+    if(pick){ inp.value=pick.name; row.staffPicked=pick.id; loadBookServices(row); }
+    else if(list[0]?.favorite && bookRows[0]===row){ inp.value=list[0].name; row.staffPicked=list[0].id; loadBookServices(row); }
   }catch(e){ inp.placeholder='Ошибка загрузки'; bookErr(e.message); }
 }
 async function loadBookServices(row){
@@ -646,7 +662,8 @@ async function loadBookDates(row){
     // К нескольким мастерам клиент идёт в ОДИН день — подставляем дату из соседней строки,
     // если этот мастер в неё работает. Не работает — админ выберет свою, строки независимы.
     const other = bookRows.filter(r2=>r2!==row).map(r2=>fld(r2,'Date').value).find(Boolean);
-    if(other && dates.includes(other)){ sel.value=other; loadBookTimes(row); }
+    const want = bookPre(row)?.day || other;   // запись в окно — день окна
+    if(want && dates.includes(want)){ sel.value=want; loadBookTimes(row); }
   }catch(e){ sel.innerHTML='<option value="">Ошибка загрузки</option>'; bookErr(e.message); }
 }
 async function loadBookTimes(row){
@@ -659,10 +676,66 @@ async function loadBookTimes(row){
     sel.innerHTML='<option value="">— выберите время —</option>'+list.map(t=>
       `<option value="${t.datetime}" data-len="${t.seance_length||0}">${t.time}</option>`).join('');
     sel.disabled=false;
+    // запись в окно — первое время, которое YClients даёт внутри этого окна; не влезает — выберут сами
+    const pre=bookPre(row);
+    if(pre && date===pre.day){
+      const hm=s=>String(s).padStart(5,'0');   // «9:00» → «09:00», иначе строки сравнивались бы криво
+      const hit=list.find(t=>hm(t.time)>=pre.from && hm(t.time)<pre.to);
+      if(hit) sel.value=hit.datetime;
+    }
   }catch(e){ sel.innerHTML='<option value="">Ошибка загрузки</option>'; bookErr(e.message); }
 }
+// ── Клиент в форме записи из «Салона» ──
+// Управляющая уже договорилась с человеком — ищем его в базе по имени или телефону. Не нашёлся
+// (новенький) — «Новый клиент»: имя и телефон, YClients заведёт карточку сам.
+let bookClientTimer=null;
+function bookClientReset(show){
+  $('#bookClient').style.display=show?'':'none';
+  $('#bookClientQ').value=''; $('#bookClientRes').innerHTML='';
+  $('#bookNew').style.display='none'; $('#bookNewName').value=''; $('#bookNewPhone').value='';
+  if(bookCtx) bookCtx.isNew=false;
+}
+$('#bookClientQ').oninput=()=>{
+  // начали печатать заново — прежний выбор снимаем, иначе запишем не того человека
+  if(bookCtx){ bookCtx.client_id=null; bookCtx.name=''; bookCtx.isNew=false; }
+  $('#bookNew').style.display='none';
+  clearTimeout(bookClientTimer);
+  bookClientTimer=setTimeout(bookClientSearch,250);
+};
+async function bookClientSearch(){
+  const q=$('#bookClientQ').value.trim(), box=$('#bookClientRes');
+  if(q.length<2){ box.innerHTML=''; return; }
+  let list=[];
+  try{ list=await api('/api/client-search?q='+encodeURIComponent(q)); }catch(e){ box.innerHTML=`<div class="muted">${esc(e.message)}</div>`; return; }
+  if($('#bookClientQ').value.trim()!==q) return;   // пока ждали, напечатали дальше
+  box.innerHTML=list.slice(0,8).map(c=>`<button type="button" class="book-pick" data-pick="${c.id}" data-name="${esc(c.name)}">
+      <b>${esc(c.name)}</b><span>${esc(c.phone||'')}${c.branches?.length?' · '+esc(c.branches.join(', ')):''} · визитов ${c.visits||0}</span></button>`).join('')
+    +`<button type="button" class="book-pick new" data-new="1">+ Новый клиент${list.length?' — его нет в списке':''}</button>`;
+}
+$('#bookClientRes').onclick=e=>{
+  const b=e.target.closest('.book-pick'); if(!b||!bookCtx) return;
+  $('#bookClientRes').innerHTML='';
+  if(b.dataset.new){
+    bookCtx.client_id=null; bookCtx.isNew=true;
+    const q=$('#bookClientQ').value.trim();
+    $('#bookNew').style.display='';
+    // что начали вводить — то и подставляем: цифры — в телефон, буквы — в имя
+    if(/\d{5,}/.test(q.replace(/\D/g,''))) $('#bookNewPhone').value=q; else $('#bookNewName').value=q;
+    ($('#bookNewName').value?$('#bookNewPhone'):$('#bookNewName')).focus();
+    return;
+  }
+  bookCtx.client_id=Number(b.dataset.pick); bookCtx.name=b.dataset.name; bookCtx.isNew=false;
+  $('#bookClientQ').value=b.dataset.name;
+};
+
 async function submitBooking(){
   const ctx=bookCtx; // closeBooking() обнулит bookCtx — держим ссылку для обновления блока
+  let newClient=null;
+  if(ctx.pick && !ctx.client_id){
+    if(!ctx.isNew){ bookErr('Выберите клиента из списка или «Новый клиент»'); return; }
+    newClient={name:$('#bookNewName').value.trim(), phone:$('#bookNewPhone').value.trim()};
+    if(!newClient.name || newClient.phone.replace(/\D/g,'').length<10){ bookErr('Для нового клиента нужны имя и телефон'); return; }
+  }
   const items=[];
   for(const [i,row] of bookRows.entries()){
     const nth = bookRows.length>1 ? `Запись ${i+1}: ` : '';
@@ -680,14 +753,16 @@ async function submitBooking(){
       datetime:dt, seance_length:Number(len)||undefined,
       company_id:Number(bookCid(row))||null});   // салон у каждой строки свой
   }
-  const admin=await needAdmin(); if(!admin) return;
+  // из «Салона» записывает управляющая — имя админа у неё не спрашиваем
+  const admin=ctx.who || await needAdmin(); if(!admin) return;
   const btn=$('#bookSubmit'); btn.disabled=true;
   btn.textContent = items.length>1 ? `Записываем (${items.length})…` : 'Записываем…';
   bookErr('');
   try{
     const r = await api('/api/booking/create',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
-        client_id:ctx.client_id, company_id:Number(bookCid(bookRows[0]))||null, items,
+        client_id:ctx.client_id||null, company_id:Number(bookCid(bookRows[0]))||null, items,
+        new_client:newClient, from_salon:Boolean(ctx.from_salon),
         comment:$('#bookComment').value.trim(),
         task_id:ctx.task_id||null, member_id:ctx.member_id||null, action_id:ctx.action_id||null,
         note:ctx.noteEl?($(ctx.noteEl)?.value||''):'', admin,
@@ -703,7 +778,9 @@ async function submitBooking(){
     else toast(`Записан. ${made}`);
     // из правки результата вернёмся туда, откуда пришли: блок списка или текущая вкладка
     if(ctx.action_id){ closeFix(); if(ctx.listId) await reloadListBlock(ctx.listId); else reloadCurrentView(); }
-    else if(ctx.list_id) await reloadListBlock(ctx.list_id); else loadTasks();
+    else if(ctx.list_id) await reloadListBlock(ctx.list_id);
+    else if(ctx.onDone) ctx.onDone();   // «Салон»: окно занято — перерисовать окна и день
+    else loadTasks();
   }catch(e){ bookErr(e.message||'Не удалось создать запись'); btn.disabled=false; btn.textContent='Записать в YClients'; }
 }
 // «запись уже создана в YClients» — просто фиксируем звонок как раньше, без создания записи
@@ -3034,17 +3111,23 @@ function slNearest(m){
   return null;
 }
 // Кнопка «В обзвон» ставит ручную задачу с окном: без окна (нет смен на неделе) предлагать нечего
+// Окно мастера в атрибутах кнопки: «Записать» и «В обзвон» берут из них мастера, день и время
+const slWinAttr = (m,win) => `data-m="${esc(slKey(m))}" data-day="${esc(win.day)}" data-from="${esc(win.from)}" data-to="${esc(win.to)}"`;
 function slClientRow(c,m,win){
   const meta=[c.phone?esc(c.phone):'', slDue(c.overdue_days), c.visits_count?`визитов ${c.visits_count}`:'', c.avg_check?`чек ${rub(c.avg_check)}`:''].filter(Boolean).join(' · ');
-  const btn=c.in_tasks ? '<button class="btn sl-task" type="button" disabled>уже в задачах</button>'
+  const call=c.in_tasks ? '<button class="btn sl-task" type="button" disabled>уже в задачах</button>'
     : !win ? '<button class="btn sl-task" type="button" disabled title="У мастера нет окон на этой неделе">нет окна</button>'
-    : `<button class="btn sl-task" type="button" data-task="${c.id}" data-m="${esc(slKey(m))}" data-day="${esc(win.day)}" data-from="${esc(win.from)}" data-to="${esc(win.to)}">В обзвон</button>`;
-  return `<div class="sl-cl"><div class="sl-cl-i"><button type="button" class="sl-nm" data-cl="${c.id}">${esc(c.name||'Без имени')}</button><div class="sl-cl-m">${meta}</div></div>${btn}</div>`;
+    : `<button class="btn sl-task" type="button" data-task="${c.id}" ${slWinAttr(m,win)}>В обзвон</button>`;
+  // «Записать» — управляющая уже договорилась с клиентом и сразу ставит его в окно
+  const book=win ? `<button class="btn primary sl-task" type="button" data-bookcl="${c.id}" data-name="${esc(c.name||'')}" ${slWinAttr(m,win)}>Записать</button>` : '';
+  return `<div class="sl-cl"><div class="sl-cl-i"><button type="button" class="sl-nm" data-cl="${c.id}">${esc(c.name||'Без имени')}</button><div class="sl-cl-m">${meta}</div></div><div class="sl-cl-b">${book}${call}</div></div>`;
 }
 function slExpHtml(m,day){
   const c=(m.days||[]).find(x=>x.day===day)||{}, gaps=c.gaps||[], cl=m.clients||[];
   const win=gaps[0]?{day,from:gaps[0].from,to:gaps[0].to}:null;
-  const chips=gaps.map(g=>`<span class="sl-chip">${esc(g.from)}–${esc(g.to)}<small>${slHours(g.min)}</small></span>`).join('');
+  // каждое окно — кнопка записи: клиента выберут в форме, мастер, день и время уже стоят
+  const chips=gaps.map(g=>`<button type="button" class="sl-chip" data-bookgap="1" ${slWinAttr(m,{day,from:g.from,to:g.to})}
+    title="Записать клиента в это окно">${esc(g.from)}–${esc(g.to)}<small>${slHours(g.min)}</small><b>Записать</b></button>`).join('');
   return `<div class="sl-exp-h"><b>${esc(m.staff)}</b><span>${slDow(day)} ${slDM(day)}</span><span class="sl-chips">${chips}</span></div>`
     +(cl.length?`<div class="sl-exp-t muted">Кому предложить — у них подошёл срок визита к этому мастеру:</div>${cl.map(x=>slClientRow(x,m,win)).join('')}`
       :'<div class="sl-exp-t muted">Клиентов этого мастера, у которых подошёл срок визита, нет.</div>');
@@ -3093,6 +3176,20 @@ function slFitExp(){
 }
 window.addEventListener('resize',slFitExp);
 
+// Записать в окно: та же форма, что у админов, но мастер, день и время окна уже подставлены.
+// Клиент — из строки под окном или (кнопка на самом окне) выбирается в форме поиском.
+function slBook(btn){
+  const m=(SL.win&&SL.win.masters||[]).find(x=>slKey(x)===btn.dataset.m); if(!m) return;
+  const {day,from,to}=btn.dataset, cid=Number(btn.dataset.bookcl)||null;
+  openBooking({
+    client_id:cid, name:cid?btn.dataset.name:'', pick:!cid, from_salon:true, who:'Управляющая',
+    prefill:{company_id:m.company_id, staff_id:m.staff_id, day, from, to},
+    title:`${m.staff}, ${slDow(day)} ${slDM(day)}, окно ${from}–${to}`,
+    // окно занято — перерисовываем окна и день: сервер уже сбросил свой кэш журнала
+    onDone:()=>{ slLoadWin(); if(SL.period==='today') slLoadToday(); },
+  });
+  if(!cid) setTimeout(()=>$('#bookClientQ').focus(),50);
+}
 async function slAddTask(btn){
   const m=(SL.win&&SL.win.masters||[]).find(x=>slKey(x)===btn.dataset.m); if(!m) return;
   const id=Number(btn.dataset.task);
@@ -3124,7 +3221,7 @@ $('#slPop').addEventListener('change',e=>{
 });
 document.addEventListener('click',e=>{ if(!e.target.closest('.sl-gearbox')) slPop(false); });
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') slPop(false); });
-$('#slLogout').onclick=async()=>{ try{ await fetch('/api/logout',{method:'POST'}); }catch{} location.reload(); };
+$('#logoutBtn').onclick=async()=>{ try{ await fetch('/api/logout',{method:'POST'}); }catch{} location.reload(); };
 function slDatesChanged(){
   const f=$('#slFrom').value, t=$('#slTo').value;
   if(!f||!t) return;
@@ -3154,6 +3251,7 @@ $('#view-salon').addEventListener('click',e=>{
     return slRenderWin();
   }
   if((b=q('[data-task]'))) return slAddTask(b);
+  if((b=q('[data-bookgap],[data-bookcl]'))) return slBook(b);
   if((b=q('[data-cl]'))) return openClient(Number(b.dataset.cl));
   if(q('#slWinRefresh')) return slLoadWin(true);
   if(q('#slWinRetry')) return slLoadWin();
@@ -3164,8 +3262,10 @@ $('#view-salon').addEventListener('click',e=>{
 // раздел просто не показывается, остальной интерфейс не страдает.
 async function slInit(){
   slLoadPrefs();
-  try{ const me=await api('/api/me'); if(!me||!me.owner) return; }
-  catch{ return; }
+  let me=null;
+  try{ me=await api('/api/me'); }catch{ return; }
+  if(me && me.auth) $('#logoutBtn').style.display='';   // без пароля (локально) выходить неоткуда
+  if(!me || !me.owner) return;
   SL.owner=true;
   document.querySelector('.tab[data-view="salon"]').style.display='';
 }

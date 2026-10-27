@@ -25,13 +25,18 @@
   button:hover{background:var(--accent)}
   button:disabled{opacity:.6;cursor:default}
   .err{color:var(--red);font-size:13px;min-height:18px;margin-top:10px;text-align:center}
+  label.gap{margin-top:14px}
+  .opt{font-weight:400;color:var(--muted)}
 </style>
 </head>
 <body>
 <form class="card" id="f">
   <div class="logo"><img src="/prive-logo.png" alt="Privé7" style="filter:invert(1)"><span></span><b>SPB CRM</b></div>
   <div class="sub">Вход для сотрудников</div>
-  <label for="pw">Пароль</label>
+  <!-- Логин нужен только управляющей и владелице (manager) — админы оставляют поле пустым -->
+  <label for="lg">Логин <span class="opt">— администраторам не нужен</span></label>
+  <input type="text" id="lg" autocomplete="username" autocapitalize="none" spellcheck="false">
+  <label for="pw" class="gap">Пароль</label>
   <input type="password" id="pw" autocomplete="current-password" autofocus>
   <button type="submit" id="btn">Войти</button>
   <div class="err" id="err"></div>
@@ -42,7 +47,7 @@
     e.preventDefault(); err.textContent=''; btn.disabled=true; btn.textContent='Вход…';
     try{
       const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({password:document.getElementById('pw').value})});
+        body:JSON.stringify({login:document.getElementById('lg').value,password:document.getElementById('pw').value})});
       if(r.ok){ location.href='/'; }
       else{ const j=await r.json().catch(()=>({})); err.textContent=j.error||'Неверный пароль'; }
     }catch(_){ err.textContent='Ошибка сети'; }
