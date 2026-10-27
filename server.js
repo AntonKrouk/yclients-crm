@@ -13,9 +13,20 @@ const people = require('./src/people');
 const ai = require('./src/ai');
 const vitrina = require('./src/vitrina');
 const salon = require('./src/salon');
+const live = require('./src/live');
 
 const app = express();
-app.use(express.json());
+// Лимит выше стандартных 100 КБ: вебхук YClients присылает запись целиком, с товарами и полями,
+// и обрезанный 413-м он бы просто потерялся
+app.use(express.json({ limit: '2mb' }));
+// Кривой JSON — короткий ответ. Без этого Express отдавал страницу со стеком и путями файлов
+// сервера (NODE_ENV на сервере не задан), причём ещё до проверки входа — кому угодно.
+app.use((e, req, res, next) => {
+  if (e && (e.type === 'entity.parse.failed' || e.type === 'entity.too.large')) {
+    return res.status(e.status || 400).json({ error: 'Некорректный запрос' });
+  }
+  next(e);
+});
 
 // --- Защита входа (пароль дашборда) -----------------------------------------
 // Включается, когда задан DASHBOARD_PASSWORD. Без него (локально/демо) вход открыт.
@@ -91,6 +102,9 @@ app.use((req, res, next) => {
   // вход открыт и все считаются владельцем.
   if (!AUTH_ON) { req.isOwner = true; return next(); }
   if (req.path === '/api/login' || req.path === '/api/health') return next();
+  // Вебхук YClients приходит без куки. Опасности нет: его содержимому сервер не верит,
+  // а только перечитывает названную запись из YClients (см. src/live.js).
+  if (req.path === '/api/yc-webhook') return next();
   // Оформление, код и иконки — без входа: клиентских данных в них нет. Раньше на любой
   // путь неавторизованному отдавалась страница входа, и айфон получал HTML вместо иконки.
   if (PUBLIC_ASSETS.has(req.path)) return next();
@@ -113,6 +127,26 @@ app.get('/api/me', (req, res) => res.json({ owner: Boolean(req.isOwner), configu
 app.use('/api/salon', (req, res, next) => {
   if (req.isOwner) return next();
   res.status(403).json({ error: 'Раздел только для владельца' });
+});
+
+// --- Мгновенные обновления (src/live.js) -------------------------------------
+// Открытые экраны держат одно соединение и получают «толчок», когда что-то изменилось.
+app.get('/api/events', live.subscribe);
+// Вебхук YClients: «в журнале изменилась запись». Отвечаем сразу — YClients ждать не любит,
+// а перечитывание записи идёт в фоне. GET — чтобы адрес можно было проверить из браузера.
+app.post('/api/yc-webhook', (req, res) => {
+  const r = live.handleWebhook(req.body, { key: req.query.key });
+  res.status(r.status || 200).json(r.status ? { ok: false } : r);
+});
+app.get('/api/yc-webhook', (req, res) => res.json({ ok: true, hint: 'адрес вебхука YClients, ждёт POST' }));
+// Любое изменение через CRM — звонок отмечен, задача добавлена, клиент в списке — толкает
+// остальные экраны: второй админ и владелица видят его сразу, а не через 45 секунд.
+// Черновики заметок (PATCH) пишутся на каждое нажатие клавиши — их не толкаем, как и вход,
+// скрипты сообщений и витрину: на открытые экраны они не влияют.
+app.use('/api', (req, res, next) => {
+  if (req.method === 'GET' || req.method === 'PATCH' || /^\/(login|logout|yc-webhook|scripts|vitrina)\b/.test(req.path)) return next();
+  res.on('finish', () => { if (res.statusCode < 400) live.emit('crm'); });
+  next();
 });
 
 // Отпечаток содержимого стилей и кода. Подставляется в ссылки на них, поэтому браузер
@@ -2313,12 +2347,33 @@ app.get('/api/overview/live', (req, res) => {
     .filter(s => s.slice(0, 10) === today && /^\d{2}:\d{2}$/.test(s.slice(11, 16)) && s.slice(11, 16) >= nowHm)
     .map(s => s.slice(11, 16)).sort()[0] || null;
 
-  // ── Прогноз выручки на 30 дней ──
-  // 1) «В записи» — будущие записи. Цена в записи YClients есть не всегда: где её нет,
-  //    берём средний чек человека. Напоминания о ДР (записи без услуги) не считаем.
-  // 2) «Ждём по ритму» — записи нет, но по его обычному интервалу визит выпадает на эти 30 дней.
-  // 3) «Под риском» — визит уже просрочен, но не больше чем на один интервал: позвоним — вернётся.
-  //    В итог прогноза не входит: эти деньги ещё надо заработать звонком.
+  // Прогноза выручки здесь больше нет: с 27.10.2026 он в «Салоне» (только владелец) —
+  // «Обзор» открыт админам, а деньги салона им видеть незачем.
+  res.json({
+    today,
+    tiles: {
+      calls: T.calls, calls_yesterday: Y.calls,
+      booked: T.booked, booked_yesterday: Y.booked,
+      conversion: T.calls ? Math.round(T.booked / T.calls * 1000) / 10 : 0,
+      conversion_week: weekCalls ? Math.round(week.reduce((s, d) => s + d.booked, 0) / weekCalls * 1000) / 10 : 0,
+      waiting: waiting.length, next_callback: nextToday,
+    },
+    series,
+    pulse,
+  });
+});
+
+// ── Прогноз выручки на 30 дней (раздел «Салон») ──
+// 1) «В записи» — будущие записи. Цена в записи YClients есть не всегда: где её нет,
+//    берём средний чек человека. Напоминания о ДР (записи без услуги) не считаем.
+// 2) «Ждём по ритму» — записи нет, но по его обычному интервалу визит выпадает на эти 30 дней.
+// 3) «Под риском» — визит уже просрочен, но не больше чем на один интервал: позвоним — вернётся.
+//    В итог прогноза не входит: эти деньги ещё надо заработать звонком.
+function revenueForecast(branch) {
+  const bw = branch ? 'AND c.branch = ?' : '';
+  const bArgs = branch ? [branch] : [];
+  const nowMs = Date.now();
+  const upcoming = upcomingByPerson();
   const DAY_MS = 86400e3;
   const horizon = new Date(nowMs + 30 * DAY_MS).toISOString();
   const groups = people.groupByPerson(db.prepare(`SELECT id, phone, branch, last_visit, avg_interval_days,
@@ -2352,26 +2407,13 @@ app.get('/api/overview/live', (req, res) => {
     WHERE v.status = 'completed' AND v.date >= ? AND v.date < datetime('now') ${bw}`)
     .get(new Date(nowMs - 30 * DAY_MS).toISOString(), ...bArgs).s;
   const round = (x) => Math.round(x / 100) * 100;
-
-  res.json({
-    today,
-    tiles: {
-      calls: T.calls, calls_yesterday: Y.calls,
-      booked: T.booked, booked_yesterday: Y.booked,
-      conversion: T.calls ? Math.round(T.booked / T.calls * 1000) / 10 : 0,
-      conversion_week: weekCalls ? Math.round(week.reduce((s, d) => s + d.booked, 0) / weekCalls * 1000) / 10 : 0,
-      waiting: waiting.length, next_callback: nextToday,
-    },
-    series,
-    pulse,
-    forecast: {
-      booked: round(fc.booked), booked_n: fc.booked_n,
-      rhythm: round(fc.rhythm), rhythm_n: fc.rhythm_n,
-      risk: round(fc.risk), risk_n: fc.risk_n,
-      fact_prev30: round(fact30),
-    },
-  });
-});
+  return {
+    booked: round(fc.booked), booked_n: fc.booked_n,
+    rhythm: round(fc.rhythm), rhythm_n: fc.rhythm_n,
+    risk: round(fc.risk), risk_n: fc.risk_n,
+    fact_prev30: round(fact30),
+  };
+}
 
 // Детальный журнал обзвона для владельца: кто звонил, кому, результат, заметка,
 // и если записал — ближайшая запись клиента (услуга/мастер/время из YClients-визитов).
@@ -2543,6 +2585,17 @@ app.get('/api/salon/windows', async (req, res) => {
 app.post('/api/salon/windows/task', (req, res) => {
   try { res.json(salon.createWindowTask(req.body || {})); }
   catch (e) { salonFail(res, 'windows/task', e); }
+});
+// «Сегодня»: день салона вживую. webhook — когда YClients в последний раз сообщал о событии:
+// по этому экран показывает, работают ли мгновенные обновления.
+app.get('/api/salon/today', async (req, res) => {
+  try {
+    res.json({ ...(await salon.today({ branch: req.query.branch, refresh: req.query.refresh === '1' })), webhook: live.webhookInfo() });
+  } catch (e) { salonFail(res, 'today', e); }
+});
+app.get('/api/salon/forecast', (req, res) => {
+  try { res.json(revenueForecast((req.query.branch || '').trim())); }
+  catch (e) { salonFail(res, 'forecast', e); }
 });
 
 // Первичное наполнение + автологин + очистка демо-данных при переходе на боевой режим

@@ -2610,21 +2610,13 @@ const glDelta = (d,unit='') => d===0 ? `<span class="gl-delta flat">как вч�
   : `<span class="gl-delta ${d<0?'down':''}">${d>0?'+':'−'}${String(Math.abs(d)).replace('.',',')}${unit}</span>`;
 function glArc(cx,cy,r,a0,a1){ const p=a=>[cx+r*Math.cos(a*Math.PI/180),cy+r*Math.sin(a*Math.PI/180)];
   const [x0,y0]=p(a0),[x1,y1]=p(a1); return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${r} ${r} 0 ${a1-a0>180?1:0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`; }
-async function loadOvLive(){
-  const d=await api(bp('/api/overview/live')), t=d.tiles, s=d.series, f=d.forecast, pu=d.pulse;
-  const where=currentBranch||'оба филиала';
-  const conv=s.map(x=>x.calls?x.booked/x.calls:0);
-  const tiles=[
-    ['Звонков сегодня', nf(t.calls), glDelta(t.calls-t.calls_yesterday)+'<span class="gl-vs">к вчера</span>', `все админы · ${esc(where)}`, glSpark(s.map(x=>x.calls),'--blue')],
-    ['Записано', nf(t.booked), glDelta(t.booked-t.booked_yesterday)+'<span class="gl-vs">к вчера</span>', 'записались после звонка', glSpark(s.map(x=>x.booked),'--green')],
-    ['Конверсия', pct1(t.conversion), glDelta(Math.round((t.conversion-t.conversion_week)*10)/10,' п.п.')+'<span class="gl-vs">к неделе</span>', 'записей на звонок', glSpark(conv,'--accent')],
-    ['Ждут перезвона', nf(t.waiting), `<span class="gl-delta warn">${t.next_callback?'ближ. '+t.next_callback:'сегодня больше нет'}</span>`, 'договорились о времени', glSpark(s.map(x=>x.cb),'--amber')],
-  ].map(([l,n,dl,sub,sp])=>`<div class="card gl-tile"><div class="gl-lbl">${l}</div><div class="gl-num"><b>${n}</b>${dl}</div><div class="gl-sub">${sub}</div>${sp}</div>`).join('');
-
+// Прогноз выручки на 30 дней. Жил в «Обзоре», с 27.10.2026 — в «Салоне»: «Обзор» видят админы,
+// а деньги салона им видеть незачем (сервер прогноз в «Обзор» больше не отдаёт).
+function glForecastHtml(f){
   const total=f.booked+f.rhythm, all=Math.max(1,f.booked+f.rhythm+f.risk);
   const part=[f.booked,f.rhythm,f.risk].map(v=>v/all*100);
   const vsFact=f.fact_prev30>0 ? Math.round((total/f.fact_prev30-1)*100) : null;
-  const fc=`<div class="card gl-fc"><div class="gl-card-h"><div><h3>Прогноз выручки · 30 дней</h3><p class="muted">записи и ритм постоянных клиентов</p></div></div>
+  return `<div class="card gl-fc"><div class="gl-card-h"><div><h3>Прогноз выручки · 30 дней</h3><p class="muted">записи и ритм постоянных клиентов</p></div></div>
     <div class="gl-fc-n"><b>${rub(total)}</b>${vsFact==null?'':`<span class="gl-delta ${vsFact<0?'down':''}">${vsFact>0?'+':vsFact<0?'−':''}${Math.abs(vsFact)}% к прошлым 30 дням</span>`}</div>
     <div class="gl-fc-labs">${part.map(v=>`<span style="flex-grow:${v}">${v>=6?Math.round(v)+'%':''}</span>`).join('')}</div>
     <div class="gl-fc-bar">${part.map((v,i)=>`<div class="gl-fc-seg s${i}" style="flex-grow:${v}"></div>`).join('')}</div>
@@ -2634,6 +2626,17 @@ async function loadOvLive(){
       <span title="Визит уже просрочен, но не больше чем на один обычный интервал — в итог не входит"><i style="background:var(--green)"></i>Под риском <b>${rub(f.risk)}</b> · ${plural(f.risk_n,'человек','человека','человек')}</span>
     </div>
     <div class="gl-fc-foot"><span>Факт за прошлые 30 дней<br><span class="muted">по закрытым визитам</span></span><b>${rub(f.fact_prev30)}</b></div></div>`;
+}
+async function loadOvLive(){
+  const d=await api(bp('/api/overview/live')), t=d.tiles, s=d.series, pu=d.pulse;
+  const where=currentBranch||'оба филиала';
+  const conv=s.map(x=>x.calls?x.booked/x.calls:0);
+  const tiles=[
+    ['Звонков сегодня', nf(t.calls), glDelta(t.calls-t.calls_yesterday)+'<span class="gl-vs">к вчера</span>', `все админы · ${esc(where)}`, glSpark(s.map(x=>x.calls),'--blue')],
+    ['Записано', nf(t.booked), glDelta(t.booked-t.booked_yesterday)+'<span class="gl-vs">к вчера</span>', 'записались после звонка', glSpark(s.map(x=>x.booked),'--green')],
+    ['Конверсия', pct1(t.conversion), glDelta(Math.round((t.conversion-t.conversion_week)*10)/10,' п.п.')+'<span class="gl-vs">к неделе</span>', 'записей на звонок', glSpark(conv,'--accent')],
+    ['Ждут перезвона', nf(t.waiting), `<span class="gl-delta warn">${t.next_callback?'ближ. '+t.next_callback:'сегодня больше нет'}</span>`, 'договорились о времени', glSpark(s.map(x=>x.cb),'--amber')],
+  ].map(([l,n,dl,sub,sp])=>`<div class="card gl-tile"><div class="gl-lbl">${l}</div><div class="gl-num"><b>${n}</b>${dl}</div><div class="gl-sub">${sub}</div>${sp}</div>`).join('');
 
   const v=[pu.callback,pu.booked,pu.other], tot=v[0]+v[1]+v[2], GAP=16, span=180-GAP*2;
   let a=180; const arcs=['--amber','--green','--blue'].map((c,i)=>{ const len=tot?span*v[i]/tot:0, from=a; a+=len+GAP;
@@ -2649,7 +2652,7 @@ async function loadOvLive(){
 
   $('#ovLive').className=ovLiveAnim?'anim':'';
   $('#ovLive').innerHTML=`<div class="section-title gl-today">Сегодня · обновляется само</div>
-    <div class="gl-tiles">${tiles}</div><div class="gl-row2">${fc}${pulse}</div>`;
+    <div class="gl-tiles">${tiles}</div><div class="gl-row2 solo">${pulse}</div>`;
   ovLiveAnim=false;
 }
 
@@ -2663,14 +2666,16 @@ if(GLASS){ glassTasksLayout(); glassOverviewLayout(); }
 // 403 за «сессия истекла» — поэтому салонные маршруты не трогаем, пока /api/me не сказал owner.
 // В тихое обновление раз в 45 с раздел НЕ входит: запросы тяжёлые.
 // Стоит после темы «Стекло» не случайно: glSpark, glArc, nf, pct1 — const, раньше них вызов упал бы.
-const SL_BLOCKS = [['recs','Записи и отмены'],['rev','Выручка по дням'],['staff','Вклад мастеров'],
+const SL_BLOCKS = [['tl','Сегодня: лента дня мастеров'],['fc','Сегодня: прогноз выручки'],
+  ['recs','Записи и отмены'],['rev','Выручка по дням'],['staff','Вклад мастеров'],
   ['dir','Направления'],['svc','Услуги'],['win','Свободные окна'],['src','Источники данных']];
 const SL_SUM_BLOCKS = ['recs','rev','staff','dir','svc','src'];   // этим блокам нужна сводка; окнам — свой запрос
 const SL_IDS = ['slTiles','slNote','slDays','slStaff','slDir','slSvc','slSrc'];
 const SL_COLS = ['--blue','--green','--amber','--violet','--red','--accent','--muted'];   // доли бублика
 const SL_LOST_HINT = 'Отмены учтены не полностью: запись, которую в YClients удалили задним числом, мы уже не видим — отмены ловим только в будущем окне синка.';
-const SL = { owner:false, blocks:{}, period:'month', from:'', to:'', seq:0, wseq:0, sum:null, win:null,
-  mSort:'revenue', mDir:-1, mAll:false, svc:'price', wtab:'gaps', open:null };
+// «Сегодня» открывается первым: владелица заходит посмотреть, что в салоне прямо сейчас
+const SL = { owner:false, blocks:{}, period:'today', from:'', to:'', seq:0, wseq:0, tseq:0, sum:null, win:null,
+  today:null, fc:null, mSort:'revenue', mDir:-1, mAll:false, svc:'price', wtab:'gaps', open:null };
 
 // Даты — московские дни YYYY-MM-DD, как у сервера; арифметику ведём по UTC, чтобы не зависеть от пояса браузера
 const slYmd = d => d.toLocaleDateString('sv-SE',{timeZone:'Europe/Moscow'});
@@ -2687,6 +2692,7 @@ const slDue = n => n==null ? '' : n>0 ? 'просрочено '+plural(n,'ден
 
 function slRange(p){
   const t=slYmd(new Date());
+  if(p==='today') return [t,t];
   if(p==='7')  return [slAdd(t,-6),t];
   if(p==='30') return [slAdd(t,-29),t];
   if(p==='prev'){ const last=slAdd(t.slice(0,8)+'01',-1); return [last.slice(0,8)+'01',last]; }
@@ -2701,10 +2707,15 @@ const slApplyBlocks = () => document.querySelectorAll('#view-salon [data-blk]').
   n.style.display = SL.blocks[n.dataset.blk] ? '' : 'none'; });
 
 function slSyncHead(){
+  const live=SL.period==='today';
   $('#slPeriod').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.p===SL.period));
   $('#slFrom').value=SL.from; $('#slTo').value=SL.to;
-  $('#slWhere').textContent=[currentBranch||'оба филиала', `${slDM(SL.from)}–${slDM(SL.to)}`].join(' · ');
+  $('#slWhere').textContent=[currentBranch||'оба филиала', live?'вживую':`${slDM(SL.from)}–${slDM(SL.to)}`].join(' · ');
+  $('#slToday').style.display=live?'':'none';
+  $('#slPeriodView').style.display=live?'none':'';
 }
+// Переключили период: «Сегодня» берёт журнал YClients, остальное — сводку из базы
+const slLoadMain = () => SL.period==='today' ? slLoadToday() : slLoadSum();
 // Перерисовка с сохранением горизонтальной прокрутки: на телефоне таблица шире экрана,
 // и без этого каждый клик по заголовку отбрасывал бы её к началу.
 function slPaint(box,html){
@@ -2722,8 +2733,8 @@ function loadSalon(){
   if(!SL.owner) return Promise.resolve();
   if(SL.period!=='custom') [SL.from,SL.to]=slRange(SL.period);   // вкладка могла простоять до полуночи
   slSyncHead(); slApplyBlocks();
-  SL.win=null; SL.open=null;   // окна зависят от филиала, а он мог смениться
-  return Promise.all([slLoadSum(), SL.blocks.win ? slLoadWin() : null]);
+  SL.win=null; SL.open=null; SL.today=null;   // окна и день зависят от филиала, а он мог смениться
+  return Promise.all([slLoadMain(), SL.blocks.win ? slLoadWin() : null]);
 }
 async function slLoadSum(){
   if(!SL_SUM_BLOCKS.some(k=>SL.blocks[k])) return;   // все блоки сводки скрыты — запрос не нужен
@@ -2914,6 +2925,108 @@ function slSrcHtml(d){
     `<ul class="sl-src">${li('YClients — последний синк',s.yclients_synced_at)}${li('Расписание мастеров — обновлено',s.schedule_updated_at)}</ul>${warn}`);
 }
 
+// ── сегодня: день салона вживую ──
+// Журнал YClients, а не наша база: запись, отмена и закрытый визит видны сразу. Пока вкладка
+// открыта, день перечитывается раз в минуту; толчок от сервера (вебхук YClients или действие
+// в CRM) — сразу. Сервер сам держит журнал не дольше минуты, так что лишних походов в YClients нет.
+const SL_ST = {done:'пришёл',now:'сейчас у мастера',waiting:'впереди',late:'время прошло, визит не закрыт',no_show:'не пришёл'};
+const SL_ST_COL = {done:'--green',now:'--blue',waiting:'--violet',late:'--amber',no_show:'--red'};
+const slMin = s => { const [h,m]=String(s).split(':').map(Number); return h*60+(m||0); };
+
+async function slLoadToday(refresh){
+  const seq=++SL.tseq, box=$('#slToday');
+  if(!SL.today) box.innerHTML='<div class="empty">Загружаю день из YClients…</div>';
+  try{
+    // прогноз считается по нашей базе и от минуты к минуте почти не меняется — его не ждём
+    const fc=SL.blocks.fc ? api(bp('/api/salon/forecast')).catch(()=>null) : null;
+    const d=await api(bp('/api/salon/today'+(refresh?'?refresh=1':'')));
+    if(seq!==SL.tseq) return;
+    SL.today=d; SL.fc=await fc || SL.fc;
+    if(seq!==SL.tseq) return;
+  }catch(e){
+    if(seq!==SL.tseq) return;
+    if(!SL.today) box.innerHTML=`<div class="empty">Не получилось загрузить день: ${esc(e.message)}<br><button class="btn" id="slTodayRefresh" type="button" style="margin-top:12px">Повторить</button></div>`;
+    else toast('День не обновился: '+e.message,'bad');
+    return;
+  }
+  try{
+    slPaint(box,slTodayHtml(SL.today)); slApplyBlocks();
+    // На телефоне видна только часть ленты — при первом показе прокручиваем её к «сейчас»,
+    // дальше slPaint сохраняет то место, куда владелица прокрутила сама
+    const sc=box.querySelector('.sl-scroll'), nl=box.querySelector('.sl-tl-now');
+    if(sc && nl && !sc.scrollLeft && sc.scrollWidth>sc.clientWidth)
+      sc.scrollLeft=Math.max(0, nl.getBoundingClientRect().left-sc.getBoundingClientRect().left-sc.clientWidth/2);
+  }
+  catch(e){ console.error(e); box.innerHTML='<div class="empty">Не получилось показать день: сервер прислал неожиданный ответ</div>'; }
+}
+setInterval(()=>{
+  if(SL.owner && SL.period==='today' && !document.hidden && $('#view-salon').style.display!=='none') slLoadToday();
+},60000);
+
+const slTTile = (label,num,sub,extra='') =>
+  `<div class="card gl-tile sl-tile"><div class="gl-lbl">${label}</div><div class="gl-num">${num}</div><div class="gl-sub">${sub}</div>${extra}</div>`;
+function slTodayHtml(d){
+  const t=d.tiles, wh=d.webhook||{}, past=t.done+t.late+t.no_show;
+  // «мгновенно» — только если YClients действительно присылает события; иначе честно говорим, как часто
+  const whOn=wh.last_at && Date.now()-Date.parse(wh.last_at)<864e5;
+  const head=`<div class="sl-live"><span class="sl-dot${LIVE.ok?' on':''}" id="slDot" title="Связь с сервером для мгновенных обновлений"></span>
+    <div class="sl-live-t"><b>${slDow(d.day)} ${slDM(d.day)}, сейчас ${esc(d.now)}</b>
+    <span class="muted">журнал YClients на ${slHm(d.updated_at)} · ${whOn?`обновляется мгновенно, последнее событие YClients в ${slHm(wh.last_at)}`:'обновляется раз в минуту — событий от YClients за сутки не было'}</span></div>
+    <button class="btn" id="slTodayRefresh" type="button">${ICON.refresh}Обновить</button></div>`;
+  const stack=['done','now','waiting','late','no_show'].map(k=>t[k]?`<i style="flex-grow:${t[k]};background:var(${SL_ST_COL[k]})" title="${SL_ST[k]}: ${t[k]}"></i>`:'').join('');
+  const exp=t.revenue_done+t.revenue_expected, p=exp?Math.round(t.revenue_done/exp*100):0;
+  const tiles=`<div class="sl-tiles">${[
+    slTTile('Записей сегодня',`<b>${nf(t.records)}</b>`,`впереди ${nf(t.waiting)} · сейчас у мастеров ${nf(t.now)}`,
+      t.records?`<div class="sl-stack">${stack}</div>`:''),
+    slTTile('Пришли',`<b>${nf(t.done)}</b>`,(past?`${Math.round(t.done/past*100)}% от тех, чьё время прошло`:'пока никто')
+      +(t.late?`<br><span class="sl-late">не закрыты в YClients: ${nf(t.late)}</span>`:'')),
+    slTTile('Не пришли',`<b class="sl-neg">${nf(t.no_show)}</b>`,past?`${Math.round(t.no_show/past*100)}% от тех, чьё время прошло`:'пока никто'),
+    slTTile('Выручка дня',`<b>${rub(t.revenue_done)}</b>`,`закрытые визиты · ещё ожидается ${rub(t.revenue_expected)}`
+      +(t.avg_check?`<br>средний чек ${rub(t.avg_check)}`:''),
+      `<div class="sl-prog" title="${p}% от выручки, ожидаемой за день"><i style="width:${p}%"></i></div>`),
+  ].join('')}</div>`;
+  return head+tiles
+    +`<div data-blk="tl">${slTimelineHtml(d)}</div>`
+    +(SL.fc?`<div data-blk="fc" class="sl-fc">${glForecastHtml(SL.fc)}</div>`:'');
+}
+
+// Лента дня: строка на мастера — смена светлым фоном, записи цветом по состоянию, блокировки
+// («обучение», «под запись») серым, линия «сейчас». Клик по записи открывает карточку клиента.
+function slTimelineHtml(d){
+  const ms=d.masters||[], both=!currentBranch;
+  if(!ms.length) return slCard('День мастеров','','','<div class="empty">Сегодня в расписании никого нет</div>');
+  const lo=slMin(d.range.from), hi=slMin(d.range.to), span=Math.max(60,hi-lo), now=slMin(d.now);
+  const px=m=>(Math.min(hi,Math.max(lo,m))-lo)/span*100;
+  const pos=(a,b)=>`left:${px(a).toFixed(2)}%;width:${Math.max(.4,px(b)-px(a)).toFixed(2)}%`;
+  const nowOn=now>lo && now<hi, nowX=px(now).toFixed(2);
+  const hours=[]; for(let h=Math.ceil(lo/60);h<=Math.floor(hi/60);h++) hours.push(h);
+  const axis=hours.map(h=>`<span style="left:${px(h*60).toFixed(2)}%">${h}</span>`).join('')
+    +(nowOn?`<em style="left:${nowX}%">${esc(d.now)}</em>`:'');
+  const rows=ms.map(m=>{
+    const work=(m.work||[]).map(w=>`<i class="sl-tl-w" style="${pos(slMin(w.from),slMin(w.to))}"></i>`).join('');
+    const items=(m.items||[]).map(it=>{
+      const a=slMin(it.from), b=slMin(it.to), cls=it.kind==='block'?'block':it.state;
+      const tip=it.kind==='block' ? `${it.from}–${it.to} · блокировка${it.note?': '+it.note:''}`
+        : `${it.from}–${it.to} · ${it.client}${it.service?' · '+it.service:''}${it.cost?' · '+rub(it.cost):''} · ${SL_ST[it.state]||''}`;
+      // имя влезает только в широкий блок; полное — в подсказке
+      const label=it.kind==='visit' && px(b)-px(a)>6 ? esc(String(it.client||'').split(' ')[0]) : '';
+      return `<button type="button" class="sl-tl-i s-${cls}" style="${pos(a,b)}" title="${esc(tip)}"${it.client_id?` data-cl="${it.client_id}"`:' disabled'}>${label}</button>`;
+    }).join('');
+    const st = m.now ? `сейчас: ${esc(m.now.client)} до ${esc(m.now.to)}`
+      : m.next ? `дальше ${esc(m.next.from)} — ${esc(m.next.client)}`
+      : m.free_left_min ? `свободно ${slHours(m.free_left_min)} до конца дня` : 'на сегодня всё';
+    return `<div class="sl-tl-row"><div class="sl-tl-who"><b>${esc(m.staff)}</b>${both?branchTag(esc(m.branch)):''}<small class="${m.now?'on':''}">${st}</small></div>
+      <div class="sl-tl-track">${work}${items}${nowOn?`<i class="sl-tl-now" style="left:${nowX}%"></i>`:''}</div>
+      <div class="sl-tl-sum">${m.load_pct==null?'<span class="muted">—</span>':`<b>${m.load_pct}%</b>`}<small>${slHours(m.busy_min)} из ${slHours(m.work_min)}</small></div></div>`;
+  }).join('');
+  const busyNow=ms.filter(m=>m.now).length, freeLeft=ms.reduce((a,m)=>a+(m.free_left_min||0),0);
+  const leg=['done','now','waiting','late','no_show'].map(k=>`<span><i style="background:var(${SL_ST_COL[k]})"></i>${SL_ST[k]}</span>`).join('')
+    +'<span><i class="blk"></i>блокировка</span>';
+  return slCard('День мастеров',`у клиента сейчас ${busyNow} из ${ms.length} · свободно до конца дня ${slHours(freeLeft)} (окна от часа)`,'',
+    `<div class="sl-tl-leg">${leg}</div><div class="sl-scroll"><div class="sl-tl">
+      <div class="sl-tl-row sl-tl-axisrow"><div></div><div class="sl-tl-axis">${axis}</div><div></div></div>${rows}</div></div>`);
+}
+
 // ── свободные окна ──
 // Ближайшее окно мастера: первый день с окнами и первое окно этого дня
 function slNearest(m){
@@ -3006,7 +3119,8 @@ $('#slPop').addEventListener('change',e=>{
   if(!SL.blocks[k]) return;
   // включили блок, для которого данные ещё не грузили (был скрыт при открытии вкладки)
   if(k==='win'){ if(!SL.win) slLoadWin(); }
-  else if(!SL.sum) slLoadSum();
+  else if(k==='tl'||k==='fc'){ if(SL.period==='today') slLoadToday(); }
+  else if(!SL.sum && SL.period!=='today') slLoadSum();
 });
 document.addEventListener('click',e=>{ if(!e.target.closest('.sl-gearbox')) slPop(false); });
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') slPop(false); });
@@ -3024,7 +3138,8 @@ $('#slTo').onchange=slDatesChanged;
 $('#view-salon').addEventListener('click',e=>{
   const q=s=>e.target.closest(s); let b;
   if(q('#slGear')) return slPop($('#slPop').hidden);
-  if((b=q('[data-p]'))){ SL.period=b.dataset.p; [SL.from,SL.to]=slRange(SL.period); slSyncHead(); return slLoadSum(); }
+  if((b=q('[data-p]'))){ SL.period=b.dataset.p; [SL.from,SL.to]=slRange(SL.period); slSyncHead(); return slLoadMain(); }
+  if(q('#slTodayRefresh')) return slLoadToday(true);
   if((b=q('[data-sort]'))){
     const k=b.dataset.sort;
     if(SL.mSort===k) SL.mDir=-SL.mDir; else { SL.mSort=k; SL.mDir=k==='staff'?1:-1; }
@@ -3055,6 +3170,40 @@ async function slInit(){
   document.querySelector('.tab[data-view="salon"]').style.display='';
 }
 slInit();
+
+// ═══ Мгновенные обновления ═══════════════════════════════════════════════════════
+// Сервер держит с каждой открытой вкладкой одно соединение (/api/events) и «толкает» её, когда
+// что-то изменилось: админ отметил звонок, в YClients появилась или отменилась запись, движок
+// пересобрал задачи. Вкладка перечитывает свои данные тем же путём, что тихое обновление раз
+// в 45 с, — оно остаётся страховкой на случай, если соединение оборвалось.
+// Толчки пачкой (вебхук + перечитанная запись + задачи) собираем в одно обновление.
+const LIVE = { es:null, ok:false, timer:null, types:new Set() };
+function liveConnect(){
+  if(!window.EventSource) return;
+  const es=new EventSource('/api/events');
+  LIVE.es=es;
+  es.onopen=()=>{ LIVE.ok=true; slLiveDot(); };
+  es.onerror=()=>{ LIVE.ok=false; slLiveDot(); };   // браузер переподключится сам (retry 5 с)
+  es.addEventListener('change',e=>{
+    let d={}; try{ d=JSON.parse(e.data); }catch{}
+    LIVE.types.add(d.type||'crm');
+    clearTimeout(LIVE.timer); LIVE.timer=setTimeout(liveApply,1200);
+  });
+}
+function liveApply(){
+  const types=LIVE.types; LIVE.types=new Set();
+  const v=document.querySelector('.tab.active')?.dataset.view;
+  if(v==='salon'){ slOnLive(types); return; }
+  silentRefresh();   // задачи, обзвоны, обзор; сам не трогает экран, если админ что-то печатает
+}
+function slLiveDot(){ const d=$('#slDot'); if(d) d.classList.toggle('on',LIVE.ok); }
+// «Салон»: журнал поменялся — день и окна; действие в CRM — отметки «уже в задачах» у окон
+function slOnLive(types){
+  if(!SL.owner || document.hidden) return;
+  if(SL.period==='today' && (types.has('yc')||types.has('crm'))) slLoadToday();
+  if(SL.blocks.win && SL.win) slLoadWin();
+}
+liveConnect();
 
 // Старт
 loadAdmins();

@@ -452,77 +452,118 @@ function computeGaps(slots, busy, { minGap = MIN_GAP, notBefore = null } = {}) {
   return out;
 }
 
-// Запись журнала → занятость мастера: { staff_id, day, from, to } (минуты МСК) или null, если
-// запись времени не занимает (удалена, ДР-напоминание, нет мастера/времени).
-function busyOf(r) {
+// --- Живые данные YClients: мастера, смены и записи на неделю ----------------------------
+// Из них считаются и свободные окна, и режим «Сегодня». У каждой части свой срок годности:
+// мастера меняются редко, смены — изредка, записи — постоянно. Вебхук YClients (invalidate)
+// делает записи филиала устаревшими сразу, не дожидаясь срока.
+const STAFF_TTL = 60 * 60e3;
+const liveCache = new Map();      // 'cid|часть' → { at, d0, data }
+const liveInflight = new Map();   // 'cid|часть|d0' → { started, p }
+const dirtyAt = new Map();        // cid → когда пришёл последний вебхук по филиалу
+
+function liveGet(cid, part, d0, maxAge, load) {
+  const key = cid + '|' + part, fkey = key + '|' + d0;
+  const dirty = part === 'recs' ? (dirtyAt.get(cid) || 0) : 0;
+  const hit = liveCache.get(key);
+  // at — момент НАЧАЛА загрузки: изменение, о котором вебхук сообщил позже, в этих данных может не быть
+  if (hit && hit.d0 === d0 && hit.at >= dirty && Date.now() - hit.at < maxAge) return Promise.resolve(hit);
+  const fly = liveInflight.get(fkey);
+  if (fly && fly.started >= dirty) return fly.p;   // параллельные запросы — один поход в YClients
+  const started = Date.now();
+  const p = load().then(data => {
+    const entry = { at: started, d0, data };
+    const cur = liveCache.get(key);
+    if (!cur || cur.at <= started) liveCache.set(key, entry);
+    return entry;
+  }).finally(() => { if (liveInflight.get(fkey)?.p === p) liveInflight.delete(fkey); });
+  liveInflight.set(fkey, { started, p });
+  return p;
+}
+
+// Вебхук YClients: в журнале филиала что-то поменялось — следующий запрос пойдёт за записями заново
+function invalidate(cid) { dirtyAt.set(Number(cid), Date.now()); }
+
+// Запись журнала → то, что нужно окнам и «Сегодня»; null — запись времени не занимает
+// (удалена, ДР-напоминание, нет мастера или времени). Минуты — московские, от полуночи.
+//  end — конец самой записи, to — вместе с техническим перерывом: перерыв мастеру тоже занят.
+function slimRecord(r) {
   if (!r || r.deleted || sync.isBirthdayRecord(r)) return null;
   const staffId = Number(r.staff_id || (r.staff && r.staff.id));
   const t = Date.parse(r.datetime || r.date || '');
   if (!staffId || Number.isNaN(t)) return null;
   const m = new Date(t + MSK);
   const from = m.getUTCHours() * 60 + m.getUTCMinutes();
-  // seance_length и technical_break_duration — в секундах; технический перерыв мастеру тоже занят
-  const len = (Number(r.seance_length ?? r.length) || 0) + (Number(r.technical_break_duration) || 0);
-  return { staff_id: staffId, day: m.toISOString().slice(0, 10), from, to: Math.min(1440, from + Math.round(len / 60)) };
+  const len = Math.round((Number(r.seance_length ?? r.length) || 0) / 60);   // секунды → минуты
+  const brk = Math.round((Number(r.technical_break_duration) || 0) / 60);
+  const services = Array.isArray(r.services) ? r.services : [];
+  const c = r.client && r.client.id ? r.client : null;
+  return {
+    id: r.id, staff_id: staffId, day: m.toISOString().slice(0, 10),
+    from, end: Math.min(1440, from + len), to: Math.min(1440, from + len + brk),
+    attendance: Number(r.attendance) || 0,   // 1 пришёл, -1 не пришёл, 0/2 ждём
+    client: c ? { yc_id: c.id, name: cleanName(c.display_name || [c.name, c.surname].filter(Boolean).join(' ')) || 'Без имени' } : null,
+    service: services.map(s => s.title || s.name).filter(Boolean).join(', '),
+    cost: services.reduce((s, x) => s + (Number(x.cost) || 0), 0),
+    note: c ? '' : cleanName(r.comment).slice(0, 80),   // у блокировки («обучение») смысл — в комментарии
+  };
 }
 
-const windowsCache = new Map();   // company_id → { at, day0, data }
-const windowsInflight = new Map();
-
-// Живые данные одного филиала: смены на 7 дней + ВСЕ записи журнала (в том числе без клиента —
+// Филиал целиком: справочник, смены и ВСЕ записи журнала на неделю (в том числе без клиента —
 // блокировки «обучение», «под запись»; их около пятой части, без них окна врали бы).
-async function loadCompanyWindows(comp, days) {
-  const cid = Number(comp.id);
-  const [d0, d6] = [days[0], days[days.length - 1]];
-  const staffList = saveStaff(cid, await yc.fetchStaff(cid));
-  const sched = await yc.fetchStaffSchedule(cid, d0, d6);
-  saveSchedule(cid, d0, d6, sched);        // заодно освежаем кэш смен для сводки
-  const records = await yc.fetchRecords(cid, d0, d6);
-
-  const slotsOf = new Map();               // 'staff|день' → слоты
-  for (const r of sched || []) if (r && r.staff_id) slotsOf.set(`${r.staff_id}|${r.date}`, r.slots || []);
-  const busyOfStaff = new Map();           // 'staff|день' → занятость
-  for (const r of records) {
-    const b = busyOf(r);
-    if (!b) continue;
-    const k = `${b.staff_id}|${b.day}`;
-    if (!busyOfStaff.has(k)) busyOfStaff.set(k, []);
-    busyOfStaff.get(k).push({ from: b.from, to: b.to });
+async function companyLive(comp, days, recordsMaxAge) {
+  const cid = Number(comp.id), d0 = days[0], d6 = days[days.length - 1];
+  const [staff, sched, recs] = await Promise.all([
+    liveGet(cid, 'staff', '', STAFF_TTL, async () => saveStaff(cid, await yc.fetchStaff(cid))),
+    liveGet(cid, 'sched', d0, SCHEDULE_TTL, async () => {
+      const rows = await yc.fetchStaffSchedule(cid, d0, d6);
+      saveSchedule(cid, d0, d6, rows);        // заодно освежаем кэш смен для сводки
+      return rows || [];
+    }),
+    liveGet(cid, 'recs', d0, recordsMaxAge, async () =>
+      (await yc.fetchRecords(cid, d0, d6)).map(slimRecord).filter(Boolean)),
+  ]);
+  const slotsOf = new Map();               // 'staff|день' → слоты смены
+  for (const r of sched.data) if (r && r.staff_id) slotsOf.set(`${r.staff_id}|${r.date}`, r.slots || []);
+  const recsOf = new Map();                // 'staff|день' → записи
+  for (const r of recs.data) {
+    const k = `${r.staff_id}|${r.day}`;
+    if (!recsOf.has(k)) recsOf.set(k, []);
+    recsOf.get(k).push(r);
   }
+  return { cid, branch: compName(comp), staff: staff.data, slotsOf, recsOf, recs: recs.data, at: recs.at };
+}
 
+const nowMskMin = () => { const m = new Date(Date.now() + MSK); return m.getUTCHours() * 60 + m.getUTCMinutes(); };
+const ceil5 = (m) => Math.ceil(m / 5) * 5;   // к сетке журнала YClients
+const weekFrom = (day) => Array.from({ length: 7 }, (_, i) => shiftDay(day, i));
+function pickCompanies(branch) {
+  branch = String(branch || '').trim();
+  const comps = yc.companies().filter(c => !branch || compName(c) === branch);
+  if (!comps.length) throw err(`Неизвестный филиал: ${branch}`);
+  return comps;
+}
+
+// Свободные окна мастеров филиала на неделю
+function companyWindows(live, days) {
   const today = mskToday();
-  const nowMsk = new Date(Date.now() + MSK);
-  // сегодня окном не считаем всё, что раньше «сейчас + 30 мин»; к 5 минутам — под сетку журнала
-  const notBeforeToday = Math.ceil((nowMsk.getUTCHours() * 60 + nowMsk.getUTCMinutes() + 30) / 5) * 5;
-
+  // сегодня окном не считаем всё, что раньше «сейчас + 30 мин»
+  const notBeforeToday = ceil5(nowMskMin() + 30);
   const masters = [];
-  for (const s of staffList) {
+  for (const s of live.staff) {
     if (!s.bookable || s.fired) continue;
     const perDay = days.map(day => {
-      const slots = slotsOf.get(`${s.staff_id}|${day}`) || [];
-      const gaps = computeGaps(slots, busyOfStaff.get(`${s.staff_id}|${day}`) || [],
-        { minGap: MIN_GAP, notBefore: day === today ? notBeforeToday : null });
+      const slots = live.slotsOf.get(`${s.staff_id}|${day}`) || [];
+      const busy = (live.recsOf.get(`${s.staff_id}|${day}`) || []).map(r => ({ from: r.from, to: r.to }));
+      const gaps = computeGaps(slots, busy, { minGap: MIN_GAP, notBefore: day === today ? notBeforeToday : null });
       return { day, work_min: sumRanges(slotRanges(slots)), free_min: gaps.reduce((a, g) => a + g.min, 0), gaps };
     });
     if (!perDay.some(d => d.work_min > 0)) continue;        // только мастера хотя бы с одной сменой
     masters.push({
-      staff_id: s.staff_id, company_id: cid, branch: compName(comp), staff: s.name, specialization: s.specialization,
+      staff_id: s.staff_id, company_id: live.cid, branch: live.branch, staff: s.name, specialization: s.specialization,
       days: perDay, free_min_total: perDay.reduce((a, d) => a + d.free_min, 0),
     });
   }
-  return { at: Date.now(), day0: d0, masters };
-}
-
-function companyWindows(comp, days, refresh) {
-  const key = String(comp.id);
-  const hit = windowsCache.get(key);
-  if (!refresh && hit && hit.day0 === days[0] && Date.now() - hit.at < WINDOWS_TTL) return Promise.resolve(hit);
-  if (windowsInflight.has(key)) return windowsInflight.get(key);   // параллельные клики — один запрос в YClients
-  const p = loadCompanyWindows(comp, days)
-    .then(data => { windowsCache.set(key, data); return data; })
-    .finally(() => windowsInflight.delete(key));
-  windowsInflight.set(key, p);
-  return p;
+  return masters;
 }
 
 // Люди, которых нельзя звать под окна, и люди с задачей/звонком — по ЧЕЛОВЕКУ (телефон), а не
@@ -587,21 +628,26 @@ function candidatesFor(companyIds, today) {
   return out;
 }
 
-async function windows({ branch, refresh } = {}) {
-  if (yc.isDemo()) throw err('Демо-режим: свободные окна считаются по живому расписанию YClients, а ключи не заданы');
-  branch = String(branch || '').trim();
-  const comps = yc.companies().filter(c => !branch || compName(c) === branch);
-  if (!comps.length) throw err(`Неизвестный филиал: ${branch}`);
+// Живые данные по выбранным филиалам; сбой одного филиала не прячет другой — он уходит в warnings
+async function livesOf(branch, recordsMaxAge, what) {
+  if (yc.isDemo()) throw err(`Демо-режим: ${what} считается по живому журналу YClients, а ключи не заданы`);
+  const comps = pickCompanies(branch);
   await yc.ensureAuth();
-  const today = mskToday();
-  const days = Array.from({ length: 7 }, (_, i) => shiftDay(today, i));
-
-  const parts = [], warnings = [];
+  const today = mskToday(), days = weekFrom(today);
+  const lives = [], warnings = [];
   for (const comp of comps) {
-    try { parts.push(await companyWindows(comp, days, Boolean(refresh))); }
-    catch (e) { console.error(`[salon] окна ${compName(comp)}:`, e.message); warnings.push(`${compName(comp)}: ${e.message}`); }
+    try { lives.push(await companyLive(comp, days, recordsMaxAge)); }
+    catch (e) { console.error(`[salon] ${what}, ${compName(comp)}:`, e.message); warnings.push(`${compName(comp)}: ${e.message}`); }
   }
-  if (!parts.length) throw err(`YClients не отдал расписание — ${warnings.join('; ')}`, 502);
+  if (!lives.length) throw err(`YClients не отдал журнал — ${warnings.join('; ')}`, 502);
+  return { today, days, lives, warnings };
+}
+
+// Окнам хватает записей десятиминутной свежести: неделя вперёд меняется не поминутно,
+// а о каждой новой записи вебхук и так сбросит кэш.
+async function windows({ branch, refresh } = {}) {
+  const { today, days, lives, warnings } = await livesOf(branch, refresh ? 0 : WINDOWS_TTL, 'свободные окна');
+  const parts = lives.map(l => ({ at: l.at, masters: companyWindows(l, days) }));
 
   const cands = candidatesFor(parts.flatMap(p => p.masters.map(m => m.company_id)).filter((v, i, a) => a.indexOf(v) === i), today);
   const masters = [];
@@ -620,6 +666,90 @@ async function windows({ branch, refresh } = {}) {
       gaps: masters.reduce((a, m) => a + m.days.reduce((b, d) => b + d.gaps.length, 0), 0),
       clients: masters.reduce((a, m) => a + m.clients.length, 0),
     },
+    ...(warnings.length ? { warnings } : {}),
+  };
+}
+
+// --- Сегодня: день салона вживую ------------------------------------------------------
+// Записи дня из журнала YClients (не из нашей базы — она догоняет синком раз в 30 минут):
+// кто пришёл, кто сейчас у мастера, кто впереди, кто не пришёл; выручка закрытая и ожидаемая;
+// лента дня каждого мастера. Записи берутся не старше минуты, а вебхук сбрасывает их сразу.
+const TODAY_TTL = 60e3;
+
+async function today({ branch, refresh } = {}) {
+  const { today: day, lives, warnings } = await livesOf(branch, refresh ? 0 : TODAY_TTL, 'день салона');
+  const now = nowMskMin();
+  // now — идёт прямо сейчас (по времени: «пришёл» админы часто ставят, когда клиент сел в кресло),
+  // done — визит закончился и закрыт, late — время прошло, а визит не закрыли, waiting — впереди.
+  // Неявка — только по отметке «не пришёл». Деньги считаются по отметке, а не по времени (ниже).
+  const stateOf = (r) => r.attendance === -1 ? 'no_show'
+    : r.from <= now && now < r.end ? 'now'
+    : r.attendance === 1 ? 'done' : r.end <= now ? 'late' : 'waiting';
+
+  // Карточки клиентов в нашей базе — чтобы по клику на запись открывать карточку
+  const ycIds = [...new Set(lives.flatMap(l => l.recs).filter(r => r.day === day && r.client).map(r => r.client.yc_id))];
+  const localOf = new Map();
+  if (ycIds.length) {
+    for (const c of db.prepare(`SELECT id, yclients_id FROM clients WHERE yclients_id IN (${ycIds.map(() => '?').join(',')})`)
+      .all(...ycIds)) localOf.set(c.yclients_id, c.id);
+  }
+
+  const t = { records: 0, done: 0, now: 0, waiting: 0, late: 0, no_show: 0, revenue_done: 0, revenue_expected: 0 };
+  const doneClients = new Set();
+  const masters = [];
+  let lo = 1440, hi = 0;
+  for (const live of lives) {
+    // Плитки — по всем записям с клиентом, у какого бы мастера они ни стояли
+    for (const r of live.recs) {
+      if (r.day !== day || !r.client) continue;
+      t.records++; t[stateOf(r)]++;
+      // выручка — по отметке «пришёл» (визит закрыт в YClients), а не по времени записи
+      if (r.attendance === 1) { t.revenue_done += r.cost; doneClients.add(r.client.yc_id); }
+      else if (r.attendance !== -1) t.revenue_expected += r.cost;
+    }
+    for (const s of live.staff) {
+      if (!s.bookable || s.fired) continue;
+      const slots = live.slotsOf.get(`${s.staff_id}|${day}`) || [];
+      const recs = (live.recsOf.get(`${s.staff_id}|${day}`) || []).slice().sort((a, b) => a.from - b.from);
+      const work = slotRanges(slots);
+      if (!work.length && !recs.some(r => r.client)) continue;   // не работает и записей нет
+      const visits = recs.filter(r => r.client && r.attendance !== -1);
+      const workMin = sumRanges(work);
+      const busyMin = visits.reduce((a, r) => a + (r.end - r.from), 0);
+      const gaps = computeGaps(slots, recs.map(r => ({ from: r.from, to: r.to })), { minGap: MIN_GAP, notBefore: ceil5(now) });
+      const cur = visits.find(r => stateOf(r) === 'now');
+      const next = visits.find(r => r.from > now);
+      for (const w of work) { lo = Math.min(lo, w.from); hi = Math.max(hi, w.to); }
+      for (const r of recs) { lo = Math.min(lo, r.from); hi = Math.max(hi, r.end); }
+      masters.push({
+        staff_id: s.staff_id, company_id: live.cid, branch: live.branch, staff: s.name, specialization: s.specialization,
+        work: work.map(w => ({ from: fmtMin(w.from), to: fmtMin(w.to) })), work_min: workMin, busy_min: busyMin,
+        load_pct: workMin ? Math.round((busyMin / workMin) * 100) : null,
+        free_left_min: gaps.reduce((a, g) => a + g.min, 0), next_gap: gaps[0] || null,
+        now: cur ? { client: cur.client.name, service: cur.service, to: fmtMin(cur.end) } : null,
+        next: next ? { from: fmtMin(next.from), client: next.client.name, service: next.service } : null,
+        items: recs.map(r => ({
+          from: fmtMin(r.from), to: fmtMin(r.end),
+          kind: r.client ? 'visit' : 'block', state: r.client ? stateOf(r) : null,
+          client: r.client ? r.client.name : null, client_id: r.client ? (localOf.get(r.client.yc_id) || null) : null,
+          service: r.service || null, cost: r.client ? Math.round(r.cost) : null, note: r.client ? null : (r.note || null),
+        })),
+      });
+    }
+  }
+  // Сначала мастера, у кого прямо сейчас клиент, затем самые загруженные — простаивающие видны внизу
+  masters.sort((a, b) => (b.now ? 1 : 0) - (a.now ? 1 : 0) || (b.load_pct ?? -1) - (a.load_pct ?? -1));
+  if (lo >= hi) { lo = 9 * 60; hi = 22 * 60; }
+
+  return {
+    day, now: fmtMin(now),
+    updated_at: new Date(Math.min(...lives.map(l => l.at))).toISOString(),
+    range: { from: fmtMin(Math.floor(lo / 60) * 60), to: fmtMin(Math.min(1440, Math.ceil(hi / 60) * 60)) },
+    tiles: {
+      ...t, revenue_done: Math.round(t.revenue_done), revenue_expected: Math.round(t.revenue_expected),
+      avg_check: doneClients.size ? Math.round(t.revenue_done / doneClients.size) : 0,
+    },
+    masters,
     ...(warnings.length ? { warnings } : {}),
   };
 }
@@ -662,6 +792,6 @@ function createWindowTask({ client_id, staff, day, from, to } = {}) {
 }
 
 module.exports = {
-  summary, windows, computeGaps, createWindowTask, addManualTask,
+  summary, windows, today, invalidate, computeGaps, createWindowTask, addManualTask,
   refreshStaff, ensureSchedule, directionOf,
 };

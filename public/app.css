@@ -1098,3 +1098,75 @@
     .sl-donut-g{width:180px;margin:0 auto}
     .sl-cl{flex-wrap:wrap}
   }
+
+  /* «Салон» → «Сегодня»: шапка «вживую», плитки дня и лента дня мастеров */
+  .sl-live{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .sl-live-t{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+  .sl-live-t b{font-size:15px}
+  .sl-live-t .muted{font-size:12.5px}
+  .sl-live .btn{display:inline-flex;align-items:center;gap:6px;flex:none}
+  .sl-live .btn svg{width:14px;height:14px}
+  /* точка связи: зелёная пульсирует — толчки идут; серая — соединение потеряно, работает минутный опрос */
+  .sl-dot{width:10px;height:10px;border-radius:50%;flex:none;background:var(--line-strong)}
+  .sl-dot.on{background:var(--green);box-shadow:0 0 0 0 var(--green);animation:sl-pulse 2s infinite}
+  @keyframes sl-pulse{70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+  .sl-stack{display:flex;gap:2px;height:10px;margin-top:14px;border-radius:999px;overflow:hidden}
+  .sl-stack i{min-width:4px}
+  .sl-prog{height:10px;margin-top:14px;border-radius:999px;background:var(--panel2);overflow:hidden}
+  .sl-prog i{display:block;height:100%;border-radius:inherit;background:var(--green)}
+  .sl-late{color:var(--amber)}
+  .sl-fc{margin-top:16px}
+
+  .sl-tl-leg{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:12px;font-size:12px;color:var(--ink-2)}
+  .sl-tl-leg span{display:inline-flex;align-items:center;gap:6px}
+  .sl-tl-leg i{width:10px;height:10px;border-radius:3px;display:inline-block}
+  .sl-tl-leg i.blk,.sl-tl-i.s-block{background:repeating-linear-gradient(135deg,var(--line-strong) 0 3px,var(--panel2) 3px 6px)}
+  .sl-tl{min-width:820px}
+  .sl-tl-row{display:grid;grid-template-columns:190px minmax(0,1fr) 92px;gap:12px;align-items:center;padding:7px 0;border-top:1px solid var(--line)}
+  .sl-tl-axisrow{border-top:0;padding:0 0 4px}
+  /* имя мастера липнет к левому краю: на телефоне лента прокручивается, а чья строка — видно всегда */
+  .sl-tl-who{position:sticky;left:0;z-index:2;background:var(--panel);min-width:0;padding-right:6px}
+  .sl-tl-who b{display:block;font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sl-tl-who .branch-tag{margin:2px 0 0}
+  .sl-tl-who small{display:block;margin-top:2px;font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sl-tl-who small.on{color:var(--blue)}
+  .sl-tl-axis{position:relative;height:16px;font-size:11px;color:var(--muted)}
+  .sl-tl-axis span,.sl-tl-axis em{position:absolute;top:0;transform:translateX(-50%)}
+  .sl-tl-axis em{font-style:normal;font-weight:600;color:var(--red);background:var(--panel);padding:0 3px;z-index:1}
+  .sl-tl-track{position:relative;height:30px;border-radius:8px;background:var(--panel2)}
+  .sl-tl-w{position:absolute;top:0;bottom:0;border-radius:8px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line)}
+  .sl-tl-i{position:absolute;top:3px;bottom:3px;border:0;border-radius:6px;padding:0 5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
+    font:600 11px var(--sans);color:#fff;text-align:left;cursor:pointer}
+  .sl-tl-i:disabled{cursor:default}
+  .sl-tl-i:not(:disabled):hover{filter:brightness(1.08);box-shadow:0 4px 10px -4px rgba(0,0,0,.4)}
+  .sl-tl-i.s-done{background:var(--green)}
+  .sl-tl-i.s-now{background:var(--blue);box-shadow:0 0 0 2px var(--blue-soft)}
+  .sl-tl-i.s-waiting{background:var(--violet)}
+  .sl-tl-i.s-late{background:var(--amber)}
+  .sl-tl-i.s-no_show{background:var(--red);opacity:.75;text-decoration:line-through}
+  .sl-tl-i.s-block{color:var(--ink-2)}
+  .sl-tl-now{position:absolute;top:-4px;bottom:-4px;width:2px;margin-left:-1px;background:var(--red);z-index:1;pointer-events:none}
+  .sl-tl-sum{text-align:right;font-size:13px}
+  .sl-tl-sum b{font-weight:600}
+  .sl-tl-sum small{display:block;font-size:11px;color:var(--muted)}
+
+  /* прогноз выручки в «Бумаге»: в «Стекле» он нарисован темой, здесь — минимум, чтобы читался */
+  :where(#view-salon) .gl-fc-n{display:flex;align-items:baseline;flex-wrap:wrap;gap:10px;margin-top:12px}
+  :where(#view-salon) .gl-fc-n b{font-size:28px;font-weight:600}
+  :where(#view-salon) .gl-fc-labs,:where(#view-salon) .gl-fc-bar{display:flex;gap:6px}
+  :where(#view-salon) .gl-fc-labs{margin-top:16px;font-size:12px;color:var(--ink-2);min-height:16px}
+  :where(#view-salon) .gl-fc-labs span,:where(#view-salon) .gl-fc-seg{flex-basis:0;min-width:0}
+  :where(#view-salon) .gl-fc-bar{height:26px;margin-top:6px}
+  :where(#view-salon) .gl-fc-seg.s0{background:var(--blue)}
+  :where(#view-salon) .gl-fc-seg.s1{background:var(--amber)}
+  :where(#view-salon) .gl-fc-seg.s2{background:var(--green)}
+  :where(#view-salon) .gl-fc-leg{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:12px;color:var(--ink-2)}
+  :where(#view-salon) .gl-fc-leg span{display:inline-flex;align-items:center;gap:6px}
+  :where(#view-salon) .gl-fc-leg i{width:8px;height:8px;border-radius:50%;display:inline-block}
+  :where(#view-salon) .gl-fc-foot{display:flex;justify-content:space-between;gap:10px;margin-top:14px;padding:10px 12px;background:var(--panel2);font-size:12.5px}
+
+  @media(max-width:600px){
+    .sl-live{flex-wrap:wrap}
+    .sl-tl-row{grid-template-columns:150px minmax(0,1fr) 70px}
+    .sl-tl{min-width:720px}
+  }

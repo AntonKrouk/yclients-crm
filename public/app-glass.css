@@ -331,3 +331,20 @@ tr.crow:hover td{background:rgba(255,255,255,.55)}
   .sl-card,.sl-tile{padding:14px}
   .sl-tile .gl-num b{font-size:21px}
 }
+
+/* «Салон» → «Сегодня» */
+.sl-tl-who{background:transparent}
+.sl-scroll .sl-tl-who{background:linear-gradient(90deg,rgba(255,255,255,.92) 85%,rgba(255,255,255,0))}
+.sl-tl-track{background:rgba(18,21,28,.05);border-radius:10px}
+.sl-tl-w{background:rgba(255,255,255,.85);box-shadow:inset 0 0 0 1px var(--glass-line);border-radius:10px}
+.sl-tl-i{border-radius:8px}
+.sl-tl-axis em{background:rgba(255,255,255,.9);border-radius:6px}
+.sl-prog{background:rgba(18,21,28,.08)}
+.sl-prog i{background:linear-gradient(90deg,var(--green),#9CCB6A)}
+
+/* «Обзор»: прогноз выручки ушёл в «Салон» — «Пульс недели» один в ряду, раскладываем его вширь */
+.gl-row2.solo{grid-template-columns:minmax(0,1fr)}
+.gl-row2.solo .gl-pulse{display:grid;grid-template-columns:minmax(0,1fr) minmax(200px,260px) minmax(0,1fr);gap:12px 28px;align-items:center}
+.gl-row2.solo .gl-gauge{margin:0}
+.gl-row2.solo .gl-legend{margin:0}
+@media(max-width:760px){ .gl-row2.solo .gl-pulse{grid-template-columns:1fr} }

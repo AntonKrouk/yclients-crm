@@ -275,7 +275,8 @@
       </div>
       <div class="sl-per">
         <div class="gl-seg sl-seg" id="slPeriod" aria-label="Период">
-          <button type="button" data-p="month" class="on">Этот месяц</button>
+          <button type="button" data-p="today" class="on">Сегодня</button>
+          <button type="button" data-p="month">Этот месяц</button>
           <button type="button" data-p="prev">Прошлый месяц</button>
           <button type="button" data-p="7">7 дней</button>
           <button type="button" data-p="30">30 дней</button>
@@ -287,16 +288,21 @@
       </div>
     </div>
 
-    <div class="sl-tiles" id="slTiles"></div>
-    <div id="slNote"></div>
-    <div data-blk="rev" id="slDays"></div>
-    <div data-blk="staff" id="slStaff"></div>
-    <div class="sl-row2">
-      <div data-blk="dir" id="slDir"></div>
-      <div data-blk="svc" id="slSvc"></div>
+    <!-- «Сегодня» — день салона вживую из журнала YClients; остальные периоды — сводка из базы.
+         Видна одна из двух частей, свободные окна недели — под обеими. -->
+    <div id="slToday" style="display:none"></div>
+    <div id="slPeriodView">
+      <div class="sl-tiles" id="slTiles"></div>
+      <div id="slNote"></div>
+      <div data-blk="rev" id="slDays"></div>
+      <div data-blk="staff" id="slStaff"></div>
+      <div class="sl-row2">
+        <div data-blk="dir" id="slDir"></div>
+        <div data-blk="svc" id="slSvc"></div>
+      </div>
+      <div data-blk="src" id="slSrc"></div>
     </div>
     <div data-blk="win" id="slWin"></div>
-    <div data-blk="src" id="slSrc"></div>
   </section>
 
   <!-- ЗАДАЧИ -->
