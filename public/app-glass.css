@@ -312,3 +312,22 @@ tr.crow:hover td{background:rgba(255,255,255,.55)}
   .gl-num b{font-size:24px}
   .gl-tmain{padding:12px}
 }
+
+/* ── «Салон»: раскладка в app.css, здесь — стекло ── */
+#view-salon .gl-tag{border:0}
+.sl-title h2{letter-spacing:-.03em}
+.sl-pop{background:var(--sheet);-webkit-backdrop-filter:blur(30px) saturate(170%);backdrop-filter:blur(30px) saturate(170%);
+  border:1px solid var(--glass-line);border-radius:18px;box-shadow:0 30px 60px -28px rgba(0,0,0,.45)}
+.sl-pop label:hover{background:rgba(18,21,28,.05)}
+.sl-card,.sl-tile{padding:18px}
+.sl-t th{font-size:12px;font-weight:500;color:var(--muted)}
+.sl-bar{background:rgba(18,21,28,.08)}
+.sl-bars i{border-radius:5px 5px 2px 2px}
+.sl-warn{border-radius:12px}
+.sl-cell{border-radius:10px}
+.sl-t .sl-exp td{background:rgba(255,255,255,.45)}
+.sl-tile .gl-num b{font-size:26px}
+@media(max-width:560px){
+  .sl-card,.sl-tile{padding:14px}
+  .sl-tile .gl-num b{font-size:21px}
+}

@@ -226,6 +226,33 @@ db.exec(`
     sort   INTEGER DEFAULT 0
   );
 
+  -- Мастера филиалов из YClients (раздел «Салон»): имя нужно, чтобы связать старые визиты
+  -- без staff_id с мастером по имени, а признак bookable отсекает служебного «АДМИНИСТРАТОРА».
+  CREATE TABLE IF NOT EXISTS staff (
+    company_id     INTEGER,
+    staff_id       INTEGER,
+    name           TEXT,
+    specialization TEXT,
+    bookable       INTEGER DEFAULT 0,
+    fired          INTEGER DEFAULT 0,
+    hidden         INTEGER DEFAULT 0,
+    updated_at     TEXT,
+    PRIMARY KEY (company_id, staff_id)
+  );
+
+  -- Смены мастеров по дням (раздел «Салон»): знаменатель «загрузки». День, в который мастер
+  -- не работал, хранится строкой с work_min = 0 — иначе прошлые дни перезапрашивались бы вечно.
+  -- slots — JSON [{from:"10:00",to:"22:00"}] (бывает два слота с перерывом).
+  CREATE TABLE IF NOT EXISTS staff_days (
+    company_id  INTEGER,
+    staff_id    INTEGER,
+    date        TEXT,           -- московский день YYYY-MM-DD
+    work_min    INTEGER DEFAULT 0,
+    slots       TEXT,
+    updated_at  TEXT,
+    PRIMARY KEY (company_id, staff_id, date)
+  );
+
   CREATE INDEX IF NOT EXISTS idx_visits_client ON visits(client_id);
   CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
   CREATE INDEX IF NOT EXISTS idx_actions_client ON task_actions(client_id);
@@ -291,6 +318,12 @@ ensureColumn('task_actions', 'member_id', 'INTEGER');
 // посещаемости отличать: визит бесплатного клиента считаем посещением, напоминание — нет.
 ensureColumn('visits', 'comment', 'TEXT');
 ensureColumn('visits', 'kind', 'TEXT');
+// Мастер (staff_id из YClients) и длительность записи в минутах (seance_length / 60) — для раздела
+// «Салон»: загрузка мастера = минуты записей / минуты смены. Имя мастера (visits.staff) для этого
+// не годится — его пишут по-разному, а длительности не было вовсе. У строк, приехавших до
+// появления колонок, поля пустые, пока их не перечитает ночной синк (он берёт 12 месяцев).
+ensureColumn('visits', 'staff_id', 'INTEGER');
+ensureColumn('visits', 'duration_min', 'INTEGER');
 // «Ходит, но не платит» — вычисляется каждым синком (sync.recomputeFreeClients), такие люди
 // в автоматический обзвон не попадают.
 ensureColumn('clients', 'free_client', 'INTEGER DEFAULT 0');

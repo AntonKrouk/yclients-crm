@@ -123,6 +123,14 @@ async function fetchStaff(cid = companyId()) {
   return api(`/company/${cid}/staff/`);
 }
 
+// Смены ВСЕХ мастеров филиала за период одним запросом (раздел «Салон»).
+// Ответ — [{ staff_id, date, slots: [{from:"10:00", to:"22:00"}] }], только РАБОЧИЕ дни:
+// выходной мастера отдельной строкой не приходит (проверено на боевом 27.10.2026).
+// Слотов в день бывает два — между ними перерыв.
+async function fetchStaffSchedule(cid, startDate, endDate) {
+  return api(`/company/${cid}/staff/schedule?start_date=${startDate}&end_date=${endDate}`);
+}
+
 // Пользователи филиала с ролями доступа (user_role_slug: administrator/manager/worker/owner/accountant).
 // Это НАСТОЯЩИЙ список тех, кто работает в YClients — в отличие от staff, где админы заведены
 // как «сотрудники» и часто скрыты/уволены.
@@ -382,6 +390,7 @@ module.exports = {
   ensureAuth,
   fetchMyCompanies,
   fetchStaff,
+  fetchStaffSchedule,
   fetchUsers,
   fetchServices,
   fetchServiceCategories,

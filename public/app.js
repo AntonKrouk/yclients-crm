@@ -198,7 +198,8 @@ async function loadBranches(){
 }
 function reloadCurrentView(){
   const v = document.querySelector('.tab.active')?.dataset.view;
-  if(v==='calls') loadCalls();
+  if(v==='salon') loadSalon();
+  else if(v==='calls') loadCalls();
   else if(v==='overview') loadOverview();
   else if(v==='clients') loadClients($('#clientSearch').value);
   else if(v==='segments'){ segLoaded=false; loadSegments(); }
@@ -288,7 +289,8 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   setNav(false);                              // на телефоне меню закрывается само
   $('#topbarView').textContent=t.textContent; // в свёрнутом виде видно, где мы находимся
   const v=t.dataset.view;
-  ['tasks','calls','overview','clients','vip','deposit','alice','bday','scripts','analytics','segments','vitrina'].forEach(name=>$('#view-'+name).style.display = name===v?'':'none');
+  ['salon','tasks','calls','overview','clients','vip','deposit','alice','bday','scripts','analytics','segments','vitrina'].forEach(name=>$('#view-'+name).style.display = name===v?'':'none');
+  if(v==='salon') loadSalon();
   if(v==='tasks') loadTasks();
   if(v==='calls') loadCalls();
   if(v==='overview'){ ovLiveAnim=true; loadOverview(); }
@@ -2652,6 +2654,407 @@ async function loadOvLive(){
 }
 
 if(GLASS){ glassTasksLayout(); glassOverviewLayout(); }
+
+// ═══ Раздел «Салон» — дашборд владельца ══════════════════════════════════════
+// Выручка, записи и потери, вклад мастеров, направления, доход услуг в час, свободные окна
+// недели и клиенты под эти окна. Сервер — /api/salon/*, описание — docs/salon-dashboard.md.
+// Сводка и окна грузятся ОТДЕЛЬНО: окна считаются дольше и сводку держать не должны.
+// Видят только владелец и управляющая. Сервер отвечает остальным 403, а api() принимает
+// 403 за «сессия истекла» — поэтому салонные маршруты не трогаем, пока /api/me не сказал owner.
+// В тихое обновление раз в 45 с раздел НЕ входит: запросы тяжёлые.
+// Стоит после темы «Стекло» не случайно: glSpark, glArc, nf, pct1 — const, раньше них вызов упал бы.
+const SL_BLOCKS = [['recs','Записи и отмены'],['rev','Выручка по дням'],['staff','Вклад мастеров'],
+  ['dir','Направления'],['svc','Услуги'],['win','Свободные окна'],['src','Источники данных']];
+const SL_SUM_BLOCKS = ['recs','rev','staff','dir','svc','src'];   // этим блокам нужна сводка; окнам — свой запрос
+const SL_IDS = ['slTiles','slNote','slDays','slStaff','slDir','slSvc','slSrc'];
+const SL_COLS = ['--blue','--green','--amber','--violet','--red','--accent','--muted'];   // доли бублика
+const SL_LOST_HINT = 'Отмены учтены не полностью: запись, которую в YClients удалили задним числом, мы уже не видим — отмены ловим только в будущем окне синка.';
+const SL = { owner:false, blocks:{}, period:'month', from:'', to:'', seq:0, wseq:0, sum:null, win:null,
+  mSort:'revenue', mDir:-1, mAll:false, svc:'price', wtab:'gaps', open:null };
+
+// Даты — московские дни YYYY-MM-DD, как у сервера; арифметику ведём по UTC, чтобы не зависеть от пояса браузера
+const slYmd = d => d.toLocaleDateString('sv-SE',{timeZone:'Europe/Moscow'});
+const slAdd = (ymd,n) => { const d=new Date(ymd+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); };
+const slDow = ymd => ['вс','пн','вт','ср','чт','пт','сб'][new Date(ymd+'T00:00:00Z').getUTCDay()];
+const slDM  = ymd => ymd.slice(8,10)+'.'+ymd.slice(5,7);
+const slDT  = iso => iso ? new Date(iso).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',timeZone:'Europe/Moscow'}) : '';
+const slHm  = iso => new Date(iso).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Moscow'});
+const slHours = min => (Math.round((min||0)/6)/10).toLocaleString('ru-RU')+' ч';   // 90 → «1,5 ч»
+const slKey = m => m.company_id+':'+m.staff_id;   // мастер в двух салонах — две карточки с разными id
+const slDash = (v,f) => v==null ? '<span class="muted">—</span>' : f(v);
+const slDue = n => n==null ? '' : n>0 ? 'просрочено '+plural(n,'день','дня','дней')
+  : n<0 ? 'срок через '+plural(-n,'день','дня','дней') : 'срок сегодня';
+
+function slRange(p){
+  const t=slYmd(new Date());
+  if(p==='7')  return [slAdd(t,-6),t];
+  if(p==='30') return [slAdd(t,-29),t];
+  if(p==='prev'){ const last=slAdd(t.slice(0,8)+'01',-1); return [last.slice(0,8)+'01',last]; }
+  return [t.slice(0,8)+'01',t];   // «этот месяц» — с 1-го числа по сегодня, как по умолчанию на сервере
+}
+function slLoadPrefs(){
+  let saved={}; try{ saved=JSON.parse(localStorage.getItem('sl.blocks')||'{}')||{}; }catch{}
+  SL.blocks=Object.fromEntries(SL_BLOCKS.map(([k])=>[k, saved[k]!==false]));   // новое по умолчанию — показано
+}
+function slSavePrefs(){ try{ localStorage.setItem('sl.blocks',JSON.stringify(SL.blocks)); }catch{} }
+const slApplyBlocks = () => document.querySelectorAll('#view-salon [data-blk]').forEach(n=>{
+  n.style.display = SL.blocks[n.dataset.blk] ? '' : 'none'; });
+
+function slSyncHead(){
+  $('#slPeriod').querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.p===SL.period));
+  $('#slFrom').value=SL.from; $('#slTo').value=SL.to;
+  $('#slWhere').textContent=[currentBranch||'оба филиала', `${slDM(SL.from)}–${slDM(SL.to)}`].join(' · ');
+}
+// Перерисовка с сохранением горизонтальной прокрутки: на телефоне таблица шире экрана,
+// и без этого каждый клик по заголовку отбрасывал бы её к началу.
+function slPaint(box,html){
+  const s=box.querySelector('.sl-scroll'), x=s?s.scrollLeft:0;
+  box.innerHTML=html;
+  const n=box.querySelector('.sl-scroll'); if(n) n.scrollLeft=x;
+}
+const slBusy = on => SL_IDS.forEach(id=>$('#'+id).classList.toggle('sl-busy',on));
+const slClear = () => SL_IDS.forEach(id=>$('#'+id).innerHTML='');
+const slCard = (title,sub,right,body) => `<div class="card sl-card"><div class="gl-card-h"><div><h3>${title}</h3>${sub?`<p class="muted">${sub}</p>`:''}</div>${right||''}</div>${body}</div>`;
+const slNone = '<div class="empty">Данных за период нет</div>';
+
+// ── загрузка ──
+function loadSalon(){
+  if(!SL.owner) return Promise.resolve();
+  if(SL.period!=='custom') [SL.from,SL.to]=slRange(SL.period);   // вкладка могла простоять до полуночи
+  slSyncHead(); slApplyBlocks();
+  SL.win=null; SL.open=null;   // окна зависят от филиала, а он мог смениться
+  return Promise.all([slLoadSum(), SL.blocks.win ? slLoadWin() : null]);
+}
+async function slLoadSum(){
+  if(!SL_SUM_BLOCKS.some(k=>SL.blocks[k])) return;   // все блоки сводки скрыты — запрос не нужен
+  const seq=++SL.seq;   // быстрые клики по периодам: поздний ответ старого запроса не должен перекрыть новый
+  slBusy(true);
+  if(!SL.sum) $('#slTiles').innerHTML='<div class="empty">Загружаю…</div>';
+  try{
+    const d=await api(bp(`/api/salon/summary?from=${SL.from}&to=${SL.to}`));
+    if(seq!==SL.seq) return;
+    SL.sum=d;
+  }catch(e){
+    if(seq!==SL.seq) return;
+    SL.sum=null; slBusy(false); slClear();
+    $('#slTiles').innerHTML=`<div class="empty">Не получилось загрузить: ${esc(e.message)}</div>`;
+    toast('Сводка не загрузилась: '+e.message,'bad');
+    return;
+  }
+  slBusy(false);
+  // ответ пришёл, но в нём не то, что описано в контракте, — не оставляем «Загружаю…» висеть молча
+  try{ slRenderSum(); }
+  catch(e){ console.error(e); slClear(); $('#slTiles').innerHTML='<div class="empty">Не получилось показать данные: сервер прислал неожиданный ответ</div>'; toast('Сводка пришла в неожиданном виде','bad'); }
+}
+async function slLoadWin(refresh){
+  const seq=++SL.wseq, box=$('#slWin');
+  if(SL.win) box.classList.add('sl-busy');
+  else box.innerHTML=slCard('Свободные окна · неделя','','','<div class="empty">Загружаю расписание…</div>');
+  try{
+    const w=await api(bp('/api/salon/windows'+(refresh?'?refresh=1':'')));
+    if(seq!==SL.wseq) return;
+    SL.win=w;
+  }catch(e){
+    if(seq!==SL.wseq) return;
+    box.classList.remove('sl-busy');
+    toast('Окна не загрузились: '+e.message,'bad');
+    if(!SL.win) box.innerHTML=slCard('Свободные окна · неделя','','',
+      `<div class="empty">Не получилось загрузить: ${esc(e.message)}<br><button class="btn" id="slWinRetry" type="button" style="margin-top:12px">Повторить</button></div>`);
+    return;
+  }
+  box.classList.remove('sl-busy');
+  try{ slRenderWin(); }
+  catch(e){ console.error(e); box.innerHTML=slCard('Свободные окна · неделя','','','<div class="empty">Не получилось показать окна: сервер прислал неожиданный ответ</div>'); toast('Окна пришли в неожиданном виде','bad'); }
+}
+
+// ── сводка ──
+function slRenderSum(){
+  const d=SL.sum; if(!d) return;
+  slClear();
+  const t=d.tiles;
+  if(!t.records.value && !t.revenue.value){   // за период пусто — остальные блоки рисовать нечем, а источники покажем: видно, свежи ли данные
+    $('#slTiles').innerHTML=slNone;
+  }else{
+    $('#slTiles').innerHTML=slTilesHtml(d);
+    const un=t.unclosed&&t.unclosed.value;
+    if(un>0) $('#slNote').innerHTML=`<p class="sl-note" data-blk="recs">Не закрыты в YClients: ${plural(un,'запись','записи','записей')} — в «Состоялись» и выручку не входят</p>`;
+    $('#slDays').innerHTML=slDaysHtml(d);
+    slRenderStaff();
+    $('#slDir').innerHTML=slDirHtml(d);
+    slRenderSvc();
+  }
+  $('#slSrc').innerHTML=slSrcHtml(d);
+  slApplyBlocks();
+}
+// Дельта к прошлому периоду. inv — когда рост плох (потери): цвета меняются местами.
+function slDelta(v,prev,inv,hint){
+  if(!prev) return '';   // не с чем сравнивать
+  const d=Math.round((v/prev-1)*100);
+  const cls=d===0?'flat':((d>0)!==!!inv)?'':'down';
+  return `<span class="gl-delta ${cls}" title="${esc(hint)}">${d===0?'без изменений':(d>0?'+':'−')+Math.abs(d)+'%'}</span><span class="gl-vs">к прошлому</span>`;
+}
+// За год в плитку просятся 365 столбиков — склеиваем соседние дни, иначе они вылезут за край
+function slBucket(vals,max=36){
+  if(vals.length<=max) return vals;
+  const k=Math.ceil(vals.length/max), out=[];
+  for(let i=0;i<vals.length;i+=k) out.push(vals.slice(i,i+k).reduce((a,b)=>a+b,0));
+  return out;
+}
+const slTile = (blk,label,num,delta,sub,spark) =>
+  `<div class="card gl-tile sl-tile" data-blk="${blk}"><div class="gl-lbl">${label}</div><div class="gl-num">${num}${delta}</div><div class="gl-sub">${sub}</div>${spark}</div>`;
+function slTilesHtml(d){
+  const t=d.tiles, S=d.series, p=d.period, r=t.revenue, l=t.lost, c=t.completed;
+  const pp=`${slDM(p.prev_from)}–${slDM(p.prev_to)}`;
+  const dl=(v,prev,inv,fmt)=>slDelta(v,prev,inv,`Прошлый период (${pp}): ${fmt(prev||0)}`);
+  const sp=(k,col)=>glSpark(slBucket(S.map(x=>x[k]||0)),col,999);   // 999 — подсветить все столбики, а не последние семь
+  return [
+    slTile('recs','Все записи',`<b>${nf(t.records.value)}</b>`,dl(t.records.value,t.records.prev,false,nf),
+      'без напоминаний о днях рождения',sp('records','--blue')),
+    slTile('recs','Состоялись',`<b>${nf(c.value)}</b>`,dl(c.value,c.prev,false,nf),
+      `${pct1(c.pct)} от записей`,sp('completed','--green')),
+    slTile('recs','Потеряно',`<b class="sl-neg">${nf(l.value)}</b>`,dl(l.value,l.prev,true,nf),
+      `<span class="sl-neg">${pct1(l.pct)} от записей</span><br>неявки ${nf(l.no_show)} · отмены ${nf(l.cancelled)}<span class="sl-help" title="${esc(SL_LOST_HINT)}">?</span>`,sp('lost','--red')),
+    slTile('rev','Выручка',`<b>${rub(r.value)}</b>`,dl(r.value,r.prev,false,rub),
+      `<span title="Прошлый период: ${esc(rub(r.avg_check_prev))}">средний чек ${rub(r.avg_check)} на поход</span>`
+        +(r.goods>0?`<br>товары отдельно: ${rub(r.goods)}`:''),sp('revenue','--accent')),
+  ].join('');
+}
+
+function slDaysHtml(d){
+  const S=d.series||[]; if(!S.length) return '';
+  const max=Math.max(1,...S.map(x=>x.revenue)), total=S.reduce((a,x)=>a+x.revenue,0);
+  const peak=S.reduce((m,x)=>x.revenue>m.revenue?x:m,S[0]);
+  const bars=S.map(x=>{
+    const we=[0,6].includes(new Date(x.day+'T00:00:00Z').getUTCDay());   // выходные чуть светлее
+    const tip=`${slDow(x.day)} ${slDM(x.day)} · ${rub(x.revenue)} · ${plural(x.records,'запись','записи','записей')}`;
+    return `<i class="${we?'we':''}" data-tip="${esc(tip)}" title="${esc(tip)}" style="height:${x.revenue?Math.max(4,Math.round(x.revenue/max*100)):1}%"></i>`;
+  }).join('');
+  const axis=[...new Set([S[0].day,S[Math.floor(S.length/2)].day,S[S.length-1].day])].map(x=>`<span>${slDM(x)}</span>`).join('');
+  // min-width: за три месяца столбики сузились бы в ниточки — на телефоне лучше прокрутка, чем каша
+  return slCard('Выручка по дням',`${rub(total)} за ${plural(S.length,'день','дня','дней')}`,
+    peak.revenue>0?`<span class="gl-tag">пик ${rub(peak.revenue)} · ${slDM(peak.day)}</span>`:'',
+    `<div class="sl-scroll"><div class="sl-chart" style="min-width:${S.length*7}px"><div class="sl-bars">${bars}</div><div class="sl-axis">${axis}</div></div></div>`);
+}
+
+// Таблица мастеров: сортировка кликом по заголовку, «—» (нет расписания) всегда внизу
+const SL_MCOLS = [['staff','Мастер'],['load_pct','Загрузка'],['avg_check','Ср. чек'],['repeat_pct','Повторные'],['revenue','Выручка']];
+function slRenderStaff(){ if(SL.sum) slPaint($('#slStaff'),slStaffHtml(SL.sum)); }
+function slStaffHtml(d){
+  const ms=d.masters||[], k=SL.mSort, both=!currentBranch;
+  if(!ms.length) return slCard('Мастера: вклад в выручку','','',slNone);
+  const val=m=>k==='staff'?String(m.staff||'').toLowerCase():m[k];
+  const rows=[...ms].sort((a,b)=>{
+    const x=val(a), y=val(b);
+    if(x==null&&y==null) return 0; if(x==null) return 1; if(y==null) return -1;
+    return (typeof x==='string'?x.localeCompare(y,'ru'):x-y)*SL.mDir;
+  });
+  const th=SL_MCOLS.map(([key,l],i)=>`<th class="${i===0?'sl-who':i>1?'num':''}"><button type="button" class="sl-th${key===k?' on':''}" data-sort="${key}">${l}${key===k?(SL.mDir<0?' ↓':' ↑'):''}</button></th>`).join('');
+  const tr=(SL.mAll?rows:rows.slice(0,10)).map(m=>{
+    const lp=m.load_pct;
+    const tip=m.work_hours!=null?`${nf(m.busy_hours)} ч занято из ${nf(m.work_hours)} ч смен`:'';
+    return `<tr><td class="sl-who">${esc(m.staff)}${both?branchTag(esc(m.branch)):''}</td>
+      <td>${lp==null?'<span class="muted">—</span>':`<span class="sl-bar m" title="${esc(tip)}"><i style="width:${Math.min(100,Math.max(0,lp))}%"></i></span>${Math.round(lp)}%`}</td>
+      <td class="num">${slDash(m.avg_check,rub)}</td>
+      <td class="num">${slDash(m.repeat_pct,v=>Math.round(v)+'%')}</td>
+      <td class="num"><b>${rub(m.revenue)}</b> <span class="muted">${pct1(m.share)}</span></td></tr>`;
+  }).join('');
+  const more=ms.length>10?`<button class="btn sl-more" id="slMore" type="button">${SL.mAll?'Свернуть':'Показать всех · '+ms.length}</button>`:'';
+  return slCard('Мастера: вклад в выручку','загрузка — доля занятых часов от смен по расписанию; повторные — клиенты, уже бывшие у этого мастера','',
+    `<div class="sl-scroll"><table class="sl-t"><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table></div>${more}`);
+}
+
+// Бублик: дуги тем же glArc, что у «Пульса недели». Дуга в 360° схлопнулась бы в точку, поэтому потолок 359,9°
+function slDirHtml(d){
+  const dirs=(d.directions||[]).filter(x=>x.revenue>0);
+  if(!dirs.length) return slCard('Выручка по направлениям','','',slNone);
+  const tot=dirs.reduce((a,x)=>a+x.revenue,0), GAP=dirs.length>1?3:0;
+  const col=i=>`var(${SL_COLS[i%SL_COLS.length]})`;
+  let a=-90;
+  const arcs=dirs.map((x,i)=>{
+    const sweep=360*x.revenue/tot, from=a+GAP/2, len=sweep-GAP; a+=sweep;
+    return len<.5?'':`<path d="${glArc(100,100,78,from,from+Math.min(len,359.9))}" style="stroke:${col(i)}"><title>${esc(x.name)} · ${rub(x.revenue)}</title></path>`;
+  }).join('');
+  const leg=dirs.map((x,i)=>`<li title="${esc(plural(x.records,'запись','записи','записей'))}"><i style="background:${col(i)}"></i><span>${esc(x.name)}</span><b>${rub(x.revenue)}</b><em>${pct1(x.share!=null?x.share:x.revenue/tot*100)}</em></li>`).join('');
+  return slCard('Выручка по направлениям','по первой категории услуг в записи','',
+    `<div class="sl-donut"><div class="sl-donut-g"><svg viewBox="0 0 200 200" aria-hidden="true">${arcs}</svg><div class="sl-donut-c"><small>всего</small><b>${rub(tot)}</b></div></div><ul class="sl-leg">${leg}</ul></div>`);
+}
+
+// Услуги: «цена» — сколько стоит, «в час» — сколько выручки приносит час работы мастера.
+// Именно выручки, а не дохода салона: оплаты мастеру и материалов у нас нет (в рилсе они из
+// Финтабло), и подпись «доход» обещала бы то, чего цифра не знает.
+// В режиме «в час» худшие сверху, нижняя четверть красная: это услуги, на которых часы мастера работают хуже всего.
+function slRenderSvc(){ if(SL.sum) $('#slSvc').innerHTML=slSvcHtml(SL.sum); }
+function slSvcHtml(d){
+  const list=d.services||[], hour=SL.svc==='hour';
+  if(!list.length) return slCard('Услуги','','',slNone);
+  const row=(s,v,max,txt,cls)=>`<div class="sl-svc ${cls||''}"><div class="sl-svc-h"><span class="sl-svc-n">${esc(s.service)}</span><b>${txt}</b></div>
+    <div class="sl-bar"><i style="width:${v?Math.max(2,Math.round(v/max*100)):0}%"></i></div>
+    <div class="sl-svc-m muted">${plural(s.records,'запись','записи','записей')} · выручка ${rub(s.revenue)}${s.avg_min?` · ${Math.round(s.avg_min)} мин`:''}</div></div>`;
+  let rows;
+  if(hour){
+    const known=list.filter(s=>s.per_hour!=null).sort((a,b)=>a.per_hour-b.per_hour);
+    const max=Math.max(1,...known.map(s=>s.per_hour)), red=Math.floor(known.length/4);
+    rows=known.map((s,i)=>row(s,s.per_hour,max,rub(s.per_hour)+'/ч',i<red?'bad':''))
+      .concat(list.filter(s=>s.per_hour==null).map(s=>row(s,0,1,'нет длительности','none'))).join('');
+  }else{
+    const sorted=[...list].sort((a,b)=>(b.avg_price||0)-(a.avg_price||0)), max=Math.max(1,...sorted.map(s=>s.avg_price||0));
+    rows=sorted.map(s=>row(s,s.avg_price||0,max,rub(s.avg_price))).join('');
+  }
+  const seg=`<div class="gl-seg sl-seg" id="slSvcMode"><button type="button" data-sv="price" class="${hour?'':'on'}">Цена услуги</button><button type="button" data-sv="hour" class="${hour?'on':''}">Выручка в час</button></div>`;
+  return slCard('Услуги','топ-15 по выручке, только записи из одной услуги','',
+    `${seg}<p class="muted sl-svc-hint">${hour?'сколько приносит час работы мастера, до оплаты мастеру и материалов — сначала самые слабые':'средняя цена записи, сначала дорогие'}</p>${rows}`);
+}
+
+function slSrcHtml(d){
+  const s=d.sources||{}, known=s.durations_known_pct;
+  const li=(n,iso)=>`<li><span>${n}</span><b>${iso?slDT(iso):'нет данных'}</b></li>`;
+  const warn=known!=null&&known<90
+    ? `<p class="sl-warn">Длительность записей известна у ${Math.round(known)}% — загрузка мастеров и доход в час дозаполнятся после ночного синка.</p>` : '';
+  return slCard('Источники данных','откуда цифры и насколько они свежие','',
+    `<ul class="sl-src">${li('YClients — последний синк',s.yclients_synced_at)}${li('Расписание мастеров — обновлено',s.schedule_updated_at)}</ul>${warn}`);
+}
+
+// ── свободные окна ──
+// Ближайшее окно мастера: первый день с окнами и первое окно этого дня
+function slNearest(m){
+  for(const c of (m.days||[])) if(c.gaps&&c.gaps.length) return {day:c.day,from:c.gaps[0].from,to:c.gaps[0].to,min:c.gaps[0].min};
+  return null;
+}
+// Кнопка «В обзвон» ставит ручную задачу с окном: без окна (нет смен на неделе) предлагать нечего
+function slClientRow(c,m,win){
+  const meta=[c.phone?esc(c.phone):'', slDue(c.overdue_days), c.visits_count?`визитов ${c.visits_count}`:'', c.avg_check?`чек ${rub(c.avg_check)}`:''].filter(Boolean).join(' · ');
+  const btn=c.in_tasks ? '<button class="btn sl-task" type="button" disabled>уже в задачах</button>'
+    : !win ? '<button class="btn sl-task" type="button" disabled title="У мастера нет окон на этой неделе">нет окна</button>'
+    : `<button class="btn sl-task" type="button" data-task="${c.id}" data-m="${esc(slKey(m))}" data-day="${esc(win.day)}" data-from="${esc(win.from)}" data-to="${esc(win.to)}">В обзвон</button>`;
+  return `<div class="sl-cl"><div class="sl-cl-i"><button type="button" class="sl-nm" data-cl="${c.id}">${esc(c.name||'Без имени')}</button><div class="sl-cl-m">${meta}</div></div>${btn}</div>`;
+}
+function slExpHtml(m,day){
+  const c=(m.days||[]).find(x=>x.day===day)||{}, gaps=c.gaps||[], cl=m.clients||[];
+  const win=gaps[0]?{day,from:gaps[0].from,to:gaps[0].to}:null;
+  const chips=gaps.map(g=>`<span class="sl-chip">${esc(g.from)}–${esc(g.to)}<small>${slHours(g.min)}</small></span>`).join('');
+  return `<div class="sl-exp-h"><b>${esc(m.staff)}</b><span>${slDow(day)} ${slDM(day)}</span><span class="sl-chips">${chips}</span></div>`
+    +(cl.length?`<div class="sl-exp-t muted">Кому предложить — у них подошёл срок визита к этому мастеру:</div>${cl.map(x=>slClientRow(x,m,win)).join('')}`
+      :'<div class="sl-exp-t muted">Клиентов этого мастера, у которых подошёл срок визита, нет.</div>');
+}
+function slGridHtml(w){
+  const ms=w.masters||[], days=w.days||[], both=!currentBranch;
+  if(!ms.length) return '<div class="empty">На ближайшую неделю смен в расписании нет</div>';
+  const head=`<tr><th class="sl-who">Мастер</th>${days.map((d,i)=>`<th${i?'':' class="today"'}>${slDow(d)}<small>${slDM(d)}</small></th>`).join('')}<th>Итого</th></tr>`;
+  const rows=ms.map(m=>{
+    const key=slKey(m), by=new Map((m.days||[]).map(c=>[c.day,c])), opened=SL.open&&SL.open.key===key;
+    const cells=days.map(d=>{
+      const c=by.get(d);
+      if(!c||!c.work_min) return '<td><span class="sl-off" title="не работает">—</span></td>';
+      if(!c.free_min) return '<td><span class="sl-zero" title="работает, окон нет">0</span></td>';
+      const a=(.2+.65*Math.min(1,c.free_min/480)).toFixed(2);   // чем больше свободных часов, тем насыщеннее плашка
+      const tip=(c.gaps||[]).map(g=>g.from+'–'+g.to).join(', ');
+      return `<td><button type="button" class="sl-cell${opened&&SL.open.day===d?' on':''}" data-wc="${esc(key)}" data-wd="${esc(d)}" style="--a:${a}" title="${esc(tip)}">${slHours(c.free_min)}</button></td>`;
+    }).join('');
+    const exp=opened?`<tr class="sl-exp"><td colspan="${days.length+2}"><div class="sl-exp-in">${slExpHtml(m,SL.open.day)}</div></td></tr>`:'';
+    return `<tr><td class="sl-who">${esc(m.staff)}${both?branchTag(esc(m.branch)):''}${m.specialization?`<small class="muted">${esc(m.specialization)}</small>`:''}</td>${cells}<td class="sl-sum">${m.free_min_total?slHours(m.free_min_total):'0'}</td></tr>${exp}`;
+  }).join('');
+  return `<table class="sl-t sl-grid"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+}
+function slClientsHtml(w){
+  const both=!currentBranch, groups=(w.masters||[]).filter(m=>(m.clients||[]).length);
+  if(!groups.length) return '<div class="empty">Подходящих клиентов на этой неделе нет</div>';
+  return groups.map(m=>{
+    const near=slNearest(m);
+    const when=near?`ближайшее окно: ${slDow(near.day)} ${slDM(near.day)} ${esc(near.from)}–${esc(near.to)} · ${slHours(near.min)}`:'окон на этой неделе нет';
+    return `<div class="sl-grp"><div class="sl-grp-h"><b>${esc(m.staff)}</b>${both?branchTag(esc(m.branch)):''}<span class="muted">${when}</span></div>${m.clients.map(c=>slClientRow(c,m,near)).join('')}</div>`;
+  }).join('');
+}
+function slRenderWin(){
+  const w=SL.win, box=$('#slWin'); if(!w) return;
+  const tt=w.totals||{}, tab=(k,l)=>`<button type="button" data-wt="${k}" class="${SL.wtab===k?'on':''}">${l}</button>`;
+  const right=`<div class="sl-win-r"><span class="muted">обновлено ${slHm(w.updated_at)}</span><button class="btn" id="slWinRefresh" type="button">${ICON.refresh}Обновить окна</button></div>`;
+  slPaint(box,slCard('Свободные окна · неделя',`окна от ${w.min_gap||60} мин: расписание мастеров минус все записи журнала, включая блокировки времени`,right,
+    `<div class="sl-wtabs"><div class="gl-seg sl-seg">${tab('gaps',`Окна · ${nf((tt.free_min||0)/60)} ч`)}${tab('cl',`Клиенты · ${nf(tt.clients||0)}`)}</div></div>`
+    +(SL.wtab==='cl'?`<div class="sl-clients">${slClientsHtml(w)}</div>`:`<div class="sl-scroll">${slGridHtml(w)}</div>`)));
+  slFitExp();
+}
+// Раскрытая под строкой панель должна быть ровно в ширину видимой части таблицы, иначе при
+// горизонтальной прокрутке (телефон) её содержимое уезжало бы вбок вместе с колонками
+function slFitExp(){
+  document.querySelectorAll('#slWin .sl-scroll').forEach(s=>{ if(s.clientWidth) s.style.setProperty('--slw',s.clientWidth+'px'); });
+}
+window.addEventListener('resize',slFitExp);
+
+async function slAddTask(btn){
+  const m=(SL.win&&SL.win.masters||[]).find(x=>slKey(x)===btn.dataset.m); if(!m) return;
+  const id=Number(btn.dataset.task);
+  btn.disabled=true;
+  try{
+    const r=await api('/api/salon/windows/task',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({client_id:id,staff:m.staff,day:btn.dataset.day,from:btn.dataset.from,to:btn.dataset.to})});
+    for(const x of SL.win.masters) for(const c of (x.clients||[])) if(c.id===id) c.in_tasks=true;   // кэш окон живёт 10 минут — отмечаем сами
+    toast(r.already?'Уже в задачах':'Добавлено в задачи','ok');
+    slRenderWin();
+  }catch(e){ toast('Не добавилось: '+e.message,'bad'); btn.disabled=false; }
+}
+
+// ── поповер «Показатели» и события ──
+function slPop(open){
+  const p=$('#slPop'); p.hidden=!open;
+  $('#slGear').setAttribute('aria-expanded',open?'true':'false');
+  if(open) p.innerHTML='<div class="sl-pop-h">Что показывать</div>'+SL_BLOCKS.map(([k,l])=>
+    `<label><input type="checkbox" data-blk-t="${k}"${SL.blocks[k]?' checked':''}> ${l}</label>`).join('');
+}
+$('#slPop').addEventListener('change',e=>{
+  const k=e.target.dataset.blkT; if(!k) return;
+  SL.blocks[k]=e.target.checked; slSavePrefs(); slApplyBlocks();
+  if(!SL.blocks[k]) return;
+  // включили блок, для которого данные ещё не грузили (был скрыт при открытии вкладки)
+  if(k==='win'){ if(!SL.win) slLoadWin(); }
+  else if(!SL.sum) slLoadSum();
+});
+document.addEventListener('click',e=>{ if(!e.target.closest('.sl-gearbox')) slPop(false); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') slPop(false); });
+$('#slLogout').onclick=async()=>{ try{ await fetch('/api/logout',{method:'POST'}); }catch{} location.reload(); };
+function slDatesChanged(){
+  const f=$('#slFrom').value, t=$('#slTo').value;
+  if(!f||!t) return;
+  if(f>t){ toast('Начало периода позже конца','bad'); $('#slFrom').value=SL.from; $('#slTo').value=SL.to; return; }
+  SL.period='custom'; SL.from=f; SL.to=t;
+  slSyncHead(); slLoadSum();
+}
+$('#slFrom').onchange=slDatesChanged;
+$('#slTo').onchange=slDatesChanged;
+
+$('#view-salon').addEventListener('click',e=>{
+  const q=s=>e.target.closest(s); let b;
+  if(q('#slGear')) return slPop($('#slPop').hidden);
+  if((b=q('[data-p]'))){ SL.period=b.dataset.p; [SL.from,SL.to]=slRange(SL.period); slSyncHead(); return slLoadSum(); }
+  if((b=q('[data-sort]'))){
+    const k=b.dataset.sort;
+    if(SL.mSort===k) SL.mDir=-SL.mDir; else { SL.mSort=k; SL.mDir=k==='staff'?1:-1; }
+    return slRenderStaff();
+  }
+  if(q('#slMore')){ SL.mAll=!SL.mAll; return slRenderStaff(); }
+  if((b=q('[data-sv]'))){ SL.svc=b.dataset.sv; return slRenderSvc(); }
+  if((b=q('[data-wt]'))){ SL.wtab=b.dataset.wt; return slRenderWin(); }
+  if((b=q('[data-wc]'))){
+    const same=SL.open&&SL.open.key===b.dataset.wc&&SL.open.day===b.dataset.wd;
+    SL.open=same?null:{key:b.dataset.wc,day:b.dataset.wd};
+    return slRenderWin();
+  }
+  if((b=q('[data-task]'))) return slAddTask(b);
+  if((b=q('[data-cl]'))) return openClient(Number(b.dataset.cl));
+  if(q('#slWinRefresh')) return slLoadWin(true);
+  if(q('#slWinRetry')) return slLoadWin();
+  if((b=q('[data-tip]'))) return toast(b.dataset.tip);   // на телефоне title не покажется — столбик подскажет тостом
+});
+
+// Вкладка появляется только у владельца. Любой сбой /api/me (старый сервер, нет сети, нет входа) —
+// раздел просто не показывается, остальной интерфейс не страдает.
+async function slInit(){
+  slLoadPrefs();
+  try{ const me=await api('/api/me'); if(!me||!me.owner) return; }
+  catch{ return; }
+  SL.owner=true;
+  document.querySelector('.tab[data-view="salon"]').style.display='';
+}
+slInit();
 
 // Старт
 loadAdmins();

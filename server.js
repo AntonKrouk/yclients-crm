@@ -12,6 +12,7 @@ const yc = require('./src/yclients');
 const people = require('./src/people');
 const ai = require('./src/ai');
 const vitrina = require('./src/vitrina');
+const salon = require('./src/salon');
 
 const app = express();
 app.use(express.json());
@@ -22,11 +23,16 @@ const DASH_PW = process.env.DASHBOARD_PASSWORD || '';
 const SECRET = process.env.SESSION_SECRET || DASH_PW || 'dev-secret';
 const CRON_SECRET = process.env.CRON_SECRET || '';
 const AUTH_ON = Boolean(DASH_PW);
+// Пароль владельца (раздел «Салон»: выручка мастеров и загрузка — админам это видеть незачем).
+// Вводится в том же окне входа. Не задан — раздел недоступен никому.
+const OWNER_PW = process.env.OWNER_PASSWORD || '';
 const PUBLIC_ASSETS = new Set(['/app.css', '/app-yc.css', '/app-glass.css', '/app.js', '/manifest.webmanifest', '/prive-logo.png',
   '/favicon.ico', '/apple-touch-icon.png', '/apple-touch-icon-precomposed.png']);
 // Пароль входит в подпись куки: сменили DASHBOARD_PASSWORD — все старые входы (в т.ч. у
 // уволившегося админа) перестают действовать, даже если SESSION_SECRET задан отдельно.
 const sessionCookie = () => crypto.createHmac('sha256', SECRET).update('authorized-v2:' + DASH_PW).digest('hex');
+// Кука владельца подписана обоими паролями: сменили любой — все входы владельца гаснут.
+const ownerCookie = () => crypto.createHmac('sha256', SECRET).update('owner-v1:' + OWNER_PW + ':' + DASH_PW).digest('hex');
 const sameSecret = (a, b) => {
   const x = crypto.createHash('sha256').update(String(a)).digest();
   const y = crypto.createHash('sha256').update(String(b)).digest();
@@ -56,14 +62,17 @@ app.post('/api/login', (req, res) => {
     console.warn(`[login] блок по лимиту, ${ip}`);
     return res.status(429).json({ error: 'Слишком много попыток. Попробуйте через 15 минут' });
   }
-  if (sameSecret((req.body || {}).password || '', DASH_PW)) {
+  // Пароль владельца проверяем первым; пустой OWNER_PW не должен совпасть с пустым вводом.
+  const typed = (req.body || {}).password || '';
+  const isOwnerPw = Boolean(OWNER_PW) && sameSecret(typed, OWNER_PW);
+  if (isOwnerPw || sameSecret(typed, DASH_PW)) {
     // Успешный вход пишем в журнал: смотреть `journalctl -u yclients-crm | grep login-ok`.
-    // «после N неудач» — признак подбора, который в итоге удался.
+    // «после N неудач» — признак подбора, который в итоге удался. Вход владельца помечен «owner».
     const ua = String(req.get('user-agent') || '').replace(/[^\x20-\x7e]/g, '').slice(0, 80);
-    console.log(`[login-ok] ${ip} после ${fails.length} неудач, ${ua}`);
+    console.log(`[login-ok] ${isOwnerPw ? 'owner ' : ''}${ip} после ${fails.length} неудач, ${ua}`);
     loginFails.delete(ip);
     const secure = req.get('x-forwarded-proto') === 'https' ? '; Secure' : '';
-    res.setHeader('Set-Cookie', `sess=${sessionCookie()}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Lax${secure}`);
+    res.setHeader('Set-Cookie', `sess=${isOwnerPw ? ownerCookie() : sessionCookie()}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Lax${secure}`);
     return res.json({ ok: true });
   }
   fails.push(Date.now());
@@ -78,7 +87,9 @@ app.post('/api/logout', (req, res) => {
 });
 
 app.use((req, res, next) => {
-  if (!AUTH_ON) return next();
+  // req.isOwner — владелец ли за запросом (раздел «Салон»). Без пароля дашборда (локально/демо)
+  // вход открыт и все считаются владельцем.
+  if (!AUTH_ON) { req.isOwner = true; return next(); }
   if (req.path === '/api/login' || req.path === '/api/health') return next();
   // Оформление, код и иконки — без входа: клиентских данных в них нет. Раньше на любой
   // путь неавторизованному отдавалась страница входа, и айфон получал HTML вместо иконки.
@@ -86,9 +97,22 @@ app.use((req, res, next) => {
   // авто-синк по крону: разрешаем синки с валидным токеном без куки
   const CRON_PATHS = ['/api/sync', '/api/sync-upcoming', '/api/sync-comments'];
   if (CRON_PATHS.includes(req.path) && CRON_SECRET && req.query.token === CRON_SECRET) return next();
-  if (parseCookies(req).sess === sessionCookie()) return next();
+  const sess = parseCookies(req).sess;
+  if (OWNER_PW && sess && sameSecret(sess, ownerCookie())) { req.isOwner = true; return next(); }
+  if (sess === sessionCookie()) { req.isOwner = false; return next(); }
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Требуется вход' });
   return res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+// Кто я: экран по этому решает, показывать ли вкладку «Салон». configured=false — пароль
+// владельца не задан, раздел недоступен никому.
+app.get('/api/me', (req, res) => res.json({ owner: Boolean(req.isOwner), configured: Boolean(OWNER_PW) || !AUTH_ON }));
+
+// Все /api/salon/* — только владельцу. Одной спрятанной вкладки мало: данные по выручке
+// мастеров ушли бы любому, кто откроет адрес API.
+app.use('/api/salon', (req, res, next) => {
+  if (req.isOwner) return next();
+  res.status(403).json({ error: 'Раздел только для владельца' });
 });
 
 // Отпечаток содержимого стилей и кода. Подставляется в ссылки на них, поэтому браузер
@@ -1335,28 +1359,22 @@ app.get('/api/tasks', (req, res) => {
 // Добавить клиента в задачи вручную — по одному, кнопкой в «Клиентах» и «Конструкторе».
 // Такая задача не занимает дневной лимит (движок по-прежнему добирает свои 10 на филиал)
 // и не снимается автоматической уборкой: висит, пока админ не отметит по ней результат.
+// Сама вставка (и проверка «уже висит задача») — в salon.addManualTask: её же использует
+// кнопка «В обзвон» из свободных окон мастера.
 app.post('/api/tasks/manual', (req, res) => {
   const { client_id, admin, note } = req.body || {};
-  const client = db.prepare('SELECT id, name, branch FROM clients WHERE id = ?').get(Number(client_id));
-  if (!client) return res.status(404).json({ error: 'Клиент не найден' });
-
-  // Уже висит задача по этому человеку — второй карточки не заводим, иначе админ
-  // звонил бы дважды по одному поводу. Отвечаем, что он уже в списке.
-  const open = db.prepare(`SELECT id, type, status, COALESCE(source,'auto') AS source
-                           FROM tasks WHERE client_id = ? AND status IN ('open','snoozed')
-                           ORDER BY id DESC LIMIT 1`).get(client.id);
-  if (open) {
-    return res.json({ ok: true, already: true, task_id: open.id, source: open.source,
-      type_label: TYPE_LABEL[open.type] || open.type, name: client.name });
-  }
-
   const who = (admin || '').trim();
   const reason = (note || '').trim()
     || `Добавлен вручную${who ? ' — ' + who : ''}. Позвонить, обсудить запись.`;
-  const r = db.prepare(`INSERT INTO tasks (client_id, type, due_date, priority, status, reason, created_at, source, added_by)
-                        VALUES (?, 'manual', date('now','localtime'), 1, 'open', ?, ?, 'manual', ?)`)
-    .run(client.id, reason, new Date().toISOString(), who || null);
-  res.json({ ok: true, added: true, task_id: r.lastInsertRowid, name: client.name });
+  const r = salon.addManualTask(client_id, { reason, addedBy: who });
+  if (r.notFound) return res.status(404).json({ error: 'Клиент не найден' });
+  // Уже висит задача по этому человеку — второй карточки не заводим, иначе админ
+  // звонил бы дважды по одному поводу. Отвечаем, что он уже в списке.
+  if (r.already) {
+    return res.json({ ok: true, already: true, task_id: r.task_id, source: r.source,
+      type_label: TYPE_LABEL[r.type] || r.type, name: r.name });
+  }
+  res.json({ ok: true, added: true, task_id: r.task_id, name: r.name });
 });
 
 // Фиксация звонка по задаче: статус задачи + запись в ленту клиента + обратная запись в YClients.
@@ -2503,6 +2521,28 @@ app.get('/api/calls/stats', (req, res) => {
     results_today: results,
     by_admin: byAdmin,
   });
+});
+
+// --- Раздел «Салон» (только владелец, гард выше) ------------------------------
+// Расчёт — в src/salon.js, контракт — docs/salon-dashboard.md. Ошибки ввода салон бросает
+// со status 400/404, сбой YClients по окнам — 502; остальное — 500, как у соседей.
+const salonFail = (res, tag, e) => {
+  if (!e.status) console.error(`[salon] ${tag}:`, e.message);
+  res.status(e.status || 500).json({ error: e.message });
+};
+app.get('/api/salon/summary', async (req, res) => {
+  try {
+    res.json(await salon.summary({ from: req.query.from, to: req.query.to, branch: req.query.branch }));
+  } catch (e) { salonFail(res, 'summary', e); }
+});
+app.get('/api/salon/windows', async (req, res) => {
+  try {
+    res.json(await salon.windows({ branch: req.query.branch, refresh: req.query.refresh === '1' }));
+  } catch (e) { salonFail(res, 'windows', e); }
+});
+app.post('/api/salon/windows/task', (req, res) => {
+  try { res.json(salon.createWindowTask(req.body || {})); }
+  catch (e) { salonFail(res, 'windows/task', e); }
 });
 
 // Первичное наполнение + автологин + очистка демо-данных при переходе на боевой режим

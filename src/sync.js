@@ -10,6 +10,17 @@ const BIRTHDAY_COLOR = '9c27b0';   // цвет записей-напоминан
 
 function iso(d) { return new Date(d).toISOString(); }
 
+// Напоминание о дне рождения: админы ставят в журнал запись-заглушку на день ДР клиента —
+// без услуг, фиолетовым цветом, в комментарии «др». Посещаемость ей никто не отмечает, но
+// и визитом это не является. Отличаем такие записи от настоящих визитов, которые просто
+// не закрыли (бесплатные клиенты: услуга с ценой написана в комментарии, оплаты нет).
+// Вынесено отдельной функцией: раздел «Салон» по ней же решает, что не занимает время мастера.
+function isBirthdayRecord(r) {
+  const services = Array.isArray(r.services) ? r.services : [];
+  return !services.length
+    && (r.custom_color === BIRTHDAY_COLOR || /^\s*др(?![а-яё])/i.test(String(r.comment || '')));
+}
+
 // Приводит запись YClients к нашему визиту + вытаскивает вложенного клиента.
 // Реальная структура /records: services[].title/cost, staff.name, client{id,display_name,phone},
 // datetime (ISO с таймзоной), attendance (1 пришёл, 0 ожидает, 2 подтверждён, -1 не пришёл), deleted.
@@ -28,13 +39,12 @@ function normalizeRecord(r) {
   else if (att === -1) status = 'no_show';
   else if (isFuture || att === 0 || att === 2) status = 'upcoming';
 
-  // Напоминание о дне рождения: админы ставят в журнал запись-заглушку на день ДР клиента —
-  // без услуг, фиолетовым цветом, в комментарии «др». Посещаемость ей никто не отмечает, но
-  // и визитом это не является. Отличаем такие записи от настоящих визитов, которые просто
-  // не закрыли (бесплатные клиенты: услуга с ценой написана в комментарии, оплаты нет).
   const comment = String(r.comment || '');
-  const birthday = !services.length
-    && (r.custom_color === BIRTHDAY_COLOR || /^\s*др(?![а-яё])/i.test(comment));
+  const birthday = isBirthdayRecord(r);
+  // Длительность всей записи: seance_length приходит в секундах. 0 и мусор — «неизвестно»
+  // (null), а не «0 минут»: иначе загрузка мастера считала бы такие записи нулевыми.
+  const secs = Number(r.seance_length);
+  const durationMin = Number.isFinite(secs) && secs > 0 ? Math.round(secs / 60) : null;
 
   const client = clientObj ? {
     id: clientObj.id,
@@ -56,6 +66,9 @@ function normalizeRecord(r) {
     booked_at: r.create_date ? iso(r.create_date) : null,
     comment,
     kind: birthday ? 'birthday' : 'visit',
+    // id мастера и длительность — для раздела «Салон» (загрузка мастеров, доход услуги в час)
+    staff_id: Number(r.staff_id || (r.staff && r.staff.id)) || null,
+    duration_min: durationMin,
   };
 }
 
@@ -164,21 +177,25 @@ const upsertClient = db.prepare(`
     birth_date=COALESCE(excluded.birth_date, clients.birth_date)
 `);
 const upsertVisitStmt = db.prepare(`
-  INSERT INTO visits (yclients_record_id, client_id, company_id, branch, date, service, staff, cost, status, service_category, booked_at, comment, kind)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+  INSERT INTO visits (yclients_record_id, client_id, company_id, branch, date, service, staff, cost, status, service_category, booked_at, comment, kind, staff_id, duration_min)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   ON CONFLICT(yclients_record_id) DO UPDATE SET
     client_id=excluded.client_id, company_id=excluded.company_id, branch=excluded.branch,
     date=excluded.date, service=excluded.service, staff=excluded.staff, cost=excluded.cost,
     status=excluded.status, service_category=excluded.service_category,
     -- момент создания не перезаписываем пустотой: старые записи приехали без него
     booked_at=COALESCE(excluded.booked_at, visits.booked_at),
-    comment=COALESCE(excluded.comment, visits.comment), kind=COALESCE(excluded.kind, visits.kind)
+    comment=COALESCE(excluded.comment, visits.comment), kind=COALESCE(excluded.kind, visits.kind),
+    -- так же с мастером и длительностью: пустое не затирает уже известное
+    staff_id=COALESCE(excluded.staff_id, visits.staff_id),
+    duration_min=COALESCE(excluded.duration_min, visits.duration_min)
 `);
 // Обёртка: категорию услуги считаем сами по прайс-листу, вызывающим об этом знать не нужно.
 const upsertVisit = {
-  run(recId, clientId, cid, branch, date, service, staff, cost, status, bookedAt = null, comment = null, kind = null) {
+  run(recId, clientId, cid, branch, date, service, staff, cost, status, bookedAt = null, comment = null, kind = null,
+      staffId = null, durationMin = null) {
     return upsertVisitStmt.run(recId, clientId, cid, branch, date, service, staff, cost, status,
-      categoriesOf(service), bookedAt, comment, kind);
+      categoriesOf(service), bookedAt, comment, kind, staffId, durationMin);
   },
 };
 
@@ -285,7 +302,7 @@ function syncBranch(clients, records, company, now) {
       c.birth_date ? normBirthDate(c.birth_date) : null, now);
     const local = getClientLocalId.get(c.id);
     for (const v of visits) {
-      upsertVisit.run(v.yclients_record_id, local.id, cid, company.name, v.date, v.service, v.staff, v.cost, v.status, v.booked_at, v.comment, v.kind);
+      upsertVisit.run(v.yclients_record_id, local.id, cid, company.name, v.date, v.service, v.staff, v.cost, v.status, v.booked_at, v.comment, v.kind, v.staff_id, v.duration_min);
       visitsN++;
     }
     for (const g of goodsByClient.get(c.id) || []) {
@@ -326,7 +343,7 @@ async function importRecord(cid, branch, recordId) {
   const local = getClientLocalId.get(v.client_id);
   if (!local) return { skipped: 'client_not_in_db' };
   upsertVisit.run(v.yclients_record_id, local.id, Number(cid) || null, branch || null,
-    v.date, v.service, v.staff, v.cost, v.status, v.booked_at, v.comment, v.kind);
+    v.date, v.service, v.staff, v.cost, v.status, v.booked_at, v.comment, v.kind, v.staff_id, v.duration_min);
   // пересчитываем агрегаты клиента по локальным визитам (новая запись — будущая,
   // на статистику завершённых не влияет, но держим строку клиента консистентной)
   recomputeClient(local.id, iso(Date.now()));
@@ -400,7 +417,7 @@ async function syncUpcoming(opts = {}) {
       if (!v.client_id) continue;                      // блокировка времени без клиента
       const local = getClientLocalId.get(v.client_id);
       if (!local) { unknown++; continue; }             // новый клиент — приедет полным синком
-      upsertVisit.run(v.yclients_record_id, local.id, cid, name, v.date, v.service, v.staff, v.cost, v.status, v.booked_at, v.comment, v.kind);
+      upsertVisit.run(v.yclients_record_id, local.id, cid, name, v.date, v.service, v.staff, v.cost, v.status, v.booked_at, v.comment, v.kind, v.staff_id, v.duration_min);
       visits++;
     }
     cancelled += reconcileFuture(records, { id: comp.id, name }, iso(end));
@@ -842,7 +859,27 @@ async function run(opts = {}) {
   // список всё равно осмысленнее пустого экрана. Но факт сбоя не прячем: он в логе, в ответе
   // на /api/sync и, значит, в том, что видит крон.
   if (failed.length) console.error(`[sync] ВНИМАНИЕ: не синкнулись филиалы: ${failed.join(', ')}`);
+  // Когда данные в последний раз были полными (все филиалы): раздел «Салон» показывает это
+  // рядом с цифрами. При сбое филиала метку не двигаем — иначе устаревшие цифры выглядели бы свежими.
+  if (!failed.length) {
+    db.prepare("INSERT INTO meta(key,value) VALUES('last_sync_at',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(now);
+  }
   const tasksN = rules.generate();
+
+  // Мастера и их смены для раздела «Салон» (загрузка, свободные окна). Строго ПОСЛЕ задач дня и
+  // в try/catch: у синка нет защиты по шагам, а сбой расписания не должен ничего ломать.
+  // Модуль подключаем здесь, а не вверху файла: salon.js сам требует sync.js (кольцо).
+  if (!yc.isDemo()) {
+    try {
+      const salon = require('./salon');
+      await salon.refreshStaff({ force: true });
+      const today = new Date();
+      const from = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1)).toISOString().slice(0, 10);
+      const to = new Date(today.getTime() + 7 * DAY).toISOString().slice(0, 10);
+      const sch = await salon.ensureSchedule(from, to);
+      console.log(`[sync] смены мастеров: запросов ${sch.requests}, дней записано ${sch.days}`);
+    } catch (e) { console.error('[sync] мастера и смены не обновлены:', e.message); }
+  }
 
   // Комментарии тянем фоном ПОСЛЕ ответа: первый проход долгий (~350 мс на клиента),
   // а «не беспокоить»-задачи, созданные до его завершения, снимутся внутри syncComments()
@@ -859,5 +896,6 @@ module.exports = {
   recomputeAutoBooked, ATTRIBUTION_DAYS,
   syncStandalonePurchases, purchasesFromRecord, backfillVisitCategories,
   syncComments, commentSyncStatus, recomputeFlags, spreadDncByPerson, parseDiscount, writeCallToYclients,
+  isBirthdayRecord,
   CRM_MARK, originalComment, DNC_RE,
 };
