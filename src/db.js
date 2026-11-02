@@ -183,16 +183,6 @@ db.exec(`
     added_at   TEXT
   );
 
-  -- «Алиса»: третий ручной список, устроенный так же. Отдельная таблица по той же
-  -- причине, что и у «Депозита»: списки независимы, человек может быть сразу в двух.
-  CREATE TABLE IF NOT EXISTS alice_clients (
-    id         INTEGER PRIMARY KEY,
-    client_id  INTEGER UNIQUE REFERENCES clients(id),
-    note       TEXT,
-    added_by   TEXT,
-    added_at   TEXT
-  );
-
   -- Заметка ко дню рождения клиента. Пишется заранее («дарим сертификат на укладку»)
   -- и всплывает в списке именинников в сам день рождения. Одна на карточку, живёт вечно.
   CREATE TABLE IF NOT EXISTS birthday_notes (
@@ -415,6 +405,6 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_visits_branch ON visits(branch)');
 // Список объявлен здесь, рядом с самими таблицами, потому что нужен в двух местах:
 // server.js собирает по нему маршруты и вкладки, rules.js — исключает этих клиентов
 // из автоматических задач. Новый список = одна строка тут + CREATE TABLE выше.
-const MANUAL_LISTS = { vip: 'vip_clients', deposit: 'deposit_clients', alice: 'alice_clients' };
+const MANUAL_LISTS = { vip: 'vip_clients', deposit: 'deposit_clients' };
 
 module.exports = { db, DATA_DIR, MANUAL_LISTS };

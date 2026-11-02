@@ -80,8 +80,7 @@ show('Остаток воронки: что его отсекает (перва�
   WITH ${BASE},
   why AS (
     SELECT branch, rule, CASE
-      WHEN id IN (SELECT client_id FROM vip_clients UNION SELECT client_id FROM deposit_clients
-                  UNION SELECT client_id FROM alice_clients) THEN '1 ручной список (VIP/Депозит/Алиса)'
+      WHEN id IN (SELECT client_id FROM vip_clients UNION SELECT client_id FROM deposit_clients) THEN '1 ручной список (VIP/Депозит)'
       WHEN EXISTS(SELECT 1 FROM list_members m JOIN lists l ON l.id = m.list_id WHERE m.client_id = y.id
                   AND l.status = 'active' AND m.status IN ('pending','snoozed')) THEN '2 в активном списке обзвона'
       WHEN length(phone) >= 10 AND EXISTS(SELECT 1 FROM clients d WHERE d.id <> y.id

@@ -126,7 +126,7 @@ function generate(opts = {}) {
   db.prepare(`UPDATE tasks SET status='open'
               WHERE status='snoozed' AND date(due_date) < date('now','localtime')`).run();
 
-  // Клиентов из ручных списков (VIP, «Депозит», «Алиса») ведут персонально — в автоматический
+  // Клиентов из ручных списков (VIP, «Депозит») ведут персонально — в автоматический
   // обзвон они не попадают. Исключаем и вторую карточку того же человека (в соседнем филиале),
   // иначе он вернулся бы оттуда. В выборках конструктора такие клиенты, наоборот, видны:
   // ручной обзвон по ним админ решает сам, а вот задачу движок ставить не должен.
@@ -303,7 +303,7 @@ function generate(opts = {}) {
   for (const c of clients) {
     if (suppressed.has(c.id)) continue;                 // дубль в неприоритетном филиале
     if (manualOpen.has(c.id)) continue;                 // админ уже добавил его в задачи руками
-    if (manualPerson.has(c.id)) continue;               // VIP / «Депозит» / «Алиса» ведут вручную
+    if (manualPerson.has(c.id)) continue;               // VIP / «Депозит» ведут вручную
     if (queuedPerson.has(c.id)) continue;               // уже ждёт звонка в списке обзвона
     if (upMap.get(c.id) || personBooked.has(c.id)) continue; // записан в этом или другом филиале
 

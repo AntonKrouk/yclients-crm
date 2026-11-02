@@ -213,7 +213,6 @@
     text-transform:uppercase;padding:2px 7px;margin-left:6px;white-space:nowrap;
     vertical-align:middle;color:var(--gold);border:1px solid var(--gold)}
   .list-tag.lt-deposit{color:var(--accent-2);border-color:var(--accent-2)}
-  .list-tag.lt-alice{color:var(--violet);border-color:var(--violet)}
 
   /* ── боковая карточка клиента ──────────────────────────────────────────── */
   .overlay{position:fixed;inset:0;background:rgba(23,22,20,.28);display:none;z-index:50}
@@ -434,8 +433,6 @@
      торцевой полосы и иконка у имени, чтобы вкладки не путались между собой. */
   .vip-card.dep{border-left-color:var(--accent)}
   .vip-card.dep .vip-star{color:var(--accent-2)}
-  .vip-card.lc-alice{border-left-color:var(--violet)}
-  .vip-card.lc-alice .vip-star{color:var(--violet)}
 
   /* ── аналитика ─────────────────────────────────────────────────────────── */
   .an-head{display:flex;align-items:center;justify-content:space-between;gap:16px;

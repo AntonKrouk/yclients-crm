@@ -293,7 +293,7 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   setNav(false);                              // на телефоне меню закрывается само
   $('#topbarView').textContent=t.textContent; // в свёрнутом виде видно, где мы находимся
   const v=t.dataset.view;
-  ['salon','tasks','calls','overview','clients','vip','deposit','alice','bday','scripts','analytics','segments','vitrina'].forEach(name=>$('#view-'+name).style.display = name===v?'':'none');
+  ['salon','tasks','calls','overview','clients','vip','deposit','bday','scripts','analytics','segments','vitrina'].forEach(name=>$('#view-'+name).style.display = name===v?'':'none');
   if(v==='salon') loadSalon();
   if(v==='tasks') loadTasks();
   if(v==='calls') loadCalls();
@@ -301,7 +301,6 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   if(v==='clients') loadClients();
   if(v==='vip') loadList('vip');
   if(v==='deposit') loadList('deposit');
-  if(v==='alice') loadList('alice');
   if(v==='bday') loadBday();
   if(v==='scripts') loadScripts();
   if(v==='analytics') loadAnalytics();
@@ -1514,9 +1513,8 @@ async function loadClients(q=''){
 const LIST_UI = {
   vip:     { pre:'vip', icon:'star',   name:'VIP',       tag:'VIP',     intoTx:'в VIP',       inTx:'В VIP',      addTx:'— в VIP',       delTx:'Убрать из VIP' },
   deposit: { pre:'dep', icon:'wallet', name:'«Депозит»', tag:'Депозит', intoTx:'в «Депозит»', inTx:'В Депозите', addTx:'— в «Депозит»', delTx:'Убрать из «Депозита»' },
-  alice:   { pre:'ali', icon:'user',   name:'«Алиса»',   tag:'Алиса',   intoTx:'в «Алису»',   inTx:'В «Алисе»',  addTx:'— в «Алису»',   delTx:'Убрать из «Алисы»' },
 };
-const listIds = { vip:new Set(), deposit:new Set(), alice:new Set() };
+const listIds = { vip:new Set(), deposit:new Set() };
 // Бейджи «этот клиент в ручном списке» для таблицы выборки конструктора.
 // Раньше таких клиентов там не показывали вовсе; теперь показываем, но помечаем,
 // чтобы админ видел, что человека уже ведут персонально.

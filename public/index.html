@@ -43,7 +43,6 @@
     <button class="tab" data-view="clients">Клиенты</button>
     <button class="tab" data-view="vip">VIP</button>
     <button class="tab" data-view="deposit">Депозит</button>
-    <button class="tab" data-view="alice">Алиса</button>
     <button class="tab" data-view="bday">ДР</button>
     <button class="tab" data-view="scripts">Скрипты</button>
     <button class="tab" data-view="segments">Конструктор</button>
@@ -569,23 +568,6 @@
     <div id="depList" style="margin-top:14px"></div>
   </section>
 
-  <!-- АЛИСА. Третий ручной список, устроен ровно как VIP и «Депозит»
-       (см. MANUAL_LISTS в src/db.js и LIST_UI в app.js). -->
-  <section id="view-alice" style="display:none">
-    <div class="card">
-      <div style="font-size:13px;color:var(--muted);margin-bottom:10px">
-        Постоянный список. Клиент остаётся здесь, пока его не удалит администратор. Автоматические задачи по нему
-        не ставятся — его ведут персонально; в выборках конструктора он виден и помечен бейджем списка.
-      </div>
-      <div class="vip-add">
-        <input class="search" id="aliSearch" style="max-width:none" placeholder="Найти клиента по имени или телефону, чтобы добавить в «Алису»…">
-        <div id="aliSuggest" class="vip-suggest"></div>
-      </div>
-      <div class="seg-summary muted" id="aliSummary" style="margin-top:12px"></div>
-    </div>
-    <div id="aliList" style="margin-top:14px"></div>
-  </section>
-
   <!-- ДНИ РОЖДЕНИЯ: сверху именинники выбранного дня (по умолчанию сегодня),
        снизу календарь с перелистыванием месяцев. -->
   <section id="view-bday" style="display:none">
@@ -738,7 +720,6 @@
     <div class="dacts">
       <button class="dact" id="vipToggle" onclick="toggleListFromDrawer('vip')"></button>
       <button class="dact" id="depToggle" onclick="toggleListFromDrawer('deposit')"></button>
-      <button class="dact" id="aliToggle" onclick="toggleListFromDrawer('alice')"></button>
       <button class="dact" id="scDrawerBtn" onclick="openScUse()"></button>
       <button class="dact dnc" id="dncToggle" onclick="toggleDnc()"></button>
     </div>
