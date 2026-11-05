@@ -108,19 +108,33 @@ async function cached(key, fn) {
 }
 const demo = () => require('../portal/demo');
 
+// Сотрудники, которых нужно убрать из CRM и публичной витрины. Сверяем по паре
+// имя + фамилия в любом порядке, чтобы пережить различия в порядке и написании «ё».
+const EXCLUDED_STAFF = [
+  ['зинаида', 'федорова'],
+  ['роман', 'федына'],
+].map(names => new Set(names));
+function isExcludedStaff(name) {
+  const words = new Set(String(name || '').toLowerCase().replace(/ё/g, 'е').split(/\s+/).filter(Boolean));
+  return EXCLUDED_STAFF.some(names => [...names].every(word => words.has(word)));
+}
+
 // Витрина показывает ВСЕХ мастеров филиала (Антон, 04.10.2026): и без графика на месяц вперёд,
 // и скрытых от онлайн-записи (к кому записывают только по телефону). Поэтому список — не
 // из онлайн-записи (book_staff), а полный список сотрудников. Отсекаем только уволенных,
-// удалённых и не-мастеров по должности. Убрать мастера руками можно в CRM («Показывать»).
+// удалённых, не-мастеров по должности и сотрудников из EXCLUDED_STAFF. Остальных можно
+// скрыть с витрины вручную в CRM («Показывать»).
 const NOT_MASTER = /администратор|менеджер|горничн|управляющ|руководител|директор|бухгалтер|уборщ/i;
 
 async function ycStaff(cid) {
   if (yc.isDemo()) {
-    return demo().handle('GET', '/p/api/staff', { salon: cid }).map(s => ({ ...s, works: undefined }));
+    return demo().handle('GET', '/p/api/staff', { salon: cid })
+      .filter(s => !isExcludedStaff(s.name)).map(s => ({ ...s, works: undefined }));
   }
   const list = await cached(`staff:${cid}`, async () => { await yc.ensureAuth(); return yc.fetchStaff(cid); });
   return (Array.isArray(list) ? list : [])
-    .filter(s => !s.fired && !s.is_fired && !s.is_deleted && !NOT_MASTER.test(`${s.position?.title || ''} ${s.specialization || ''} ${s.name || ''}`))
+    .filter(s => !s.fired && !s.is_fired && !s.is_deleted && !isExcludedStaff(s.name)
+      && !NOT_MASTER.test(`${s.position?.title || ''} ${s.specialization || ''} ${s.name || ''}`))
     .map(s => ({
       id: s.id, name: s.name || '', specialization: s.specialization || '',
       position: s.position?.title || '', avatar: s.avatar_big || s.avatar || '',
