@@ -137,7 +137,8 @@ async function ycStaff(cid) {
       && !NOT_MASTER.test(`${s.position?.title || ''} ${s.specialization || ''} ${s.name || ''}`))
     .map(s => ({
       id: s.id, name: s.name || '', specialization: s.specialization || '',
-      position: s.position?.title || '', avatar: s.avatar_big || s.avatar || '',
+      // Для карточек берём компактный аватар; оригинал может весить несколько мегабайт.
+      position: s.position?.title || '', avatar: s.avatar || s.avatar_big || '',
       // описание сотрудника в YClients приходит HTML-ом — на витрину только текст
       bio: String(s.information || '').replace(/<br\s*\/?>|<\/p>/gi, '\n').replace(/<[^>]+>/g, '')
         .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\n{3,}/g, '\n\n').trim(),
