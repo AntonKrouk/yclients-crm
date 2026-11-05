@@ -137,8 +137,11 @@ async function ycStaff(cid) {
       && !NOT_MASTER.test(`${s.position?.title || ''} ${s.specialization || ''} ${s.name || ''}`))
     .map(s => ({
       id: s.id, name: s.name || '', specialization: s.specialization || '',
-      // Для карточек берём компактный аватар; оригинал может весить несколько мегабайт.
-      position: s.position?.title || '', avatar: s.avatar || s.avatar_big || '',
+      position: s.position?.title || '',
+      // Оригинал нужен для чёткого отображения на карточке; миниатюра — запасной вариант,
+      // если CDN не отдаст оригинал.
+      avatar: s.avatar_big || s.avatar || '',
+      avatarFallback: s.avatar_big && s.avatar && s.avatar_big !== s.avatar ? s.avatar : '',
       // описание сотрудника в YClients приходит HTML-ом — на витрину только текст
       bio: String(s.information || '').replace(/<br\s*\/?>|<\/p>/gi, '\n').replace(/<[^>]+>/g, '')
         .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\n{3,}/g, '\n\n').trim(),
@@ -269,7 +272,7 @@ function merge(cid, s, cards) {
     id: s.id, name, specialization,
     direction: prof.direction || autoDirection(s.position, specialization) || s.position || 'Другие мастера',
     bio: prof.bio || s.bio || '',
-    avatar: prof.photo || s.avatar,
+    avatar: prof.photo || s.avatar, avatarFallback: s.avatarFallback || '',
     visible: own ? Boolean(own.visible) : true,
     sort: own?.sort ?? null,
     also: cards.filter(c => c.cid !== Number(cid)).map(c => ({
@@ -297,7 +300,7 @@ async function publicStaff(cid) {
       const r = ratingOf(cards);
       return {
         id: m.id, name: m.name, specialization: m.specialization, direction: m.direction, bio: m.bio,
-        avatar: m.avatar, tone: m.tone,
+        avatar: m.avatar, avatarFallback: m.avatarFallback, tone: m.tone,
         also: m.also.filter(b => b.visible).map(b => b.name),
         works: works.length || !demoWorks ? works : (demoWorks.get(m.id) || []),
         rating: r.rating || (demoWorks && raw.get(m.id)?.rating) || null,

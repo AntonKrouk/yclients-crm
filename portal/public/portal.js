@@ -255,7 +255,7 @@
   // Карточка мастера в списке: крупное фото, имя, направление. Портфолио — внутри,
   // по нажатию. В демо фото нет — вместо него монограмма на оттенке первой работы.
   const photo = (m, cls) => `<span class="${cls}"${!m.avatar && m.tone ? ` style="background:linear-gradient(160deg,${esc(m.tone[0])},${esc(m.tone[1])})"` : ''}>${m.avatar
-    ? `<img src="${esc(m.avatar)}" alt="" loading="lazy">`
+    ? `<img src="${esc(m.avatar)}"${m.avatarFallback ? ` data-fallback="${esc(m.avatarFallback)}"` : ''} alt="" loading="lazy" decoding="async">`
     : `<span class="mono">${initials(m.name)}</span>`}</span>`;
   // Первые десять карточек встают лесенкой, остальные — по мере прокрутки (.late)
   const masterCard = (m, i) => `
@@ -672,6 +672,14 @@
     indicator(app.querySelector('.tabs'), 'tabs', false);
     railInd(false);
   });
+
+  // Если оригинал аватара не загрузился, используем миниатюру из YClients.
+  document.addEventListener('error', (e) => {
+    const img = e.target;
+    if (!(img instanceof HTMLImageElement) || !img.dataset.fallback || img.dataset.fallbackUsed) return;
+    img.dataset.fallbackUsed = 'true';
+    img.src = img.dataset.fallback;
+  }, true);
 
   // --- события --------------------------------------------------------------
   document.addEventListener('click', (e) => {
