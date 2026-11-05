@@ -228,6 +228,8 @@ const pendingStmt = db.prepare(`SELECT staff_id, COUNT(*) n FROM portal_reviews
   WHERE company_id = ? AND status = 'pending' GROUP BY staff_id`);
 
 const fileUrl = (cid, sid, file) => `/p/works/${cid}/${sid}/${encodeURIComponent(file)}`;
+const publicAvatarUrl = (url) => url && /^https:\/\/assets\.yclients\.com\/masters\/(?:origin|sm)\//i.test(url)
+  ? `/p/avatar?u=${encodeURIComponent(url)}` : url;
 const cardsSql = (cards) => ({
   sql: '(' + cards.map(() => '(company_id = ? AND staff_id = ?)').join(' OR ') + ')',
   args: cards.flatMap(c => [c.cid, c.sid]),
@@ -300,7 +302,7 @@ async function publicStaff(cid) {
       const r = ratingOf(cards);
       return {
         id: m.id, name: m.name, specialization: m.specialization, direction: m.direction, bio: m.bio,
-        avatar: m.avatar, avatarFallback: m.avatarFallback, tone: m.tone,
+        avatar: publicAvatarUrl(m.avatar), avatarFallback: publicAvatarUrl(m.avatarFallback), tone: m.tone,
         also: m.also.filter(b => b.visible).map(b => b.name),
         works: works.length || !demoWorks ? works : (demoWorks.get(m.id) || []),
         rating: r.rating || (demoWorks && raw.get(m.id)?.rating) || null,

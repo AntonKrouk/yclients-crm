@@ -171,6 +171,34 @@ app.post('/p/api/review', wrap(async (req, res) => {
 
 app.get('/p/api/health', (req, res) => res.json({ ok: true, demo: yc.isDemo() }));
 
+// Фото YClients раздаём с домена витрины: некоторые браузеры/сети не загружают
+// тяжёлые оригиналы напрямую с CDN, после чего фронтенд переключается на миниатюру.
+app.get('/p/avatar', async (req, res) => {
+  let url;
+  try { url = new URL(String(req.query.u || '')); } catch { return fail(res, 400, 'Некорректный адрес фото'); }
+  if (url.protocol !== 'https:' || url.hostname !== 'assets.yclients.com' || url.port || url.username || url.password
+      || !/^\/masters\/(?:origin|sm)\/[a-z0-9]+\/[a-z0-9]+\/[a-z0-9_-]+\.(?:png|jpe?g|webp)$/i.test(url.pathname)) {
+    return fail(res, 400, 'Недопустимый адрес фото');
+  }
+  try {
+    const image = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    const finalUrl = new URL(image.url);
+    const type = image.headers.get('content-type') || '';
+    if (finalUrl.protocol !== 'https:' || finalUrl.hostname !== 'assets.yclients.com') return fail(res, 502, 'Источник фото недоступен');
+    if (!image.ok || !/^image\/(?:png|jpeg|webp)$/i.test(type)) return res.sendStatus(image.status || 502);
+    const body = Buffer.from(await image.arrayBuffer());
+    res.status(200).set({
+      'Content-Type': type,
+      'Content-Length': String(body.length),
+      'Cache-Control': 'public, max-age=604800, immutable',
+      'X-Content-Type-Options': 'nosniff',
+    }).end(body);
+  } catch (e) {
+    console.warn('[portal/avatar]', e.message);
+    fail(res, 502, 'Не удалось загрузить фото');
+  }
+});
+
 // Свежая версия сразу после выката. 05.10.2026 после выката «Стекла» браузеры ещё час
 // показывали старый дизайн: страница и стили кешировались на час. Теперь страницу браузер
 // перепроверяет при каждом открытии (no-cache + ETag: не менялась — короткий ответ 304),
