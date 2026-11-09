@@ -159,6 +159,11 @@ button.tile{cursor:zoom-in}
 .hero-t{display:grid;gap:4px;padding-bottom:4px;min-width:0}
 .hero-t h1{overflow-wrap:anywhere}
 .hero h1{font-family:var(--serif);font-weight:400;font-size:clamp(22px,7.4vw,30px);margin:0;line-height:1.1;text-wrap:balance}
+/* «Поделиться» — ссылка на эту карточку, чтобы отправить клиенту в мессенджере */
+.share{justify-self:start;margin-top:10px;padding:8px 14px;border-radius:999px;border:1px solid var(--line-strong);
+  background:var(--sunk);color:var(--ink);font:inherit;font-size:13px;cursor:pointer}
+.share:active{opacity:.85}
+[data-look="glass"] .share{background:rgba(255,255,255,.08);border-color:var(--glass-hi);color:var(--ink)}
 @media (prefers-reduced-motion: reduce){.card-ph img{transition:none}.skel-card{animation:none}}
 
 /* ── услуги ──────────────────────────────────────────────────────────────── */

@@ -208,7 +208,14 @@ const stamp = (f) => crypto.createHash('sha1').update(fs.readFileSync(path.join(
 const ASSETS = { '/portal.css': stamp('portal.css'), '/portal.js': stamp('portal.js') };
 const versioned = (html) => html.replace(/(href|src)="(\/portal\.(?:css|js))"/g, (m, attr, url) => `${attr}="${url}?v=${ASSETS[url]}"`);
 const INDEX = versioned(fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8'));
-app.get(['/', '/index.html'], (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(INDEX));
+const sendIndex = (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(INDEX);
+app.get(['/', '/index.html'], sendIndex);
+// Прямые ссылки на карточку мастера (шаринг клиенту): /m/<салон>/<мастер> и …/review.
+// Без этого nginx отдал бы 404 — SPA живёт в index.html.
+app.get(['/m/:salon/:staff', '/m/:salon/:staff/review'], (req, res, next) => {
+  if (!/^\d+$/.test(req.params.salon) || !/^\d+$/.test(req.params.staff)) return next();
+  return sendIndex(req, res);
+});
 
 legal.mount(app, versioned); // /privacy, /consent, /consent-publish
 

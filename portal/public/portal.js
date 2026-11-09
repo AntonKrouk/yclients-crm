@@ -91,33 +91,104 @@
     setLook(fromUrl || saved || 'glass', Boolean(fromUrl));
   }
 
-  function go(screen) {
+  // --- ссылки на мастера ----------------------------------------------------
+  // Боевой вид: https://masters.prive7crm.ru/m/<салон>/<id>. Салон в пути нужен:
+  // у одного человека в двух филиалах разные id в YClients. В однофайловом превью
+  // путей нет — там ?salon=&master= (и &review=1 для формы отзыва).
+  const isPreview = () => Boolean(window.PORTAL_API);
+  function keepLook(params) {
+    const look = new URLSearchParams(location.search).get('look');
+    if (look) params.set('look', look);
+    return params;
+  }
+  function masterHref(salonId, staffId, review) {
+    if (isPreview()) {
+      const q = keepLook(new URLSearchParams({ salon: String(salonId), master: String(staffId) }));
+      if (review) q.set('review', '1');
+      const base = location.pathname.endsWith('.html') ? location.pathname : (location.pathname || '/');
+      return base + '?' + q.toString();
+    }
+    let path = `/m/${salonId}/${staffId}${review ? '/review' : ''}`;
+    const look = new URLSearchParams(location.search).get('look');
+    if (look) path += `?look=${encodeURIComponent(look)}`;
+    return path;
+  }
+  function homeHref() {
+    if (isPreview()) {
+      const q = keepLook(new URLSearchParams());
+      const base = location.pathname.endsWith('.html') ? location.pathname : (location.pathname || '/');
+      const qs = q.toString();
+      return qs ? base + '?' + qs : base;
+    }
+    const look = new URLSearchParams(location.search).get('look');
+    return look ? `/?look=${encodeURIComponent(look)}` : '/';
+  }
+  function parseRoute() {
+    const path = location.pathname || '';
+    const m = path.match(/^\/m\/(\d+)\/(\d+)(?:\/(review))?\/?$/);
+    if (m) return { salon: m[1], staff: m[2], review: m[3] === 'review' };
+    const q = new URLSearchParams(location.search);
+    if (q.get('master')) {
+      return { salon: q.get('salon') || '', staff: q.get('master'), review: q.get('review') === '1' };
+    }
+    // Старая демо-ссылка …#review — открывала отзыв на первого мастера списка
+    if (location.hash === '#review') return { salon: '', staff: '', review: true, legacyHash: true };
+    return null;
+  }
+  function setUrl(screen, { replace = false } = {}) {
+    let href = homeHref();
+    if (S.master && S.salon && (screen === 'master' || screen === 'review' || screen === 'reviewDone')) {
+      href = masterHref(S.salon.id, S.master.id, screen === 'review');
+    }
+    const state = { s: screen, salon: S.salon?.id || null, staff: S.master?.id || null };
+    try {
+      if (replace) history.replaceState(state, '', href);
+      else history.pushState(state, '', href);
+    } catch { /* file:// превью */ }
+  }
+  // Полный URL без ?look= — клиенту незачем видеть переключатель оформления
+  function masterPublicUrl() {
+    if (!S.master || !S.salon) return location.href;
+    if (isPreview()) {
+      const q = new URLSearchParams({ salon: String(S.salon.id), master: String(S.master.id) });
+      return `${location.origin}${location.pathname}?${q}`;
+    }
+    return `${location.origin}/m/${S.salon.id}/${S.master.id}`;
+  }
+
+  function go(screen, { replace = false, skipUrl = false } = {}) {
     if (S.screen === 'home') S.homeY = window.scrollY; // вернёмся к той же карточке
     S.stack.push(S.screen);
     S.screen = screen; S.error = '';
-    try { history.pushState({ s: screen }, ''); } catch { /* превью */ }
+    if (!skipUrl) setUrl(screen, { replace });
     render(); window.scrollTo(0, 0);
   }
   // animate=false — браузер уже сам показал анимацию «назад» (свайп в Safari)
-  function back(animate = true) {
+  function back(animate = true, { skipUrl = false } = {}) {
     if (!S.stack.length) return;
     const from = S.master?.id;
     const update = () => {
       S.screen = S.stack.pop(); S.error = '';
       if (S.screen === 'home') S.master = null;
+      if (!skipUrl) setUrl(S.screen, { replace: true });
       render();
       window.scrollTo(0, S.screen === 'home' ? S.homeY || 0 : 0);
       return S.screen === 'home' && from != null ? app.querySelector(`[data-master="${from}"] .card-ph`) : null;
     };
     if (animate) morph(update); else update();
   }
-  window.addEventListener('popstate', (e) => back(!e.hasUAVisualTransition));
+  window.addEventListener('popstate', (e) => {
+    // URL уже сменился браузером — подстраиваем экран под него, без нового pushState
+    openFromRoute({ fromPop: true, animate: !e.hasUAVisualTransition });
+  });
 
   // --- загрузка -------------------------------------------------------------
-  async function loadSalon(id) {
+  async function loadSalon(id, { keepMaster = false } = {}) {
     S.salon = S.salons.find(s => String(s.id) === String(id)) || S.salons[0];
     try { localStorage.setItem('prive.salon', S.salon.id); } catch { /* без памяти */ }
-    S.staff = []; S.services = []; S.master = null; S.stack = []; S.screen = 'home'; S.error = '';
+    S.staff = []; S.services = [];
+    if (!keepMaster) { S.master = null; S.stack = []; S.screen = 'home'; }
+    S.error = '';
     render();
     try {
       const [staff, services] = await Promise.all([
@@ -130,13 +201,19 @@
   }
 
   // fromEl — фото в карточке, из которого «вырастает» шапка страницы мастера
-  async function openMaster(id, fromEl) {
+  async function openMaster(id, fromEl, { skipUrl = false, replace = false } = {}) {
     S.master = S.staff.find(m => String(m.id) === String(id));
-    if (!S.master) return;
+    if (!S.master) {
+      S.error = 'Этого мастера сейчас нет на витрине. Выберите другого или позвоните в салон.';
+      S.screen = 'home'; S.stack = []; S.master = null;
+      if (!skipUrl) setUrl('home', { replace: true });
+      render();
+      return;
+    }
     S.masterServices = []; S.reviews = null;
     // фото прилетит из карточки — своя анимация появления ему не нужна
     S.heroAnim = !(fromEl && document.startViewTransition && !calm());
-    const vt = morph(() => go('master'), fromEl);
+    const vt = morph(() => go('master', { skipUrl, replace }), fromEl);
     try {
       const [svc, rev] = await Promise.all([
         call('GET', '/p/api/services', { salon: S.salon.id, staff: S.master.id }),
@@ -149,9 +226,76 @@
     render();
   }
 
-  function openReview() {
+  function openReview({ skipUrl = false, replace = false } = {}) {
     S.rform = { rating: 0, text: '', author: '', phone: '', publish: false, consent: false };
-    go('review');
+    go('review', { skipUrl, replace });
+  }
+
+  async function shareMaster(btn) {
+    const url = masterPublicUrl();
+    const title = S.master?.name || 'Мастер Privé7';
+    const text = `${title} — мастер салона Privé7`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, text, url });
+        return;
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+    }
+    try {
+      if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(url);
+      else {
+        const ta = document.createElement('textarea');
+        ta.value = url; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); ta.remove();
+      }
+      if (btn) { const was = btn.textContent; btn.textContent = 'Ссылка скопирована'; setTimeout(() => { btn.textContent = was; }, 1800); }
+    } catch {
+      window.prompt('Скопируйте ссылку на мастера:', url);
+    }
+  }
+
+  // Открыть экран по адресу в строке (прямая ссылка, «назад», превью)
+  let routeBusy = false;
+  async function openFromRoute({ fromPop = false, animate = true } = {}) {
+    if (routeBusy) return;
+    const route = parseRoute();
+    routeBusy = true;
+    try {
+      if (!route) {
+        // Домой: сбрасываем карточку, URL уже правильный при fromPop
+        if (S.screen !== 'home' || S.master) {
+          const from = S.master?.id;
+          const update = () => {
+            S.screen = 'home'; S.stack = []; S.master = null; S.error = '';
+            render();
+            window.scrollTo(0, S.homeY || 0);
+            return from != null ? app.querySelector(`[data-master="${from}"] .card-ph`) : null;
+          };
+          if (fromPop && animate) morph(update); else update();
+        }
+        return;
+      }
+      const salonId = route.salon || S.salon?.id || S.salons[0]?.id;
+      if (salonId && String(S.salon?.id) !== String(salonId)) {
+        await loadSalon(salonId, { keepMaster: true });
+      }
+      let staffId = route.staff;
+      if (route.legacyHash) staffId = S.staff[0]?.id;
+      if (!staffId) return;
+      if (!S.master || String(S.master.id) !== String(staffId) || S.screen === 'home') {
+        S.stack = [];
+        await openMaster(staffId, null, { skipUrl: fromPop, replace: !fromPop });
+      }
+      if (route.review && S.master && S.screen !== 'review') {
+        openReview({ skipUrl: fromPop, replace: !fromPop });
+      } else if (!route.review && S.screen === 'review') {
+        S.screen = 'master'; S.stack = ['home'];
+        if (!fromPop) setUrl('master', { replace: true });
+        render();
+      }
+    } finally { routeBusy = false; }
   }
 
   async function submitReview() {
@@ -170,7 +314,9 @@
         phone: digits.length === 11 ? f.phone : '', publish: f.publish, consent: f.consent,
         website: $('website')?.value || '',
       });
-      S.busy = false; S.screen = 'reviewDone'; render(); window.scrollTo(0, 0);
+      S.busy = false; S.screen = 'reviewDone';
+      setUrl('reviewDone', { replace: true });
+      render(); window.scrollTo(0, 0);
     } catch (e) { S.busy = false; S.error = e.message; render(); }
   }
 
@@ -461,7 +607,9 @@
     const m = S.master;
     // .mp-side / .mp-main: на компьютере — две колонки (portal.css), на телефоне — одна
     return `<div class="mp"><div class="mp-side">
-      <section class="hero">${photo(m, 'hero-ph' + (S.heroAnim ? ' rv-ph' : ''))}<div class="hero-t rv"${dl(S.heroAnim ? 260 : 160)}><h1>${esc(m.name)}</h1><div class="m-spec">${esc(m.specialization)}</div>${alsoLine(m)}${rating(m)}</div></section>
+      <section class="hero">${photo(m, 'hero-ph' + (S.heroAnim ? ' rv-ph' : ''))}<div class="hero-t rv"${dl(S.heroAnim ? 260 : 160)}><h1>${esc(m.name)}</h1><div class="m-spec">${esc(m.specialization)}</div>${alsoLine(m)}${rating(m)}
+        <button class="share" type="button" id="shareMaster" title="Отправить карточку мастера клиенту">Поделиться</button>
+      </div></section>
       ${m.bio ? `<section class="sec bio rv"${dl(320)}><p>${esc(m.bio).replace(/\n+/g, '</p><p>')}</p></section>` : ''}
       </div><div class="mp-main">
       <section class="sec rv"${dl(240)}><span class="eyebrow">Работы</span>
@@ -649,7 +797,8 @@
     $('salons').innerHTML = S.salons.map(s =>
       `<button type="button" role="tab" data-salon="${s.id}" aria-selected="${String(S.salon?.id) === String(s.id)}">${esc(s.name)}</button>`).join('');
     $('salons').hidden = S.screen !== 'home';
-    $('back').hidden = !S.stack.length;
+    // На прямой ссылке стек может быть пуст — «назад» всё равно нужен (к списку)
+    $('back').hidden = S.screen === 'home';
     clocks();
     const screens = { home, master, review, reviewDone };
     app.innerHTML = S.salon ? screens[S.screen]() : `<section class="intro">${errBox() || skel(3)}</section>`;
@@ -687,8 +836,15 @@
     if (!el) return;
     const d = el.dataset;
     if (d.lk) return morph(() => setLook(d.lk, true)); // плавная смена всего экрана
-    if (el.id === 'back') return history.state ? history.back() : back();
-    if (d.salon) return loadSalon(d.salon);
+    if (el.id === 'back') {
+      if (history.state) return history.back();
+      if (S.stack.length) return back();
+      // Прямая ссылка на мастера: стека нет — просто к списку этого салона
+      S.screen = 'home'; S.master = null; S.stack = []; S.error = '';
+      setUrl('home');
+      render(); return window.scrollTo(0, 0);
+    }
+    if (d.salon) return loadSalon(d.salon).then(() => setUrl('home', { replace: true }));
     if (d.tab) { S.tab = d.tab; return render(); }
     if ('group' in d) return pickGroup(d.group);
     if ('psec' in d) return pickPsec(d.psec);
@@ -698,7 +854,12 @@
     if (d.star) { S.rform.rating = Number(d.star); S.error = ''; return render(); }
     if (d.act === 'review') return openReview();
     if (d.copy) return copyPhone(el);
-    if (el.id === 'toMaster') { S.screen = S.stack.pop() || 'home'; render(); return window.scrollTo(0, 0); }
+    if (el.id === 'shareMaster') return shareMaster(el);
+    if (el.id === 'toMaster') {
+      S.screen = 'master'; S.stack = ['home'];
+      setUrl('master', { replace: true });
+      render(); return window.scrollTo(0, 0);
+    }
     if (el.id === 'lbClose') return ($('lb').hidden = true);
     if (el.id === 'lbPrev') return stepWork(-1);
     if (el.id === 'lbNext') return stepWork(1);
@@ -807,13 +968,7 @@
   });
   document.addEventListener('submit', (e) => { e.preventDefault(); submitReview(); });
 
-  // Ссылка …#review ведёт сразу к форме отзыва (её можно присылать после визита)
-  async function openFromHash() {
-    if (location.hash !== '#review' || !S.staff[0]) return;
-    await openMaster(S.staff[0].id);
-    openReview();
-  }
-  window.addEventListener('hashchange', openFromHash);
+  window.addEventListener('hashchange', () => openFromRoute());
 
   // --- старт ----------------------------------------------------------------
   (async function start() {
@@ -823,10 +978,17 @@
       const [salons, health] = await Promise.all([call('GET', '/p/api/salons'), call('GET', '/p/api/health').catch(() => ({}))]);
       S.salons = salons;
       $('demoNote').hidden = !health.demo;
+      const route = parseRoute();
       let saved = null;
       try { saved = localStorage.getItem('prive.salon'); } catch { /* без памяти */ }
-      await loadSalon(saved || salons[0]?.id);
-      openFromHash();
+      const startSalon = route?.salon || saved || salons[0]?.id;
+      await loadSalon(startSalon, { keepMaster: Boolean(route?.staff || route?.legacyHash) });
+      if (route?.staff || route?.legacyHash || route?.review) {
+        await openFromRoute({ fromPop: true }); // URL уже тот — не пушим второй раз
+        setUrl(S.screen, { replace: true }); // state для history.back / кнопки «Назад»
+      } else {
+        setUrl('home', { replace: true });
+      }
     } catch (e) { S.error = e.message; render(); }
   })();
 })();

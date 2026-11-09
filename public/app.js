@@ -3444,10 +3444,19 @@ function vtRenderMaster(){
   const dirOpts = ['',...VT.meta.directions].map(d=>`<option value="${esc(d)}"${(m.custom.direction||'')===d?' selected':''}>${d?esc(d):'Определить автоматически'}</option>`).join('');
   const cats=[]; for(const s of m.services){ let c=cats.find(x=>x.n===s.category); if(!c) cats.push(c={n:s.category,items:[]}); c.items.push(s); }
   const price = s => (s.price_max>s.price_min?'от ':'')+Number(s.price_min||0).toLocaleString('ru-RU')+' ₽';
+  const portalBase=(VT.meta.portal_url||'https://masters.prive7crm.ru').replace(/\/$/,'');
+  const shareLinks=m.branches.filter(b=>b.visible).map(b=>{
+    const url=`${portalBase}/m/${b.id}/${b.sid}`;
+    const label=m.branches.length>1?`Ссылка для клиента · ${esc(b.name)}`:'Скопировать ссылку для клиента';
+    return `<button class="btn" type="button" data-vt-copylink="${esc(url)}">${ICON.copy}${label}</button>`;
+  }).join('');
   $('#vtBody').innerHTML=`
     <div class="vt-checks"><span>Показывать на витрине:</span>${m.branches.map(b=>`
       <label class="vt-check"><input type="checkbox" data-vt-visible="${b.sid}" data-vt-cid="${b.id}"${b.visible?' checked':''}> ${esc(b.name)}</label>`).join('')}</div>
     ${m.also.length?`<div class="vt-note vt-shared">Работает и на ${esc(m.also.map(b=>b.name).join(', '))}: фото, имя, описание, работы и отзывы <b>общие</b> — правка здесь видна в обоих салонах. «Показывать» — отдельно для каждого салона${m.also.some(b=>!b.visible)?' (там сейчас скрыт)':''}.</div>`:''}
+    ${shareLinks?`<div class="vt-sec"><div class="eyebrow">Ссылка на витрину</div>
+      <div class="vt-note muted">Клиент откроет карточку мастера: работы, цены, отзывы и кнопку «Позвонить».</div>
+      <div class="vt-share">${shareLinks}</div></div>`:`<div class="vt-note muted">Чтобы дать клиенту ссылку, включите «Показывать» хотя бы в одном салоне.</div>`}
 
     <div class="vt-sec"><div class="eyebrow">Фото мастера</div>
       <div class="vt-photo">
@@ -3544,7 +3553,7 @@ document.addEventListener('change',async e=>{
 });
 
 document.addEventListener('click',async e=>{
-  const el=e.target.closest('[data-vt-master],[data-vt],[data-vt-branch],#vtClose,#vtSave,#vtPhotoReset,[data-vt-move],[data-vt-del],[data-vt-review]');
+  const el=e.target.closest('[data-vt-master],[data-vt],[data-vt-branch],#vtClose,#vtSave,#vtPhotoReset,[data-vt-move],[data-vt-del],[data-vt-review],[data-vt-copylink]');
   if(!el || e.target.closest('.vt-vis')) return;
   if(el.dataset.vtBranch){ VT.cid=el.dataset.vtBranch==='all'?'all':Number(el.dataset.vtBranch); try{localStorage.setItem('vt.branch',String(VT.cid));}catch{} return loadVitrina(); }
   if(el.dataset.vtMaster) return vtOpenMaster(Number(el.dataset.vtCid),Number(el.dataset.vtMaster));
@@ -3557,6 +3566,11 @@ document.addEventListener('click',async e=>{
   }
   if(el.id==='vtClose') return vtCloseMaster();
   if(el.id==='vtSave') return vtSaveMaster();
+  if(el.dataset.vtCopylink){
+    if(await copyText(el.dataset.vtCopylink)) toast('Ссылка скопирована — можно отправить клиенту','ok');
+    else toast('Не удалось скопировать — скопируйте вручную из адресной строки витрины','bad');
+    return;
+  }
   if(el.id==='vtPhotoReset'){
     try{ VT.master=await api(`/api/vitrina/staff/${VT.mcid}/${VT.master.id}/photo`,{method:'DELETE'}); vtRenderMaster(); toast('Фото убрано','ok'); }
     catch(err){ toast(err.message,'bad'); }
