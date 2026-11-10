@@ -2660,8 +2660,8 @@ function glassTabs(){
   $('#taskTabs').innerHTML=[['new','New'],['call','Обзвон'],['deep','Deep Sleep']].map(([k,l])=>
     `<button type="button" class="${k===taskTab?'on':''}" data-tt="${k}">${l} <i>${c[k]}</i></button>`).join('');
   // Вкладка New — и новички, и «поздравить с ДР»: обе задачи про письмо, не про звонок.
-  const hasNew  = !!$('#newList')?.querySelector?.('.task');
-  const hasBday = !!$('#bdayList')?.querySelector?.('.task');
+  const hasNew  = !!$('#newList')?.querySelector('.task');
+  const hasBday = !!$('#bdayList')?.querySelector('.task');
   $('#newSection').style.display  = taskTab==='new' && (hasNew || !c.new) ? '' : 'none';
   $('#bdaySection').style.display = taskTab==='new' && hasBday ? '' : 'none';
   $('#taskList').style.display    = taskTab==='call' ? '' : 'none';
