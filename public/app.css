@@ -152,9 +152,13 @@
   .t-manual{color:var(--green);border-color:var(--green);background:var(--green-soft)}
   /* «New» — фирменный акцент: раздел про первое впечатление клиента, его видно первым */
   .t-new_client{color:var(--accent-2);border-color:var(--accent-2);background:var(--accent-soft)}
+  /* «Поздравить с ДР» — тёплый янтарный, рядом с New, но не путается с ним */
+  .t-bday_congrats{color:var(--amber);border-color:var(--amber);background:var(--amber-soft)}
   /* Карточки первого визита отбиты полосой — их видно даже при быстром пролистывании */
   #newList .task{box-shadow:inset 3px 0 0 var(--accent)}
   #newList .task.callback-today{box-shadow:inset 3px 0 0 var(--red)}
+  #bdayList .task{box-shadow:inset 3px 0 0 var(--amber)}
+  #bdayList .task.callback-today{box-shadow:inset 3px 0 0 var(--red)}
   .phone{font-variant-numeric:tabular-nums;letter-spacing:.02em}
   .actions{display:flex;flex-direction:column;gap:9px;min-width:232px}
   /* 2×2: четыре кнопки одного размера, подписи не переносятся */

@@ -137,8 +137,11 @@ header{background:rgba(255,255,255,.42);-webkit-backdrop-filter:blur(26px) satur
   border-radius:999px;font-size:11px;font-weight:600;padding:3px 9px}
 .branch-tag,.pill{background:rgba(255,255,255,.7);border-color:var(--line);color:var(--ink-2)}
 .t-new_client{background:var(--accent);border-color:transparent;color:var(--accent-ink)}
+.t-bday_congrats{background:var(--amber-soft);border-color:transparent;color:var(--amber)}
 #newList .task{box-shadow:inset 3px 0 0 var(--accent),var(--shadow)}
 #newList .task.callback-today,.task.callback-today{box-shadow:inset 3px 0 0 var(--red),var(--shadow)}
+#bdayList .task{box-shadow:inset 3px 0 0 var(--amber),var(--shadow)}
+#bdayList .task.callback-today{box-shadow:inset 3px 0 0 var(--red),var(--shadow)}
 .task.callback-today{background:linear-gradient(120deg,var(--red-soft),var(--panel) 60%);border-color:rgba(218,74,78,.35)}
 .cb-badge{background:#fff}
 textarea,input.search{background:rgba(255,255,255,.78);border-color:var(--line);border-radius:12px}
@@ -235,6 +238,7 @@ tr.crow:hover td{background:rgba(255,255,255,.55)}
   border-radius:var(--r-md);box-shadow:none}
 .gl-tmain .task:hover{box-shadow:0 14px 30px -22px rgba(0,0,0,.45)}
 .gl-tmain #newList .task{box-shadow:inset 3px 0 0 var(--accent)}
+.gl-tmain #bdayList .task{box-shadow:inset 3px 0 0 var(--amber)}
 .gl-tmain .task.callback-today{box-shadow:inset 3px 0 0 var(--red)}
 .gl-tmain .empty{background:rgba(255,255,255,.5);box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}
 #view-tasks>.kpis{display:none}                 /* плитки-счётчики заменил «План дня» */

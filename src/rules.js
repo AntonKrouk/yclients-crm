@@ -67,21 +67,30 @@ const DEFAULT_COOLDOWN_DAYS = 14;
 // не отработал (сеть, перезапуск, выходной сервера).
 const NEW_CLIENT_MAX_DAYS = 7;
 
+// --- «Поздравить с ДР» --------------------------------------------------------
+// Если у человека в карточке есть дата рождения (та же, что на вкладке «ДР»), и в течение
+// 7 дней ПОСЛЕ дня рождения он записался на услугу, а в сам день ДР не был записан и не
+// приходил в салон — ставим задачу «поздравить с ДР». Смысл: в день рождения уже
+// поздравили бы лично; раз пришёл/записался позже — повод не упустить. Напоминания о ДР
+// в журнале YClients (kind='birthday', без услуг) визитом и записью на услугу не считаем.
+const BDAY_CONGRATS_WINDOW_DAYS = 7;
+
 // Задачи, добавленные администратором вручную (кнопка «+ в задачи» в «Клиентах» и
 // «Конструкторе»), живут по своим правилам: не занимают дневной лимит и не снимаются
 // автоматической уборкой. Человека выбрали осознанно — карточка висит, пока по ней не позвонят.
 const NOT_MANUAL   = "COALESCE(source,'auto') <> 'manual'";
 
-// Ровно те же правила — у фоллоу-апа новому клиенту: он не часть дневной нормы звонков и
-// не снимается автоматикой (записался сам, попал в список обзвона, ушёл в VIP — неважно,
-// написать ему всё равно надо). Карточка висит, пока админ не отметит, что написал.
-// Всё, что НЕ подпадает под эти два случая, движок считает своим и волен убирать.
-const ENGINE_OWNED   = "COALESCE(source,'auto') <> 'manual' AND type <> 'new_client'";
+// Ровно те же правила — у фоллоу-апа новому клиенту и у «поздравить с ДР»: они не часть
+// дневной нормы звонков и не снимаются автоматикой. У новичка — «написать всё равно надо»;
+// у ДР — запись ПОСЛЕ дня рождения как раз и есть повод поздравить, снимать задачу из-за
+// этой записи было бы абсурдом. Карточка висит, пока админ не отметит, что поздравил.
+// Всё, что НЕ подпадает под эти случаи, движок считает своим и волен убирать.
+const ENGINE_OWNED   = "COALESCE(source,'auto') <> 'manual' AND type NOT IN ('new_client','bday_congrats')";
 // Тот же признак с префиксом таблицы — И БЕЗ «глубокого сна». Разница намеренная: уборку
 // (запись клиента, пауза после звонка) спящие проходят наравне со всеми, а вот в подсчёт
 // дневного лимита обычного обзвона не попадают — у них своя норма DEEP_SLEEP_TARGET.
 // Иначе десять спящих забивали бы все слоты и обычные задачи перестали бы создаваться.
-const ENGINE_OWNED_T = "COALESCE(t.source,'auto') <> 'manual' AND t.type NOT IN ('new_client','deep_sleep')";
+const ENGINE_OWNED_T = "COALESCE(t.source,'auto') <> 'manual' AND t.type NOT IN ('new_client','deep_sleep','bday_congrats')";
 
 // Окно, в котором запись клиента засчитывается предыдущему звонку (то же число, что в
 // sync.js). Константу дублируем, а не импортируем: sync.js сам требует rules.js, и ссылка
@@ -148,7 +157,8 @@ function generate(opts = {}) {
 
   const clients = db.prepare(`
     SELECT id, name, phone, branch, first_visit, last_visit, avg_interval_days, predicted_next,
-           visits_count, spent, favorite_staff, COALESCE(free_client,0) AS free_client
+           visits_count, spent, favorite_staff, birth_date,
+           COALESCE(free_client,0) AS free_client
     FROM clients WHERE COALESCE(do_not_call,0) = 0
   `).all();
 
@@ -383,14 +393,16 @@ function generate(opts = {}) {
     console.log(`[rules] снято вернувшихся задач по недавно обзвоненным: ${stale.length}`);
   }
 
-  // Фоллоу-апы новым клиентам ставим ВСЕГДА, даже в промежуточных прогонах: они не занимают
-  // дневной лимит, а задержка тут дороже — человека надо застать по свежим впечатлениям.
+  // Фоллоу-апы новым клиентам и «поздравить с ДР» ставим ВСЕГДА, даже в промежуточных
+  // прогонах: они не занимают дневной лимит. Новичку надо написать по свежим впечатлениям;
+  // имениннику — поймать момент, пока он только что записался после своего ДР.
   const newbies = createNewClientTasks(groups, nowIso);
+  const bdays = createBdayCongratsTasks(groups, nowIso);
 
   // Промежуточные прогоны (синк будущего каждые 30 мин, кнопка «Обновить») на этом
   // заканчиваются: они убирают отработанное, но новых людей в обзвон не добавляют. Дневной
   // набор задач формирует утренний полный синк — он и вызывает generate() без опций.
-  if (!fill) return newbies;
+  if (!fill) return newbies + bdays;
 
   // Свободные слоты по филиалам: цель — DAILY_OPEN_TARGET открытых задач на филиал
   const openBy = new Map(db.prepare(`
@@ -425,7 +437,7 @@ function generate(opts = {}) {
     openBy.set(branch, open);
   }
 
-  return created + newbies + fillDeepSleep(clients, {
+  return created + newbies + bdays + fillDeepSleep(clients, {
     now, nowIso, suppressed, manualOpen, manualPerson, queuedPerson, upMap,
     personBooked, personLast, cooldownLeft,
     taken: new Set(candidates.map(c => c.clientId)),
@@ -586,4 +598,106 @@ function createNewClientTasks(groups, nowIso) {
 // иначе выкат вечером, а первый синк утром — и те, кто пришёл в день выката, пропали бы.
 newClientSince();
 
-module.exports = { generate };
+// --- «Поздравить с ДР» --------------------------------------------------------
+// Календарный день по Москве: салон живёт по МСК, а toISOString() даёт UTC — после 21:00
+// МСК «сегодня» уехало бы на вчера, и окно 7 дней после ДР съезжало бы на сутки.
+const mskDay = (raw) => new Date(raw).toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' });
+const mskToday = () => mskDay(Date.now());
+const isLeap = (y) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+
+// Последний наступивший день рождения относительно «сегодня» (YYYY-MM-DD по МСК).
+// 29 февраля в невисокосный год считаем 28-го — как на вкладке «ДР».
+function lastBirthdayOnOrBefore(birthDate, todayStr) {
+  const md = String(birthDate || '').slice(5, 10); // MM-DD
+  if (!/^\d{2}-\d{2}$/.test(md)) return null;
+  const y = Number(todayStr.slice(0, 4));
+  const dayIn = (year) => {
+    if (md === '02-29' && !isLeap(year)) return `${year}-02-28`;
+    return `${year}-${md}`;
+  };
+  let d = dayIn(y);
+  if (d > todayStr) d = dayIn(y - 1);
+  return d;
+}
+
+// Настоящая запись на услугу / визит: не отмена и не заглушка «др» в журнале YClients.
+const isServiceVisit = (v) => v && v.status !== 'cancelled' && v.kind !== 'birthday';
+
+// Задача «поздравить с ДР»: вне дневного лимита, как фоллоу-ап новичку. Создаём всегда
+// (и в промежуточных прогонах) — повод появляется в момент записи после ДР.
+function createBdayCongratsTasks(groups, nowIso) {
+  const now = mskToday();
+  const yearStart = `${now.slice(0, 4)}-01-01`;
+  // Один раз за год на человека: иначе после «Поздравил» задача вернулась бы следующим прогоном.
+  const everHad = new Set(
+    db.prepare(`SELECT DISTINCT client_id FROM tasks
+                WHERE type = 'bday_congrats' AND substr(created_at,1,10) >= ?`)
+      .all(yearStart).map(r => r.client_id)
+  );
+
+  // Все визиты по карточкам с датой рождения — одним запросом, дальше режем по человеку.
+  const withBirth = groups.filter(arr => arr.some(c => c.birth_date) && !arr.some(c => everHad.has(c.id)));
+  if (!withBirth.length) return 0;
+
+  const allIds = withBirth.flatMap(arr => arr.map(c => c.id));
+  const visitsByClient = new Map();
+  const CH = 400;
+  for (let i = 0; i < allIds.length; i += CH) {
+    const part = allIds.slice(i, i + CH);
+    const rows = db.prepare(`
+      SELECT client_id, date, booked_at, status, COALESCE(kind,'') AS kind, service
+      FROM visits
+      WHERE client_id IN (${part.map(() => '?').join(',')})
+        AND status <> 'cancelled'
+    `).all(...part);
+    for (const v of rows) {
+      if (!visitsByClient.has(v.client_id)) visitsByClient.set(v.client_id, []);
+      visitsByClient.get(v.client_id).push(v);
+    }
+  }
+
+  let created = 0;
+  for (const arr of withBirth) {
+    const birth = arr.map(c => c.birth_date).filter(Boolean)[0];
+    const bday = lastBirthdayOnOrBefore(birth, now);
+    if (!bday) continue;
+
+    const age = daysBetween(bday, now);
+    // В сам день ДР ещё рано (могли прийти сегодня). После 7 дней окно закрыто.
+    if (age < 1 || age > BDAY_CONGRATS_WINDOW_DAYS) continue;
+
+    const visits = arr.flatMap(c => visitsByClient.get(c.id) || []);
+    const serviceVisits = visits.filter(isServiceVisit);
+
+    // В сам день ДР уже записан или был в салоне — поздравлять «опосля» незачем.
+    const onBday = serviceVisits.some(v => mskDay(v.date) === bday);
+    if (onBday) continue;
+
+    // «Записался в течение 7 дней после ДР»: момент СОЗДАНИЯ записи (booked_at),
+    // а не дата визита. Запись, сделанная до ДР на день после него, поводом не считается —
+    // человек планировал визит заранее, а не «вспомнил после дня рождения».
+    const bookedAfter = serviceVisits.filter(v => {
+      const when = mskDay(v.booked_at || v.date);
+      const after = daysBetween(bday, when);
+      return after >= 1 && after <= BDAY_CONGRATS_WINDOW_DAYS;
+    });
+    if (!bookedAfter.length) continue;
+
+    // Карточка того филиала, куда записался после ДР (приоритет — самая ранняя такая запись).
+    bookedAfter.sort((a, b) => String(a.booked_at || a.date).localeCompare(String(b.booked_at || b.date)));
+    const hit = bookedAfter[0];
+    const card = arr.find(c => c.id === hit.client_id) || arr[0];
+    const bdayLabel = new Date(bday + 'T12:00:00').toLocaleDateString('ru-RU');
+    const bookLabel = new Date((hit.booked_at || hit.date)).toLocaleDateString('ru-RU');
+    const svc = (hit.service || '').trim();
+    insertTask.run(card.id, 'bday_congrats', now, 1,
+      `ДР был ${bdayLabel}, в тот день не был. Записался ${bookLabel}` +
+      (svc ? ` на «${svc}»` : '') +
+      `. Поздравить с днём рождения.`, nowIso);
+    created++;
+  }
+  if (created) console.log(`[rules] «поздравить с ДР»: создано задач ${created}`);
+  return created;
+}
+
+module.exports = { generate, createBdayCongratsTasks, lastBirthdayOnOrBefore };

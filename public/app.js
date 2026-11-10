@@ -365,6 +365,11 @@ const RES_NEW = [
   ...RES,
   {k:'written',  t:ICON.msg+'Написал',       cls:'wide'},
 ];
+// «Поздравить с ДР» — та же работа «написать», только кнопка закрытия называется иначе.
+const RES_BDAY = [
+  ...RES,
+  {k:'written',  t:ICON.msg+'Поздравил',     cls:'wide'},
+];
 
 // Одна карточка задачи. Отличаются только набор кнопок и подпись поля заметки:
 // в «New» админ пишет сообщение, в остальных разделах — звонит.
@@ -398,18 +403,22 @@ async function loadTasks(){
   const counts = {};
   tasks.forEach(t=>counts[t.type]=(counts[t.type]||0)+1);
   const KL={new_client:'New — первый визит',rebook:'Пора записать',no_show:'Не пришёл',reactivation:'Реактивация'};
+  if(counts.bday_congrats) KL.bday_congrats='Поздравить с ДР';
   if(counts.deep_sleep) KL.deep_sleep='Deep Sleep';   // плитка только когда спящие есть
   if(counts.manual) KL.manual='Добавлены вручную';   // плитку показываем, только если такие задачи есть
   $('#taskKpis').innerHTML = Object.entries(KL).map(([k,l])=>
     `<div class="card kpi"><div class="n">${counts[k]||0}</div><div class="l">${l}</div></div>`).join('');
 
-  // Новички идут отдельным блоком наверху: это другая работа (написать, а не позвонить),
-  // и она привязана ко вчерашнему визиту — на общем фоне такие карточки терялись бы.
+  // Новички и именинники — работа «написать», не «позвонить». Отдельными блоками сверху,
+  // иначе на общем фоне обзвона теряются.
   const newbies = tasks.filter(t=>t.type==='new_client');
+  const bdays   = tasks.filter(t=>t.type==='bday_congrats');
   const deep    = tasks.filter(t=>t.type==='deep_sleep');
-  const rest    = tasks.filter(t=>t.type!=='new_client' && t.type!=='deep_sleep');
+  const rest    = tasks.filter(t=>t.type!=='new_client' && t.type!=='deep_sleep' && t.type!=='bday_congrats');
   $('#newSection').style.display = newbies.length ? '' : 'none';
   $('#newList').innerHTML = newbies.map(t=>taskCard(t,RES_NEW,true)).join('');
+  $('#bdaySection').style.display = bdays.length ? '' : 'none';
+  $('#bdayList').innerHTML = bdays.map(t=>taskCard(t,RES_BDAY,true)).join('');
 
   // Спящие живут отдельным блоком внизу: работа та же (позвонить и записать), но повод
   // холодный, и мешать их с дневной нормой нельзя — иначе непонятно, что обязательно, а что нет.
@@ -422,7 +431,7 @@ async function loadTasks(){
   list.innerHTML = rest.length
     ? rest.map(t=>taskCard(t,RES,false)).join('')
     : `<div class="empty">${await emptyTasksHint(deep.length)}</div>`;
-  if(GLASS) await glassTasks(counts, KL, newbies.length, rest.length, deep.length);
+  if(GLASS) await glassTasks(counts, KL, newbies.length + bdays.length, rest.length, deep.length);
 }
 
 // Текст для пустого списка задач. Отложенные задачи на дашборде не видны до самого дня
@@ -847,7 +856,7 @@ async function doSendAct(taskId,result,btn,until,write){
   if(card){card.style.transition='opacity .25s';card.style.opacity='0';}
   setTimeout(loadTasks,260);
   toast(result==='booked'?'Записан'
-    : result==='written'?'Написали — карточка убрана из «New»'
+    : result==='written'?'Написали — карточка убрана'
     : result==='no_calls'?`Не звоним ${NO_CALLS_DAYS} дней — вернётся ${whenLabel(until)}`
     : until?`${write?'Написать':'Перезвонить'} ${whenLabel(until)}`
     : result==='callback'?'Отложено на завтра':'Отмечено');
@@ -2639,7 +2648,7 @@ function glassTasksLayout(){
       <p class="muted" id="taskSub"></p></div><div class="gl-seg" id="taskTabs"></div></div></div>`;
   const main=wrap.querySelector('.gl-tmain');
   const title=$('#taskList').previousElementSibling;          // «Задачи на сегодня» — заголовок теперь в карточке
-  [$('#newSection'), title, $('#taskList'), $('#deepSection')].forEach(n=>main.appendChild(n));
+  [$('#newSection'), $('#bdaySection'), title, $('#taskList'), $('#deepSection')].forEach(n=>main.appendChild(n));
   view.appendChild(wrap);
   $('#taskTabs').onclick=e=>{ const b=e.target.closest('[data-tt]'); if(!b) return; taskTab=b.dataset.tt; glassTabs(); };
   $('#taskPlan').onclick=e=>{ const r=e.target.closest('[data-tt]'); if(!r) return; taskTab=r.dataset.tt; glassTabs(); };
@@ -2650,10 +2659,18 @@ function glassTabs(){
   if(!taskTab) taskTab = c.new ? 'new' : c.call ? 'call' : c.deep ? 'deep' : 'call';
   $('#taskTabs').innerHTML=[['new','New'],['call','Обзвон'],['deep','Deep Sleep']].map(([k,l])=>
     `<button type="button" class="${k===taskTab?'on':''}" data-tt="${k}">${l} <i>${c[k]}</i></button>`).join('');
-  $('#newSection').style.display  = taskTab==='new'  ? '' : 'none';
+  // Вкладка New — и новички, и «поздравить с ДР»: обе задачи про письмо, не про звонок.
+  const hasNew  = !!$('#newList')?.querySelector?.('.task');
+  const hasBday = !!$('#bdayList')?.querySelector?.('.task');
+  $('#newSection').style.display  = taskTab==='new' && (hasNew || !c.new) ? '' : 'none';
+  $('#bdaySection').style.display = taskTab==='new' && hasBday ? '' : 'none';
   $('#taskList').style.display    = taskTab==='call' ? '' : 'none';
   $('#deepSection').style.display = taskTab==='deep' ? '' : 'none';
-  if(taskTab==='new' && !c.new) $('#newList').innerHTML='<div class="empty">Новичкам на сегодня всё написано.</div>';
+  if(taskTab==='new' && !c.new){
+    $('#newSection').style.display='';
+    $('#newList').innerHTML='<div class="empty">Новичкам и именинникам на сегодня всё написано.</div>';
+    $('#bdaySection').style.display='none';
+  }
   if(taskTab==='deep' && !c.deep) $('#deepList').innerHTML='<div class="empty">Спящих на сегодня нет.</div>';
 }
 async function glassTasks(counts,KL,newN,callN,deepN){
@@ -2665,7 +2682,7 @@ async function glassTasks(counts,KL,newN,callN,deepN){
   let done=0; try{ done=(await api(bp('/api/stats'))).done_today||0; }catch{}
   const open=newN+callN, tot=done+open, p=tot?Math.round(done/tot*100):100;
   const rows=Object.entries(KL).filter(([k])=>k!=='deep_sleep').map(([k,l])=>{
-    const n=counts[k]||0, tt=k==='new_client'?'new':'call';
+    const n=counts[k]||0, tt=(k==='new_client'||k==='bday_congrats')?'new':'call';
     return `<li class="${n?'':'done'}" data-tt="${tt}"><span class="gl-ck">${ICON.check}</span><span class="t">${esc(l)}</span><b>${n||'готово'}</b></li>`;
   }).join('');
   $('#taskPlan').innerHTML=`<div class="gl-card-h"><div><h3>План дня</h3><p class="muted">Сначала новички и неявки, потом ритм</p></div>
