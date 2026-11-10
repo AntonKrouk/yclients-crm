@@ -14,6 +14,7 @@ const ai = require('./src/ai');
 const vitrina = require('./src/vitrina');
 const salon = require('./src/salon');
 const live = require('./src/live');
+const rules = require('./src/rules');
 
 const app = express();
 // Лимит выше стандартных 100 КБ: вебхук YClients присылает запись целиком, с товарами и полями,
@@ -1765,6 +1766,13 @@ app.post('/api/booking/create', async (req, res) => {
       if ((await sync.importRecord(c.salon.cid, c.salon.branchName, c.rec.id))?.ok) imported++;
     } catch (e) { console.error('[booking/import]', e.message); }
   }
+  // Сразу прогоняем уборку/«поздравить с ДР»: иначе задача ждала бы вебхук (15 с) или
+  // sync-upcoming (до 30 мин). Запись из CRM уже в базе — ждать нечего.
+  // 10.11.2026: записали клиента с ДР 7.11 на сегодня — задачи не было, пока не починили.
+  try {
+    rules.generate({ fill: false });
+    live.emit('tasks');
+  } catch (e) { console.error('[booking/rules]', e.message); }
 
   const fmt = (dt) => new Date(dt).toLocaleString('ru-RU',
     { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' });

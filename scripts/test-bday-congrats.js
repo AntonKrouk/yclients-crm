@@ -84,11 +84,24 @@ addVisit(c, { day: shift(bday, 1), bookedDay: shift(bday, 1) });
 n = createBdayCongratsTasks(people.groupByPerson(db.prepare('SELECT * FROM clients').all()), new Date().toISOString());
 check('заглушка ДР не мешает', !!db.prepare(`SELECT 1 FROM tasks WHERE type='bday_congrats' AND client_id=?`).get(c));
 
+// 5b) пустая услуга без kind=birthday (старые заглушки) тоже не блокирует
+const c2 = addClient('Кира Пусто', '79001110006', birth);
+addVisit(c2, { day: bday, bookedDay: shift(bday, -10), kind: 'visit', service: '', status: 'upcoming' });
+addVisit(c2, { day: shift(bday, 2), bookedDay: shift(bday, 2) });
+n = createBdayCongratsTasks(people.groupByPerson(db.prepare('SELECT * FROM clients').all()), new Date().toISOString());
+check('пустая услуга в ДР не блокирует', !!db.prepare(`SELECT 1 FROM tasks WHERE type='bday_congrats' AND client_id=?`).get(c2));
+
 // 6) записался ДО дня рождения на день после — поводом не считается
 const d = addClient('Даша Рано', '79001110004', birth);
 addVisit(d, { day: shift(bday, 2), bookedDay: shift(bday, -10) });
 n = createBdayCongratsTasks(people.groupByPerson(db.prepare('SELECT * FROM clients').all()), new Date().toISOString());
 check('запись до ДР — задачи нет', !db.prepare(`SELECT 1 FROM tasks WHERE type='bday_congrats' AND client_id=?`).get(d));
+
+// 6b) визит в окне после ДР, запись создана в день ДР (не раньше) — повод есть
+const d2 = addClient('Лена В день', '79001110007', birth);
+addVisit(d2, { day: shift(bday, 3), bookedDay: bday });
+n = createBdayCongratsTasks(people.groupByPerson(db.prepare('SELECT * FROM clients').all()), new Date().toISOString());
+check('визит после ДР при записи в день ДР — задача есть', !!db.prepare(`SELECT 1 FROM tasks WHERE type='bday_congrats' AND client_id=?`).get(d2));
 
 // 7) generate({fill:false}) тоже создаёт (как new_client)
 const e = addClient('Елена Синк', '79001110005', birth);

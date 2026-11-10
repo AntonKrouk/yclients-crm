@@ -620,8 +620,17 @@ function lastBirthdayOnOrBefore(birthDate, todayStr) {
   return d;
 }
 
-// Настоящая запись на услугу / визит: не отмена и не заглушка «др» в журнале YClients.
-const isServiceVisit = (v) => v && v.status !== 'cancelled' && v.kind !== 'birthday';
+// Настоящая запись на услугу: не отмена, не заглушка «др», и в строке есть услуга.
+// Пустой service + kind≠birthday бывает у старых заглушек до колонки kind — их нельзя
+// принимать ни за «был в салоне», ни за «записался на услугу» (иначе именинник с фиолетовой
+// «др» в журнале навсегда лишался бы задачи «поздравить»).
+const isServiceVisit = (v) => v && v.status !== 'cancelled'
+  && v.kind !== 'birthday' && String(v.service || '').trim() !== '';
+
+const inBdayWindow = (bday, day) => {
+  const n = daysBetween(bday, day);
+  return n >= 1 && n <= BDAY_CONGRATS_WINDOW_DAYS;
+};
 
 // Задача «поздравить с ДР»: вне дневного лимита, как фоллоу-ап новичку. Создаём всегда
 // (и в промежуточных прогонах) — повод появляется в момент записи после ДР.
@@ -669,17 +678,20 @@ function createBdayCongratsTasks(groups, nowIso) {
     const visits = arr.flatMap(c => visitsByClient.get(c.id) || []);
     const serviceVisits = visits.filter(isServiceVisit);
 
-    // В сам день ДР уже записан или был в салоне — поздравлять «опосля» незачем.
+    // В сам день ДР уже записан на услугу или был в салоне — поздравлять «опосля» незачем.
     const onBday = serviceVisits.some(v => mskDay(v.date) === bday);
     if (onBday) continue;
 
-    // «Записался в течение 7 дней после ДР»: момент СОЗДАНИЯ записи (booked_at),
-    // а не дата визита. Запись, сделанная до ДР на день после него, поводом не считается —
-    // человек планировал визит заранее, а не «вспомнил после дня рождения».
+    // Повод — запись на услугу в окне 1..7 дней после ДР:
+    //  • создали запись в эти дни (booked_at), ИЛИ
+    //  • визит стоит на день в этом окне, а создали запись не раньше самого ДР
+    //    (заранее за месяц — не повод; «записали на сегодня» после ДР — повод).
+    // Кейс 10.11.2026: ДР 7.11, записали на 10.11 — задача должна появиться сразу.
     const bookedAfter = serviceVisits.filter(v => {
-      const when = mskDay(v.booked_at || v.date);
-      const after = daysBetween(bday, when);
-      return after >= 1 && after <= BDAY_CONGRATS_WINDOW_DAYS;
+      const visitDay = mskDay(v.date);
+      const bookDay = v.booked_at ? mskDay(v.booked_at) : visitDay;
+      if (inBdayWindow(bday, bookDay)) return true;
+      return inBdayWindow(bday, visitDay) && daysBetween(bday, bookDay) >= 0;
     });
     if (!bookedAfter.length) continue;
 
