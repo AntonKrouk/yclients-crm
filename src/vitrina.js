@@ -3,9 +3,9 @@
 // Витрина для клиентов (portal/) и её настройка из CRM (вкладка «Витрина»).
 //
 // Откуда что берётся:
-//   • мастера, их услуги, категории и цены — из YClients, тем же запросом, что и виджет
-//     онлайн-записи (book_staff / book_services, проверено на боевом). В YClients ничего
-//     не пишем;
+//   • мастера и их услуги — из полных справочников YClients, общий прайс — из
+//     book_services. Доступность онлайн-записи не ограничивает услуги мастера.
+//     В YClients ничего не пишем;
 //   • поверх — правки админов в portal_staff: скрыть мастера, поправить имя, специализацию,
 //     направление, текст «о мастере», порядок, своё фото. Пустое поле = как в YClients;
 //   • портфолио — portal_works + файлы в DATA_DIR/portfolio/<филиал>/<мастер>/;
@@ -148,26 +148,32 @@ async function ycStaff(cid) {
     }));
 }
 
-// Прайс. Общий («Цены») — каталог онлайн-записи. Мастера — из списка услуг салона, где у
-// каждой услуги перечислены её мастера, пересечённого с тем же каталогом: так видны цены и
-// у мастеров без графика или скрытых от онлайн-записи (онлайн-запись отдаёт им пусто),
-// а служебные позиции вне каталога («+3500 раннее открытие», «выезд стилиста») не вылезают.
-// На мастере с графиком сверено 04.10.2026: совпадает с онлайн-записью 25 из 25.
+// Прайс. Общий («Цены») — каталог онлайн-записи. У мастера — все назначенные ему услуги,
+// включая закрытые для онлайн-записи (active=0). Пересечение с book_services теряло их
+// у Пушиной Натальи. Категории тоже берём из полного справочника: закрытой категории
+// может вовсе не быть в онлайн-каталоге. Известные служебные позиции убираем отдельно.
+const INTERNAL_SERVICE = /(?:раннее|позднее).*открытие|^выезд\s/iu;
 async function ycServices(cid, staffId) {
   if (yc.isDemo()) return demo().handle('GET', '/p/api/services', { salon: cid, staff: staffId || '' });
-  const pub = await cached(`svc:${cid}`, () => yc.fetchBookServices(cid, ''));
   const cats = {};
-  for (const c of (pub?.category || [])) cats[c.id] = c.title || '';
   const row = (s, price, len) => ({
     id: s.id, title: s.title, category: cats[s.category_id] || 'Услуги',
     price_min: price ?? (s.price_min || 0), price_max: price ?? (s.price_max || 0),
     duration: Math.round((len || 0) / 60),
   });
-  if (!staffId) return (pub?.services || []).map(s => row(s, null, s.seance_length));
-  const inCatalog = new Set((pub?.services || []).map(s => s.id));
-  const all = await cached(`asvc:${cid}`, async () => { await yc.ensureAuth(); return yc.fetchServices(cid); });
+  if (!staffId) {
+    const pub = await cached(`svc:${cid}`, () => yc.fetchBookServices(cid, ''));
+    for (const c of (pub?.category || [])) cats[c.id] = c.title || '';
+    return (pub?.services || []).map(s => row(s, null, s.seance_length));
+  }
+  await yc.ensureAuth();
+  const [all, categories] = await Promise.all([
+    cached(`asvc:${cid}`, () => yc.fetchServices(cid)),
+    cached(`scat:${cid}`, () => yc.fetchServiceCategories(cid)),
+  ]);
+  for (const c of (Array.isArray(categories) ? categories : [])) cats[c.id] = c.title || '';
   const sid = Number(staffId);
-  return (Array.isArray(all) ? all : []).filter(s => inCatalog.has(s.id)).flatMap(s => {
+  return (Array.isArray(all) ? all : []).filter(s => !INTERNAL_SERVICE.test(s.title || '')).flatMap(s => {
     const link = (s.staff || []).find(x => Number(x.id) === sid);
     return link ? [row(s, link.price ?? null, link.seance_length || s.duration)] : [];
   });
