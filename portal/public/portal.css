@@ -259,8 +259,10 @@ button.tile{cursor:zoom-in}
 .lb{position:fixed;inset:0;z-index:40;background:rgba(10,9,8,.92);display:grid;place-items:center;padding:24px 16px}
 .lb-x{position:absolute;top:calc(12px + env(safe-area-inset-top,0px));right:12px;border:0;background:none;color:#fff;cursor:pointer;padding:8px}
 .lb-fig{margin:0;display:grid;gap:12px;width:min(520px,100%)}
-.lb-img{aspect-ratio:1;border-radius:var(--r);overflow:hidden;width:100%;max-width:100%}
-.lb-img img{width:100%;height:100%;object-fit:cover;display:block}
+/* Полное фото без обрезки; место сверху/снизу — для закрытия, подписи и стрелок. */
+.lb-img{height:min(720px,calc(100vh - 180px));height:min(720px,calc(100dvh - 180px));
+  border-radius:var(--r);overflow:hidden;width:100%;max-width:100%}
+.lb-img img{width:100%;height:100%;object-fit:contain;display:block}
 .lb figcaption{color:#EEEAE3;font-family:var(--serif);font-size:18px;text-align:center}
 
 .skel{height:84px;border-bottom:1px solid var(--line);background:linear-gradient(90deg,transparent,var(--sunk),transparent);
