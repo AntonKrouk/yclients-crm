@@ -87,7 +87,7 @@ main{max-width:600px;margin:0 auto;padding-inline:16px}
 .rate b{color:var(--ink);font-weight:600}
 
 .tile{aspect-ratio:1;border-radius:var(--r);background:var(--sunk);overflow:hidden;position:relative;border:0;padding:0;display:block;width:100%;max-width:100%}
-.tile img{width:100%;height:100%;object-fit:cover;display:block}
+.tile img{width:100%;height:100%;object-fit:contain;display:block}
 button.tile{cursor:zoom-in}
 
 /* ── меню направлений ─────────────────────────────────────────────────────────
