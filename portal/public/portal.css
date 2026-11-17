@@ -258,9 +258,9 @@ button.tile{cursor:zoom-in}
 /* ── просмотр работы ─────────────────────────────────────────────────────── */
 .lb{position:fixed;inset:0;z-index:40;background:rgba(10,9,8,.92);display:grid;place-items:center;padding:24px 16px}
 .lb-x{position:absolute;top:calc(12px + env(safe-area-inset-top,0px));right:12px;border:0;background:none;color:#fff;cursor:pointer;padding:8px}
-.lb-fig{margin:0;display:grid;gap:12px;width:min(520px,100%)}
+.lb-fig{margin:0;display:grid;gap:12px;min-width:0;width:min(1200px,calc(100vw - 160px))}
 /* Полное фото без обрезки; место сверху/снизу — для закрытия, подписи и стрелок. */
-.lb-img{height:min(720px,calc(100vh - 180px));height:min(720px,calc(100dvh - 180px));
+.lb-img{height:calc(100vh - 180px);height:calc(100dvh - 180px);
   border-radius:var(--r);overflow:hidden;width:100%;max-width:100%}
 .lb-img img{width:100%;height:100%;object-fit:contain;display:block}
 .lb figcaption{color:#EEEAE3;font-family:var(--serif);font-size:18px;text-align:center}
@@ -515,9 +515,10 @@ main[data-screen="review"],main[data-screen="reviewDone"]{max-width:600px}
   -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);transition:background-color .2s ease,scale .2s ease}
 .lb-nav:hover{background:rgba(255,255,255,.18)}
 .lb-nav:active{scale:.92}
-.lb-prev{left:max(12px, calc(50% - 260px - 76px))}
-.lb-next{right:max(12px, calc(50% - 260px - 76px))}
+.lb-prev{left:16px}
+.lb-next{right:16px}
 @media (max-width:640px){
+  .lb-fig{width:100%}
   .lb-nav{top:auto;bottom:calc(18px + env(safe-area-inset-bottom,0px));translate:none}
   .lb-prev{left:20px} .lb-next{right:20px}
 }
